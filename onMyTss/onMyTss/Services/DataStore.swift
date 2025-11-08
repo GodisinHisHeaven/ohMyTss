@@ -17,6 +17,10 @@ class DataStore {
         self.modelContext = modelContext
     }
 
+    init(modelContainer: ModelContainer) {
+        self.modelContext = ModelContext(modelContainer)
+    }
+
     // MARK: - DayAggregate Operations
 
     func saveDayAggregate(_ dayAggregate: DayAggregate) throws {
@@ -165,6 +169,15 @@ class DataStore {
         if !inProgress {
             appState.lastComputationDate = Date()
         }
+        try modelContext.save()
+    }
+
+    func resetAppState() throws {
+        let appState = try fetchAppState()
+        appState.lastHealthKitSyncDate = nil
+        appState.healthKitAnchor = nil
+        appState.lastComputationDate = nil
+        appState.isComputationInProgress = false
         try modelContext.save()
     }
 }
