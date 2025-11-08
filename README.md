@@ -45,17 +45,21 @@ All computation happens **on-device** using Apple Health data. No servers, no da
 ## Architecture
 
 ```
-OnMyTSS/
-├── Packages/
-│   ├── TSSEngine/              # Core algorithms (CTL/ATL/TSB, Body Battery)
-│   ├── HealthStore/            # HealthKit integration
-│   ├── Persistence/            # SwiftData models
-│   └── SharedUI/               # Reusable UI components
-├── OnMyTSS/                    # Main app
+ohMyTss/
+├── ohMyTss.xcodeproj/          # Xcode project
+├── ohMyTss/ohMyTss/            # Main app source
 │   ├── App/                    # App entry point
 │   ├── Views/                  # SwiftUI views
-│   └── ViewModels/             # View models
-└── OnMyTSSTests/               # Unit tests
+│   ├── ViewModels/             # View models
+│   ├── Assets.xcassets         # App assets
+│   └── Info.plist              # HealthKit permissions
+├── ohMyTssTests/               # Unit tests
+├── Packages/                   # Local Swift Packages
+│   ├── TSSEngine/              # Core algorithms
+│   ├── HealthStore/            # HealthKit integration
+│   ├── Persistence/            # SwiftData models
+│   └── SharedUI/               # Reusable components
+└── XCODE_SETUP.md              # Setup guide
 
 ```
 
@@ -85,34 +89,23 @@ OnMyTSS/
 
 2. **Open in Xcode:**
    ```bash
-   open OnMyTSS.xcodeproj
+   open ohMyTss.xcodeproj
    ```
-   > Note: The project structure is currently set up as Swift Packages. You'll need to create the Xcode project file manually or use `File > New > Project` in Xcode and add the packages.
 
-3. **Build and run:**
-   - Select the `OnMyTSS` scheme
-   - Choose a simulator or connected device
+3. **Add Swift Packages and configure project:**
+
+   Follow the detailed guide in **[XCODE_SETUP.md](XCODE_SETUP.md)** to:
+   - Add local Swift Packages (TSSEngine, HealthStore, Persistence, SharedUI)
+   - Configure HealthKit capabilities
+   - Set up App Groups
+   - Link frameworks to target
+
+4. **Build and run:**
+   - Select the `ohMyTss` scheme
+   - Choose iPhone 15 simulator (or any iOS 18+ device)
    - Press `Cmd+R` to build and run
 
-### Creating the Xcode Project
-
-Since this is a fresh Swift Package-based structure, create the Xcode project:
-
-1. Open Xcode
-2. `File > New > Project`
-3. Choose **iOS > App**
-4. Name: `OnMyTSS`
-5. Team: Your development team
-6. Bundle ID: `com.yourdomain.onmytss`
-7. Deployment Target: **iOS 18.0**
-
-Then add the local Swift Packages:
-1. `File > Add Packages...`
-2. Click "Add Local..."
-3. Navigate to `Packages/TSSEngine` and add
-4. Repeat for `HealthStore`, `Persistence`, `SharedUI`
-
-Copy the source files from `OnMyTSS/` into the Xcode project.
+> **Note:** First-time setup requires adding the local Swift Packages manually in Xcode. See [XCODE_SETUP.md](XCODE_SETUP.md) for step-by-step instructions.
 
 ## Testing
 

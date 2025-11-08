@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- HealthKit Privacy Strings -->
+	<key>NSHealthShareUsageDescription</key>
+	<string>OnMyTSS needs access to your health data to calculate your daily Body Battery score from workouts, heart rate variability, and resting heart rate.</string>
+
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>OnMyTSS does not write any data to HealthKit.</string>
+
+	<!-- HealthKit Required -->
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>healthkit</string>
+	</array>
+
+	<!-- App Group for Watch Sync (future) -->
+	<key>AppIdentifier</key>
+	<string>$(AppIdentifierPrefix)$(CFBundleIdentifier)</string>
+</dict>
+</plist>
