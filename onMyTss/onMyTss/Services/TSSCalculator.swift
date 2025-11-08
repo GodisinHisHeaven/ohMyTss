@@ -168,7 +168,7 @@ struct TSSCalculator {
 
     /// Estimate TSS from workout duration and type when no power/HR data available
     /// Uses typical intensity factors for each workout type
-    private static func estimateTSSFromDuration(workout: HKWorkout) -> Double {
+    static func estimateTSSFromDuration(workout: HKWorkout) -> Double {
         let durationHours = workout.duration / 3600.0
 
         // Typical IF (Intensity Factor) values for different workout types
