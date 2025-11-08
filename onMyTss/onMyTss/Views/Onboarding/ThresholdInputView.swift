@@ -52,9 +52,11 @@ struct ThresholdInputView: View {
 
                 HStack {
                     TextField("e.g., 250", text: $ftp)
-                        .keyboardType(.numberPad)
-                        .textFieldStyle(.roundedBorder)
                         .font(.title2)
+#if os(iOS)
+                        .keyboardType(.numberPad)
+#endif
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
 
                     Text("W")
                         .font(.title3)
