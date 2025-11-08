@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import SwiftData
 
 /// Settings screen for managing user preferences and app configuration
 struct SettingsView: View {
@@ -224,19 +225,23 @@ struct FTPEditorSheet: View {
 // MARK: - Previews
 
 #Preview {
-    let config = ModelConfiguration(isStoredInMemoryOnly: true)
-    let container = try! ModelContainer(for: DayAggregate.self, UserThresholds.self, AppState.self, configurations: config)
-    let dataStore = DataStore(modelContainer: container)
+    @Previewable @State var previewSetup: (DataStore, BodyBatteryEngine) = {
+        let config = ModelConfiguration(isStoredInMemoryOnly: true)
+        let container = try! ModelContainer(for: DayAggregate.self, UserThresholds.self, AppState.self, configurations: config)
+        let dataStore = DataStore(modelContainer: container)
 
-    // Create sample thresholds
-    var thresholds = UserThresholds()
-    thresholds.cyclingFTP = 250
-    thresholds.hasCompletedOnboarding = true
-    try! dataStore.saveUserThresholds(thresholds)
+        // Create sample thresholds
+        var thresholds = UserThresholds()
+        thresholds.cyclingFTP = 250
+        thresholds.hasCompletedOnboarding = true
+        try! dataStore.saveUserThresholds(thresholds)
 
-    let healthKitManager = HealthKitManager()
-    let engine = BodyBatteryEngine(healthKitManager: healthKitManager, dataStore: dataStore)
+        let healthKitManager = HealthKitManager()
+        let engine = BodyBatteryEngine(healthKitManager: healthKitManager, dataStore: dataStore)
 
-    return SettingsView(dataStore: dataStore, engine: engine)
-        .modelContainer(container)
+        return (dataStore, engine)
+    }()
+
+    SettingsView(dataStore: previewSetup.0, engine: previewSetup.1)
+        .modelContainer(for: [DayAggregate.self, UserThresholds.self, AppState.self])
 }
