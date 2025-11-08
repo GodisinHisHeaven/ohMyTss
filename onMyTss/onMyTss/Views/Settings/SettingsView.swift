@@ -71,6 +71,10 @@ struct SettingsView: View {
                     LabeledContent("Version", value: viewModel.appVersion)
                     LabeledContent("Build", value: viewModel.buildNumber)
 
+                    Link(destination: URL(string: "https://godisinHisHeaven.github.io/ohMyTss/privacy-policy.html")!) {
+                        Label("Privacy Policy", systemImage: "hand.raised.fill")
+                    }
+
                     Link(destination: URL(string: "https://github.com/GodisinHisHeaven/ohMyTss")!) {
                         Label("GitHub Repository", systemImage: "link")
                     }
