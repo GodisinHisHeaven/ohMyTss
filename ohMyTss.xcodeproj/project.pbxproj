@@ -6,6 +6,20 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		138634482EBEE82600674956 /* OnMyTSSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 138634462EBEE82600674956 /* OnMyTSSApp.swift */; };
+		138634492EBEE82600674956 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 138634452EBEE82600674956 /* ContentView.swift */; };
+		1386344C2EBEE84200674956 /* TodayViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1386344A2EBEE84200674956 /* TodayViewModel.swift */; };
+		138634562EBEE85100674956 /* TodayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 138634532EBEE85100674956 /* TodayView.swift */; };
+		138634572EBEE85100674956 /* HistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1386344D2EBEE85100674956 /* HistoryView.swift */; };
+		138634582EBEE85100674956 /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1386344F2EBEE85100674956 /* OnboardingView.swift */; };
+		138634592EBEE85100674956 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 138634512EBEE85100674956 /* SettingsView.swift */; };
+		1386345D2EBEE8F600674956 /* TSSEngine in Frameworks */ = {isa = PBXBuildFile; productRef = 1386345C2EBEE8F600674956 /* TSSEngine */; };
+		1386345F2EBEE8FB00674956 /* HealthStore in Frameworks */ = {isa = PBXBuildFile; productRef = 1386345E2EBEE8FB00674956 /* HealthStore */; };
+		138634612EBEE8FF00674956 /* Persistence in Frameworks */ = {isa = PBXBuildFile; productRef = 138634602EBEE8FF00674956 /* Persistence */; };
+		138634632EBEE90400674956 /* SharedUI in Frameworks */ = {isa = PBXBuildFile; productRef = 138634622EBEE90400674956 /* SharedUI */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		13C6017D2EBEE56E005D2182 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -24,6 +38,13 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		138634452EBEE82600674956 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		138634462EBEE82600674956 /* OnMyTSSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnMyTSSApp.swift; sourceTree = "<group>"; };
+		1386344A2EBEE84200674956 /* TodayViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayViewModel.swift; sourceTree = "<group>"; };
+		1386344D2EBEE85100674956 /* HistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryView.swift; sourceTree = "<group>"; };
+		1386344F2EBEE85100674956 /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
+		138634512EBEE85100674956 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		138634532EBEE85100674956 /* TodayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayView.swift; sourceTree = "<group>"; };
 		13C6016F2EBEE56C005D2182 /* ohMyTss.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ohMyTss.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		13C6017C2EBEE56E005D2182 /* ohMyTssTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ohMyTssTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		13C601862EBEE56E005D2182 /* ohMyTssUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ohMyTssUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -52,6 +73,10 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				138634612EBEE8FF00674956 /* Persistence in Frameworks */,
+				138634632EBEE90400674956 /* SharedUI in Frameworks */,
+				1386345F2EBEE8FB00674956 /* HealthStore in Frameworks */,
+				1386345D2EBEE8F600674956 /* TSSEngine in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -72,12 +97,83 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		138634472EBEE82600674956 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				138634452EBEE82600674956 /* ContentView.swift */,
+				138634462EBEE82600674956 /* OnMyTSSApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		1386344B2EBEE84200674956 /* ViewModels */ = {
+			isa = PBXGroup;
+			children = (
+				1386344A2EBEE84200674956 /* TodayViewModel.swift */,
+			);
+			path = ViewModels;
+			sourceTree = "<group>";
+		};
+		1386344E2EBEE85100674956 /* History */ = {
+			isa = PBXGroup;
+			children = (
+				1386344D2EBEE85100674956 /* HistoryView.swift */,
+			);
+			path = History;
+			sourceTree = "<group>";
+		};
+		138634502EBEE85100674956 /* Onboarding */ = {
+			isa = PBXGroup;
+			children = (
+				1386344F2EBEE85100674956 /* OnboardingView.swift */,
+			);
+			path = Onboarding;
+			sourceTree = "<group>";
+		};
+		138634522EBEE85100674956 /* Settings */ = {
+			isa = PBXGroup;
+			children = (
+				138634512EBEE85100674956 /* SettingsView.swift */,
+			);
+			path = Settings;
+			sourceTree = "<group>";
+		};
+		138634542EBEE85100674956 /* Today */ = {
+			isa = PBXGroup;
+			children = (
+				138634532EBEE85100674956 /* TodayView.swift */,
+			);
+			path = Today;
+			sourceTree = "<group>";
+		};
+		138634552EBEE85100674956 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				1386344E2EBEE85100674956 /* History */,
+				138634502EBEE85100674956 /* Onboarding */,
+				138634522EBEE85100674956 /* Settings */,
+				138634542EBEE85100674956 /* Today */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		1386345B2EBEE8F600674956 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		13C601662EBEE56C005D2182 = {
 			isa = PBXGroup;
 			children = (
+				138634552EBEE85100674956 /* Views */,
+				1386344B2EBEE84200674956 /* ViewModels */,
+				138634472EBEE82600674956 /* App */,
 				13C601712EBEE56C005D2182 /* ohMyTss */,
 				13C6017F2EBEE56E005D2182 /* ohMyTssTests */,
 				13C601892EBEE56E005D2182 /* ohMyTssUITests */,
+				1386345B2EBEE8F600674956 /* Frameworks */,
 				13C601702EBEE56C005D2182 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -112,6 +208,10 @@
 			);
 			name = ohMyTss;
 			packageProductDependencies = (
+				1386345C2EBEE8F600674956 /* TSSEngine */,
+				1386345E2EBEE8FB00674956 /* HealthStore */,
+				138634602EBEE8FF00674956 /* Persistence */,
+				138634622EBEE90400674956 /* SharedUI */,
 			);
 			productName = ohMyTss;
 			productReference = 13C6016F2EBEE56C005D2182 /* ohMyTss.app */;
@@ -195,6 +295,12 @@
 			);
 			mainGroup = 13C601662EBEE56C005D2182;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				138634412EBEE7C200674956 /* XCLocalSwiftPackageReference "Packages/HealthStore" */,
+				138634422EBEE7D200674956 /* XCLocalSwiftPackageReference "Packages/Persistence" */,
+				138634432EBEE7E100674956 /* XCLocalSwiftPackageReference "Packages/SharedUI" */,
+				138634442EBEE7EF00674956 /* XCLocalSwiftPackageReference "Packages/TSSEngine" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 13C601702EBEE56C005D2182 /* Products */;
 			projectDirPath = "";
@@ -236,6 +342,13 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				1386344C2EBEE84200674956 /* TodayViewModel.swift in Sources */,
+				138634482EBEE82600674956 /* OnMyTSSApp.swift in Sources */,
+				138634492EBEE82600674956 /* ContentView.swift in Sources */,
+				138634562EBEE85100674956 /* TodayView.swift in Sources */,
+				138634572EBEE85100674956 /* HistoryView.swift in Sources */,
+				138634582EBEE85100674956 /* OnboardingView.swift in Sources */,
+				138634592EBEE85100674956 /* SettingsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -390,6 +503,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = ohMyTss/ohMyTss.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = PCMQ343AU9;
@@ -408,7 +522,7 @@
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.6;
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 26.1;
@@ -434,6 +548,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = ohMyTss/ohMyTss.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = PCMQ343AU9;
@@ -452,7 +567,7 @@
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.6;
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 26.1;
@@ -615,6 +730,48 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		138634412EBEE7C200674956 /* XCLocalSwiftPackageReference "Packages/HealthStore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/HealthStore;
+		};
+		138634422EBEE7D200674956 /* XCLocalSwiftPackageReference "Packages/Persistence" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/Persistence;
+		};
+		138634432EBEE7E100674956 /* XCLocalSwiftPackageReference "Packages/SharedUI" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/SharedUI;
+		};
+		138634442EBEE7EF00674956 /* XCLocalSwiftPackageReference "Packages/TSSEngine" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/TSSEngine;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		1386345C2EBEE8F600674956 /* TSSEngine */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 138634442EBEE7EF00674956 /* XCLocalSwiftPackageReference "Packages/TSSEngine" */;
+			productName = TSSEngine;
+		};
+		1386345E2EBEE8FB00674956 /* HealthStore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 138634412EBEE7C200674956 /* XCLocalSwiftPackageReference "Packages/HealthStore" */;
+			productName = HealthStore;
+		};
+		138634602EBEE8FF00674956 /* Persistence */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 138634422EBEE7D200674956 /* XCLocalSwiftPackageReference "Packages/Persistence" */;
+			productName = Persistence;
+		};
+		138634622EBEE90400674956 /* SharedUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 138634432EBEE7E100674956 /* XCLocalSwiftPackageReference "Packages/SharedUI" */;
+			productName = SharedUI;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 13C601672EBEE56C005D2182 /* Project object */;
 }
