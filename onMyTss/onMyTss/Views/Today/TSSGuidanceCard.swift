@@ -99,6 +99,8 @@ struct TSSGuidanceCard: View {
             return Color(hex: "#3182CE") // Blue
         case .vo2Max:
             return Color(hex: "#9F7AEA") // Purple
+        case .anaerobic:
+            return Color(hex: "#E53E3E") // Red
         }
     }
 }

@@ -182,12 +182,8 @@ class TodayViewModel {
             return "⚠️ CTL increasing too fast"
         case .aggressive:
             return "⚡ CTL increasing rapidly"
-        case .optimal:
+        case .safe:
             return "✅ Good progression"
-        case .conservative:
-            return "📊 Steady progression"
-        case .maintaining:
-            return "→ Maintaining fitness"
         case .detraining:
             return "📉 CTL decreasing"
         }
