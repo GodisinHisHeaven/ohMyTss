@@ -28,7 +28,9 @@ onMyTss/onMyTss/
 │   ├── GuidanceEngine.swift     # Training recommendations
 │   └── BodyBatteryEngine.swift  # Main orchestration service
 ├── ViewModels/                  # View models for MVVM
-│   └── TodayViewModel.swift     # ✅ Today screen state management
+│   ├── TodayViewModel.swift     # ✅ Today screen state management
+│   ├── HistoryViewModel.swift   # ✅ History screen state management
+│   └── SettingsViewModel.swift  # ✅ Settings screen state management
 ├── Views/
 │   ├── Onboarding/              # ✅ COMPLETE
 │   │   ├── WelcomeView.swift
@@ -40,9 +42,12 @@ onMyTss/onMyTss/
 │   │   ├── BodyBatteryGauge.swift  # Circular gauge component
 │   │   ├── TSSGuidanceCard.swift   # Training recommendations
 │   │   └── WeekTrendView.swift     # 7-day trend chart
-│   ├── History/                 # TODO: Historical data view
-│   ├── Settings/                # TODO: User settings
-│   └── Shared/                  # TODO: Reusable components
+│   ├── History/                 # ✅ COMPLETE
+│   │   └── HistoryView.swift    # Historical data with 7/14/30 day views
+│   ├── Settings/                # ✅ COMPLETE
+│   │   └── SettingsView.swift   # FTP editor, sync, and app settings
+│   ├── MainTabView.swift        # ✅ Main tab navigation
+│   └── Shared/                  # Reusable components (as needed)
 ├── Utilities/
 │   ├── Extensions.swift         # Date, Double, Int, Array, Color extensions
 │   └── Constants.swift          # App-wide constants
@@ -106,37 +111,40 @@ xcodebuild test -scheme onMyTss -destination 'platform=iOS Simulator,name=iPhone
 
 ## Current Implementation Status
 
-### ✅ COMPLETED (Phases 1-6)
-- SwiftData models and persistence layer
+### ✅ COMPLETED MVP (Phases 1-8)
+
+**Core Infrastructure:**
+- SwiftData models and persistence layer (DayAggregate, UserThresholds, AppState)
 - HealthKit integration (workouts, power, heart rate)
 - All calculation engines (TSS, CTL/ATL/TSB, Body Battery, Guidance)
 - BodyBatteryEngine orchestration service
 - Complete onboarding flow (Welcome → HealthKit → FTP setup)
-- **Today Screen (Phase 6):**
-  - ✅ `BodyBatteryGauge.swift` - Circular gauge with color gradient
-  - ✅ `TSSGuidanceCard.swift` - Daily recommendations card
-  - ✅ `WeekTrendView.swift` - 7-day mini chart with trend analysis
-  - ✅ `TodayViewModel.swift` - State management and data fetching
-  - ✅ `TodayView.swift` - Main screen with gauge, guidance, metrics, and trend
-  - ✅ Pull-to-refresh for incremental HealthKit sync
-  - ✅ Loading, empty, and error states
-  - ✅ Integration with BodyBatteryEngine and DataStore
 
-### 🚧 TODO: Phase 7 - Settings & History
-- [ ] Create `SettingsViewModel.swift`
-- [ ] Create `SettingsView.swift` - FTP input, units preference, about section
-- [ ] Create `HistoryViewModel.swift`
-- [ ] Create `HistoryView.swift` - List of last 7 days with CTL/ATL/TSB
-- [ ] Create TabView navigation (Today, History, Settings tabs)
-- [ ] Update ContentView to show TabView after onboarding
+**Phase 6 - Today Screen:**
+- ✅ `BodyBatteryGauge.swift` - Circular gauge with color gradient
+- ✅ `TSSGuidanceCard.swift` - Daily recommendations card
+- ✅ `WeekTrendView.swift` - 7-day mini chart with trend analysis
+- ✅ `TodayViewModel.swift` - State management and data fetching
+- ✅ `TodayView.swift` - Main screen with gauge, guidance, metrics, and trend
+- ✅ Pull-to-refresh for incremental HealthKit sync
+- ✅ Loading, empty, and error states
 
-### 🚧 TODO: Phase 8 - Error Handling & Polish
-- [ ] Add error states (no HealthKit permission, no FTP, no data)
-- [ ] Add loading states (skeleton screens, progress indicators)
-- [ ] Add empty states (no workouts yet, first-time user)
-- [ ] Handle edge cases (sync failures, invalid data, missing FTP)
-- [ ] Add automatic data refresh on app launch
-- [ ] Optimize performance (lazy loading, query optimization)
+**Phase 7 - Settings & History:**
+- ✅ `SettingsViewModel.swift` - Settings state management
+- ✅ `SettingsView.swift` - FTP editor, data sync, reset functionality
+- ✅ `HistoryViewModel.swift` - History data management
+- ✅ `HistoryView.swift` - 7/14/30 day history with metrics
+- ✅ `MainTabView.swift` - TabView navigation (Today, History, Settings)
+- ✅ Updated ContentView to show MainTabView after onboarding
+
+**Phase 8 - Error Handling & Polish:**
+- ✅ Error states with dismissible banners
+- ✅ Loading states with progress indicators
+- ✅ Empty states for first-time users
+- ✅ Edge case handling (sync failures, invalid FTP)
+- ✅ Automatic data refresh on app launch
+- ✅ FTP validation (50-500 watts)
+- ✅ Success/error messaging throughout app
 
 ### 🚧 TODO: Phase 9 - Testing & Bug Fixes
 - [ ] Test full user flow (onboarding → sync → score display)

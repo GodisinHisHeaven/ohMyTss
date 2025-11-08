@@ -19,10 +19,17 @@ struct ContentView: View {
         Group {
             if isLoading {
                 // Loading state
-                ProgressView()
+                VStack(spacing: 16) {
+                    ProgressView()
+                        .scaleEffect(1.5)
+
+                    Text("Loading Body Battery...")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
             } else if hasCompletedOnboarding, let engine = engine, let dataStore = dataStore {
-                // Main app - Today View
-                TodayView(engine: engine, dataStore: dataStore)
+                // Main app - Tab View with Today, History, Settings
+                MainTabView(engine: engine, dataStore: dataStore)
             } else {
                 // Onboarding
                 OnboardingContainerView {
@@ -48,12 +55,24 @@ struct ContentView: View {
         dataStore = store
 
         let healthKitManager = HealthKitManager()
-        engine = BodyBatteryEngine(healthKitManager: healthKitManager, dataStore: store)
+        let bodyBatteryEngine = BodyBatteryEngine(healthKitManager: healthKitManager, dataStore: store)
+        engine = bodyBatteryEngine
 
         // Check onboarding status
         do {
             let thresholds = try store.fetchUserThresholds()
             hasCompletedOnboarding = thresholds.hasCompletedOnboarding
+
+            // If onboarding is completed, perform automatic data refresh
+            if hasCompletedOnboarding {
+                // Try incremental update first (faster)
+                do {
+                    try await bodyBatteryEngine.incrementalUpdate()
+                } catch {
+                    // If incremental fails, it's not critical - user can manually refresh
+                    print("Incremental update failed: \(error.localizedDescription)")
+                }
+            }
         } catch {
             // If error fetching, assume not completed
             hasCompletedOnboarding = false
