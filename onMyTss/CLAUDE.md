@@ -27,14 +27,19 @@ onMyTss/onMyTss/
 │   ├── BodyBatteryCalculator.swift  # Score (0-100) conversion
 │   ├── GuidanceEngine.swift     # Training recommendations
 │   └── BodyBatteryEngine.swift  # Main orchestration service
-├── ViewModels/                  # TODO: View models for MVVM
+├── ViewModels/                  # View models for MVVM
+│   └── TodayViewModel.swift     # ✅ Today screen state management
 ├── Views/
 │   ├── Onboarding/              # ✅ COMPLETE
 │   │   ├── WelcomeView.swift
 │   │   ├── HealthPermissionView.swift
 │   │   ├── ThresholdInputView.swift
 │   │   └── OnboardingContainerView.swift
-│   ├── Today/                   # TODO: Main daily view
+│   ├── Today/                   # ✅ COMPLETE
+│   │   ├── TodayView.swift      # Main today screen
+│   │   ├── BodyBatteryGauge.swift  # Circular gauge component
+│   │   ├── TSSGuidanceCard.swift   # Training recommendations
+│   │   └── WeekTrendView.swift     # 7-day trend chart
 │   ├── History/                 # TODO: Historical data view
 │   ├── Settings/                # TODO: User settings
 │   └── Shared/                  # TODO: Reusable components
@@ -101,21 +106,21 @@ xcodebuild test -scheme onMyTss -destination 'platform=iOS Simulator,name=iPhone
 
 ## Current Implementation Status
 
-### ✅ COMPLETED (Phases 1-5)
+### ✅ COMPLETED (Phases 1-6)
 - SwiftData models and persistence layer
 - HealthKit integration (workouts, power, heart rate)
 - All calculation engines (TSS, CTL/ATL/TSB, Body Battery, Guidance)
 - BodyBatteryEngine orchestration service
 - Complete onboarding flow (Welcome → HealthKit → FTP setup)
-
-### 🚧 TODO: Phase 6 - Today Screen
-- [ ] Create `BodyBatteryGauge.swift` - Circular gauge (0-100) with color gradient
-- [ ] Create `TSSGuidanceCard.swift` - Daily recommendations card
-- [ ] Create `WeekTrendView.swift` - 7-day mini chart component
-- [ ] Create `TodayViewModel.swift` - State management for Today screen
-- [ ] Create `TodayView.swift` - Main screen assembling gauge, guidance, trend
-- [ ] Add pull-to-refresh to trigger incremental HealthKit sync
-- [ ] Wire up to BodyBatteryEngine for data fetching
+- **Today Screen (Phase 6):**
+  - ✅ `BodyBatteryGauge.swift` - Circular gauge with color gradient
+  - ✅ `TSSGuidanceCard.swift` - Daily recommendations card
+  - ✅ `WeekTrendView.swift` - 7-day mini chart with trend analysis
+  - ✅ `TodayViewModel.swift` - State management and data fetching
+  - ✅ `TodayView.swift` - Main screen with gauge, guidance, metrics, and trend
+  - ✅ Pull-to-refresh for incremental HealthKit sync
+  - ✅ Loading, empty, and error states
+  - ✅ Integration with BodyBatteryEngine and DataStore
 
 ### 🚧 TODO: Phase 7 - Settings & History
 - [ ] Create `SettingsViewModel.swift`
