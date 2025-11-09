@@ -104,7 +104,11 @@ class TodayViewModel {
             atl: aggregate.atl,
             tsb: aggregate.tsb,
             rampRate: aggregate.rampRate,
-            workoutCount: aggregate.workoutCount
+            workoutCount: aggregate.workoutCount,
+            avgHRV: aggregate.avgHRV,
+            avgRHR: aggregate.avgRHR,
+            hrvModifier: aggregate.hrvModifier,
+            rhrModifier: aggregate.rhrModifier
         )
     }
 
@@ -188,6 +192,90 @@ class TodayViewModel {
             return "📉 CTL decreasing"
         }
     }
+
+    // MARK: - HRV/RHR Properties
+
+    /// Formatted HRV value (e.g., "42 ms")
+    var hrvFormatted: String? {
+        guard let hrv = todayMetrics?.avgHRV else { return nil }
+        return "\(Int(hrv)) ms"
+    }
+
+    /// Formatted RHR value (e.g., "52 bpm")
+    var rhrFormatted: String? {
+        guard let rhr = todayMetrics?.avgRHR else { return nil }
+        return "\(Int(rhr)) bpm"
+    }
+
+    /// HRV modifier impact (e.g., "+12" or "-8")
+    var hrvModifierFormatted: String? {
+        guard let modifier = todayMetrics?.hrvModifier else { return nil }
+        if modifier >= 0 {
+            return "+\(Int(modifier))"
+        } else {
+            return "\(Int(modifier))"
+        }
+    }
+
+    /// RHR modifier impact (e.g., "+5" or "-3")
+    var rhrModifierFormatted: String? {
+        guard let modifier = todayMetrics?.rhrModifier else { return nil }
+        if modifier >= 0 {
+            return "+\(Int(modifier))"
+        } else {
+            return "\(Int(modifier))"
+        }
+    }
+
+    /// Combined modifier impact on Body Battery score
+    var combinedModifierFormatted: String? {
+        guard let hrvMod = todayMetrics?.hrvModifier,
+              let rhrMod = todayMetrics?.rhrModifier else {
+            return todayMetrics?.hrvModifier != nil ? hrvModifierFormatted :
+                   todayMetrics?.rhrModifier != nil ? rhrModifierFormatted : nil
+        }
+
+        let combined = PhysiologyModifier.calculateCombinedModifier(
+            hrvModifier: hrvMod,
+            rhrModifier: rhrMod
+        )
+
+        if combined >= 0 {
+            return "+\(Int(combined))"
+        } else {
+            return "\(Int(combined))"
+        }
+    }
+
+    /// Whether we have any physiological data to display
+    var hasPhysiologyData: Bool {
+        todayMetrics?.avgHRV != nil || todayMetrics?.avgRHR != nil
+    }
+
+    /// Recovery status based on HRV/RHR modifiers
+    var recoveryStatus: String? {
+        guard let hrvMod = todayMetrics?.hrvModifier,
+              let rhrMod = todayMetrics?.rhrModifier else {
+            return nil
+        }
+
+        let combined = PhysiologyModifier.calculateCombinedModifier(
+            hrvModifier: hrvMod,
+            rhrModifier: rhrMod
+        )
+
+        if combined >= 15 {
+            return "💪 Excellent recovery"
+        } else if combined >= 8 {
+            return "✅ Good recovery"
+        } else if combined >= -7 {
+            return "➖ Normal recovery"
+        } else if combined >= -15 {
+            return "⚠️ Poor recovery"
+        } else {
+            return "🚨 Very poor recovery - consider rest"
+        }
+    }
 }
 
 // MARK: - Day Metrics
@@ -200,4 +288,10 @@ struct DayMetrics {
     let tsb: Double
     let rampRate: Double?
     let workoutCount: Int
+
+    // Phase 1: HRV/RHR physiological data
+    let avgHRV: Double?
+    let avgRHR: Double?
+    let hrvModifier: Double?
+    let rhrModifier: Double?
 }
