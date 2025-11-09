@@ -22,6 +22,7 @@ class HistoryViewModel {
     // Data
     var historyItems: [HistoryItem] = []
     var selectedDays: Int = 7
+    var chartData: [ChartDataPoint] = []
 
     init(dataStore: DataStore) {
         self.dataStore = dataStore
@@ -49,6 +50,17 @@ class HistoryViewModel {
                     readinessLevel: BodyBatteryCalculator.getReadinessLevel(score: aggregate.bodyBatteryScore)
                 )
             }.reversed() // Most recent first
+
+            // Prepare chart data (chronological order for charts)
+            chartData = aggregates.map { aggregate in
+                ChartDataPoint(
+                    date: aggregate.date,
+                    ctl: aggregate.ctl,
+                    atl: aggregate.atl,
+                    tsb: aggregate.tsb,
+                    tss: aggregate.totalTSS
+                )
+            }
 
         } catch {
             errorMessage = error.localizedDescription
@@ -131,4 +143,15 @@ struct HistoryItem: Identifiable {
     var isToday: Bool {
         Calendar.current.isDateInToday(date)
     }
+}
+
+// MARK: - Chart Data Point
+
+struct ChartDataPoint: Identifiable {
+    let id = UUID()
+    let date: Date
+    let ctl: Double
+    let atl: Double
+    let tsb: Double
+    let tss: Double
 }
