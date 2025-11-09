@@ -7,6 +7,7 @@
 
 import SwiftUI
 import SwiftData
+import Charts
 
 /// History screen showing past Body Battery scores and metrics
 struct HistoryView: View {
@@ -42,6 +43,7 @@ struct HistoryView: View {
                             Text("7 Days").tag(7)
                             Text("14 Days").tag(14)
                             Text("30 Days").tag(30)
+                            Text("90 Days").tag(90)
                         }
                     } label: {
                         Label("Filter", systemImage: "line.3.horizontal.decrease.circle")
@@ -61,6 +63,11 @@ struct HistoryView: View {
             VStack(spacing: 20) {
                 // Summary Cards
                 summarySection
+
+                // CTL/ATL/TSB Charts (shown for 14+ days)
+                if viewModel.selectedDays >= 14 {
+                    chartsSection
+                }
 
                 // History List
                 VStack(spacing: 0) {
@@ -112,6 +119,117 @@ struct HistoryView: View {
             )
         }
         .padding(.horizontal)
+    }
+
+    private var chartsSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // Section Header
+            Text("Training Load Trends")
+                .font(.headline)
+                .padding(.horizontal)
+
+            // CTL/ATL Chart
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Fitness & Fatigue (CTL/ATL)")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal)
+
+                Chart(viewModel.chartData) { point in
+                    LineMark(
+                        x: .value("Date", point.date),
+                        y: .value("CTL", point.ctl)
+                    )
+                    .foregroundStyle(.blue)
+                    .interpolationMethod(.catmullRom)
+
+                    LineMark(
+                        x: .value("Date", point.date),
+                        y: .value("ATL", point.atl)
+                    )
+                    .foregroundStyle(.orange)
+                    .interpolationMethod(.catmullRom)
+                }
+                .chartYAxisLabel("Load", alignment: .leading)
+                .chartLegend(position: .bottom) {
+                    HStack(spacing: 20) {
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(.blue)
+                                .frame(width: 8, height: 8)
+                            Text("CTL (Fitness)")
+                                .font(.caption)
+                        }
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(.orange)
+                                .frame(width: 8, height: 8)
+                            Text("ATL (Fatigue)")
+                                .font(.caption)
+                        }
+                    }
+                }
+                .frame(height: 200)
+                .padding()
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color(uiColor: .systemBackground))
+                )
+            }
+            .padding(.horizontal)
+
+            // TSB Chart
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Training Stress Balance (TSB)")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal)
+
+                Chart(viewModel.chartData) { point in
+                    BarMark(
+                        x: .value("Date", point.date),
+                        y: .value("TSB", point.tsb)
+                    )
+                    .foregroundStyle(point.tsb >= 0 ? .green : .red)
+
+                    RuleMark(y: .value("Zero", 0))
+                        .foregroundStyle(.gray.opacity(0.5))
+                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [5, 5]))
+                }
+                .chartYAxisLabel("TSB", alignment: .leading)
+                .frame(height: 160)
+                .padding()
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color(uiColor: .systemBackground))
+                )
+            }
+            .padding(.horizontal)
+
+            // Daily TSS Chart
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Daily Training Stress (TSS)")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal)
+
+                Chart(viewModel.chartData) { point in
+                    BarMark(
+                        x: .value("Date", point.date),
+                        y: .value("TSS", point.tss)
+                    )
+                    .foregroundStyle(.purple.gradient)
+                }
+                .chartYAxisLabel("TSS", alignment: .leading)
+                .frame(height: 140)
+                .padding()
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color(uiColor: .systemBackground))
+                )
+            }
+            .padding(.horizontal)
+        }
     }
 
     private var loadingView: some View {
