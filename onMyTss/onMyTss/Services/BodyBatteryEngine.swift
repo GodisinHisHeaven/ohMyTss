@@ -203,8 +203,9 @@ class BodyBatteryEngine {
     }
 
     /// Calculate TSS for a single workout
+    /// Supports multiple sport types with power-based and heart rate-based calculations
     private func calculateWorkoutTSS(workout: HKWorkout, ftp: Int?) async throws -> Double {
-        // For cycling workouts, try to get power data
+        // Strategy 1: Power-based TSS (cycling with power meter)
         if workout.workoutActivityType == .cycling {
             let powerSamples = try await healthKitManager.fetchPowerSamples(for: workout)
 
@@ -217,20 +218,46 @@ class BodyBatteryEngine {
             }
         }
 
-        // Fall back to heart rate-based TSS
+        // Strategy 2: Heart rate-based TSS (all workout types)
+        // This is the primary method for running, swimming, and cycling without power
         let heartRateSamples = try await healthKitManager.fetchHeartRateSamples(for: workout)
 
         if !heartRateSamples.isEmpty {
-            return TSSCalculator.calculateTSSFromHeartRate(
+            // Get recent RHR data to improve HR-based TSS accuracy
+            let recentRHR = try? await getRecentRestingHeartRate()
+
+            // Use sport-specific TSS calculation for better accuracy
+            return TSSCalculator.calculateTSSFromHeartRateWithType(
                 heartRateSamples: heartRateSamples,
                 duration: workout.duration,
-                maxHeartRate: nil,
-                restingHeartRate: nil
+                workoutType: workout.workoutActivityType,
+                maxHeartRate: nil, // Will use age-based estimation
+                restingHeartRate: recentRHR
             )
         }
 
-        // Last resort: estimate from duration
+        // Strategy 3: Duration-based estimation (last resort when no HR data)
         return TSSCalculator.estimateTSSFromDuration(workout: workout)
+    }
+
+    /// Get recent resting heart rate for more accurate HR-based TSS calculations
+    private func getRecentRestingHeartRate() async throws -> Int? {
+        let today = Date().startOfDay
+
+        // Try today's RHR first
+        if let aggregate = try dataStore.fetchDayAggregate(for: today),
+           let rhr = aggregate.avgRHR {
+            return Int(rhr)
+        }
+
+        // Fall back to recent week average
+        let recentAggregates = try dataStore.fetchRecentDayAggregates(days: 7)
+        let rhrValues = recentAggregates.compactMap { $0.avgRHR }
+
+        guard !rhrValues.isEmpty else { return nil }
+
+        let avgRHR = rhrValues.reduce(0, +) / Double(rhrValues.count)
+        return Int(avgRHR)
     }
 
     /// Compute CTL/ATL/TSB time series and save to database
