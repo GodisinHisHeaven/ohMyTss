@@ -21,7 +21,7 @@ class HistoryViewModel {
 
     // Data
     var historyItems: [HistoryItem] = []
-    var selectedDays: Int = 7
+    var selectedDays: Int = 30 // Default to 30 days to show charts
     var chartData: [ChartDataPoint] = []
 
     init(dataStore: DataStore) {
