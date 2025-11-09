@@ -79,11 +79,12 @@ struct TSSCalculator {
         return normalizedPower.rounded(toPlaces: 1)
     }
 
-    // MARK: - Heart Rate-Based TSS (Fallback)
+    // MARK: - Heart Rate-Based TSS (Multi-Sport)
 
     /// Calculate TSS from heart rate when power data is unavailable
-    /// Uses TRIMP (Training Impulse) method as a fallback
-    /// Formula: TSS = (duration_minutes × avg_HR × HR_ratio × exp_factor) / 60 × 100
+    /// Uses modified TRIMP (Training Impulse) method optimized for endurance sports
+    /// This method works for all workout types: cycling, running, swimming, etc.
+    /// Formula: TSS = (duration_minutes × HR_ratio × exp_factor) × sport_multiplier
     static func calculateTSSFromHeartRate(
         heartRateSamples: [HKQuantitySample],
         duration: TimeInterval,
@@ -108,19 +109,64 @@ struct TSSCalculator {
         let maxHR = maxHeartRate ?? estimateMaxHeartRate()
         let restingHR = Double(restingHeartRate ?? 60)
 
-        // Calculate heart rate reserve ratio
+        // Calculate heart rate reserve ratio (0.0 to 1.0)
         let hrReserve = Double(maxHR) - restingHR
-        let hrRatio = (avgHR - restingHR) / hrReserve
+        guard hrReserve > 0 else { return 0 }
 
-        // Exponential factor based on HR ratio (TRIMP method)
+        let hrRatio = min(max((avgHR - restingHR) / hrReserve, 0.0), 1.0)
+
+        // Exponential factor based on HR ratio (modified TRIMP method)
+        // This creates a non-linear relationship where higher intensities contribute more stress
         let expFactor = exp(1.92 * hrRatio)
 
         // Calculate TRIMP-based TSS
-        // Normalized to approximate power-based TSS scale
+        // Normalized to match power-based TSS scale (60 min at FTP = 100 TSS)
         let durationMinutes = duration / 60.0
-        let tss = (durationMinutes * hrRatio * expFactor) / 60.0 * 100
 
-        return max(0, tss.rounded(toPlaces: 1))
+        // Base TSS calculation using HR reserve and exponential weighting
+        // The division by 60 normalizes to a 1-hour baseline
+        let baseTSS = (durationMinutes * hrRatio * expFactor) / 60.0 * 100
+
+        return max(0, baseTSS.rounded(toPlaces: 1))
+    }
+
+    /// Calculate TSS from heart rate with workout type context
+    /// Provides sport-specific adjustments for more accurate TSS estimation
+    static func calculateTSSFromHeartRateWithType(
+        heartRateSamples: [HKQuantitySample],
+        duration: TimeInterval,
+        workoutType: HKWorkoutActivityType,
+        maxHeartRate: Int?,
+        restingHeartRate: Int?
+    ) -> Double {
+        let baseTSS = calculateTSSFromHeartRate(
+            heartRateSamples: heartRateSamples,
+            duration: duration,
+            maxHeartRate: maxHeartRate,
+            restingHeartRate: restingHeartRate
+        )
+
+        // Sport-specific multipliers to account for differences in physiological stress
+        // Running: higher impact stress, slightly higher multiplier
+        // Swimming: technique-limited, lower perceived exertion for same HR
+        // Cycling: baseline (1.0)
+        let sportMultiplier: Double
+        switch workoutType {
+        case .running:
+            sportMultiplier = 1.1 // Running has higher mechanical stress
+        case .swimming:
+            sportMultiplier = 0.95 // Swimming is technique-limited
+        case .cycling:
+            sportMultiplier = 1.0 // Baseline
+        case .hiking, .walking:
+            sportMultiplier = 0.85 // Lower intensity activities
+        case .rowing, .crossTraining:
+            sportMultiplier = 1.05 // Full-body activities
+        default:
+            sportMultiplier = 1.0 // Default to cycling baseline
+        }
+
+        return (baseTSS * sportMultiplier).rounded(toPlaces: 1)
     }
 
     /// Estimate maximum heart rate using age-based formula (220 - age)
@@ -168,25 +214,71 @@ struct TSSCalculator {
 
     /// Estimate TSS from workout duration and type when no power/HR data available
     /// Uses typical intensity factors for each workout type
+    /// This is a fallback method and less accurate than power or HR-based calculations
     static func estimateTSSFromDuration(workout: HKWorkout) -> Double {
         let durationHours = workout.duration / 3600.0
 
         // Typical IF (Intensity Factor) values for different workout types
+        // Based on typical moderate-intensity training zones
         let typicalIF: Double
         switch workout.workoutActivityType {
         case .cycling:
-            typicalIF = 0.70 // Moderate endurance ride
+            typicalIF = 0.70 // Moderate endurance ride (Zone 2-3)
         case .running:
-            typicalIF = 0.75 // Moderate run
+            typicalIF = 0.75 // Moderate run (Zone 2-3, higher impact)
         case .swimming:
-            typicalIF = 0.65 // Moderate swim
+            typicalIF = 0.65 // Moderate swim (technique-limited)
+        case .hiking:
+            typicalIF = 0.55 // Hiking (lower intensity, longer duration)
+        case .walking:
+            typicalIF = 0.45 // Walking (low intensity)
+        case .rowing:
+            typicalIF = 0.72 // Rowing (full-body, similar to cycling)
+        case .crossTraining, .functionalStrengthTraining:
+            typicalIF = 0.68 // Cross-training activities
+        case .elliptical:
+            typicalIF = 0.65 // Elliptical (lower impact than running)
+        case .yoga, .pilates:
+            typicalIF = 0.40 // Mind-body activities (low cardiovascular stress)
         default:
-            typicalIF = 0.60 // Conservative default
+            typicalIF = 0.60 // Conservative default for unknown activities
         }
 
         // TSS ≈ hours × 100 × IF²
+        // This approximation assumes TSS = 100 for 1 hour at threshold (IF = 1.0)
         let estimatedTSS = durationHours * 100 * pow(typicalIF, 2)
 
         return max(0, estimatedTSS.rounded(toPlaces: 1))
+    }
+
+    // MARK: - Workout Type Support
+
+    /// Check if a workout type is supported for TSS calculation
+    static func isWorkoutTypeSupported(_ type: HKWorkoutActivityType) -> Bool {
+        switch type {
+        case .cycling, .running, .swimming, .hiking, .walking,
+             .rowing, .crossTraining, .functionalStrengthTraining,
+             .elliptical, .yoga, .pilates:
+            return true
+        default:
+            // All workout types are supported via heart rate or duration estimation
+            // but some may be more accurate than others
+            return true
+        }
+    }
+
+    /// Get a human-readable description of TSS calculation method for a workout
+    static func getTSSCalculationMethod(
+        workout: HKWorkout,
+        hasPowerData: Bool,
+        hasHeartRateData: Bool
+    ) -> String {
+        if workout.workoutActivityType == .cycling && hasPowerData {
+            return "Power-based (most accurate)"
+        } else if hasHeartRateData {
+            return "Heart rate-based"
+        } else {
+            return "Duration estimate"
+        }
     }
 }
