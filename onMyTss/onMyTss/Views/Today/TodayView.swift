@@ -81,6 +81,62 @@ struct TodayView: View {
             }
             .padding(.horizontal)
 
+            // HRV/RHR Recovery Section
+            if viewModel.hasPhysiologyData {
+                VStack(alignment: .leading, spacing: 12) {
+                    // Recovery Status Header
+                    if let recoveryStatus = viewModel.recoveryStatus {
+                        HStack(spacing: 8) {
+                            Image(systemName: "heart.text.square.fill")
+                                .font(.title3)
+                                .foregroundStyle(.pink)
+
+                            Text(recoveryStatus)
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(.primary)
+
+                            Spacer()
+
+                            if let modifier = viewModel.combinedModifierFormatted {
+                                Text(modifier)
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(
+                                        modifier.hasPrefix("+") ? .green :
+                                        modifier.hasPrefix("-") ? .orange : .secondary
+                                    )
+                            }
+                        }
+                        .padding()
+                        .background(
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(Color(uiColor: .secondarySystemBackground))
+                        )
+                    }
+
+                    // HRV and RHR Values
+                    HStack(spacing: 12) {
+                        if let hrv = viewModel.hrvFormatted {
+                            PhysiologyMetricCard(
+                                icon: "waveform.path.ecg",
+                                title: "HRV",
+                                value: hrv,
+                                modifier: viewModel.hrvModifierFormatted
+                            )
+                        }
+
+                        if let rhr = viewModel.rhrFormatted {
+                            PhysiologyMetricCard(
+                                icon: "heart.fill",
+                                title: "RHR",
+                                value: rhr,
+                                modifier: viewModel.rhrModifierFormatted
+                            )
+                        }
+                    }
+                }
+                .padding(.horizontal)
+            }
+
             // TSS Guidance Card
             if let recommendation = viewModel.tssRecommendation {
                 TSSGuidanceCard(
@@ -238,6 +294,52 @@ struct MetricCard: View {
     }
 }
 
+// MARK: - Physiology Metric Card
+
+struct PhysiologyMetricCard: View {
+    let icon: String
+    let title: String
+    let value: String
+    let modifier: String?
+
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.caption)
+                    .foregroundStyle(.pink)
+
+                Text(title)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Text(value)
+                .font(.title3.weight(.bold))
+                .foregroundStyle(.primary)
+
+            if let modifier = modifier {
+                Text(modifier)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(
+                        modifier.hasPrefix("+") ? .green :
+                        modifier.hasPrefix("-") ? .orange : .secondary
+                    )
+            } else {
+                Text("—")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(uiColor: .secondarySystemBackground))
+        )
+    }
+}
+
 // MARK: - Previews
 
 #Preview("With Data") {
@@ -245,7 +347,7 @@ struct MetricCard: View {
     let container = try! ModelContainer(for: DayAggregate.self, UserThresholds.self, AppState.self, configurations: config)
     let dataStore = DataStore(modelContainer: container)
 
-    // Create sample data
+    // Create sample data with HRV/RHR
     let today = Date().startOfDay
     let aggregate = DayAggregate(
         date: today,
@@ -256,7 +358,11 @@ struct MetricCard: View {
         bodyBatteryScore: 65,
         rampRate: 3.5,
         workoutCount: 1,
-        maxTSSWorkout: 120
+        maxTSSWorkout: 120,
+        avgHRV: 45.0,
+        avgRHR: 52.0,
+        hrvModifier: 8.0,
+        rhrModifier: 5.0
     )
 
     try! dataStore.saveDayAggregate(aggregate)

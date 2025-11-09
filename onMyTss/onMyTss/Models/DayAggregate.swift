@@ -20,9 +20,11 @@ final class DayAggregate {
     var workoutCount: Int
     var maxTSSWorkout: Double?
 
-    // Future: HRV and RHR modifiers (not in MVP)
-    var hrvModifier: Double?
-    var rhrModifier: Double?
+    // Phase 1: HRV and RHR physiological data
+    var avgHRV: Double? // Average HRV for the day (ms)
+    var avgRHR: Double? // Average resting heart rate for the day (bpm)
+    var hrvModifier: Double? // BB modifier from HRV (-20 to +20)
+    var rhrModifier: Double? // BB modifier from RHR (-20 to +20)
 
     init(
         date: Date,
@@ -34,6 +36,8 @@ final class DayAggregate {
         rampRate: Double? = nil,
         workoutCount: Int = 0,
         maxTSSWorkout: Double? = nil,
+        avgHRV: Double? = nil,
+        avgRHR: Double? = nil,
         hrvModifier: Double? = nil,
         rhrModifier: Double? = nil
     ) {
@@ -46,6 +50,8 @@ final class DayAggregate {
         self.rampRate = rampRate
         self.workoutCount = workoutCount
         self.maxTSSWorkout = maxTSSWorkout
+        self.avgHRV = avgHRV
+        self.avgRHR = avgRHR
         self.hrvModifier = hrvModifier
         self.rhrModifier = rhrModifier
     }

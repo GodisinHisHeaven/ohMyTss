@@ -128,6 +128,64 @@ class BodyBatteryEngine {
 
     // MARK: - Private Helper Methods
 
+    /// Fetch and process HRV/RHR data for a date range
+    private func processPhysiologyData(from startDate: Date, to endDate: Date) async throws -> [Date: (hrv: Double?, rhr: Double?, hrvMod: Double?, rhrMod: Double?)] {
+        var physiologyMap: [Date: (hrv: Double?, rhr: Double?, hrvMod: Double?, rhrMod: Double?)] = [:]
+
+        // Fetch all HRV and RHR samples for the range
+        let hrvSamples = try await healthKitManager.fetchHRVSamples(from: startDate, to: endDate)
+        let rhrSamples = try await healthKitManager.fetchRestingHeartRateSamples(from: startDate, to: endDate)
+
+        // Group samples by day
+        var dailyHRVSamples: [Date: [HKQuantitySample]] = [:]
+        var dailyRHRSamples: [Date: [HKQuantitySample]] = [:]
+
+        for sample in hrvSamples {
+            let day = sample.startDate.startOfDay
+            dailyHRVSamples[day, default: []].append(sample)
+        }
+
+        for sample in rhrSamples {
+            let day = sample.startDate.startOfDay
+            dailyRHRSamples[day, default: []].append(sample)
+        }
+
+        // Calculate baseline from last 14 days of data (median of available values)
+        let baselineHRV = PhysiologyModifier.calculateBaselineHRV(from: hrvSamples)
+        let baselineRHR = PhysiologyModifier.calculateBaselineRHR(from: rhrSamples)
+
+        // Process each day
+        let calendar = Calendar.current
+        var currentDate = startDate.startOfDay
+
+        while currentDate <= endDate.startOfDay {
+            // Calculate daily averages
+            let dailyHRV = dailyHRVSamples[currentDate].flatMap {
+                PhysiologyModifier.calculateDailyAverageHRV(from: $0)
+            }
+            let dailyRHR = dailyRHRSamples[currentDate].flatMap {
+                PhysiologyModifier.calculateDailyAverageRHR(from: $0)
+            }
+
+            // Calculate modifiers if we have baselines
+            var hrvModifier: Double?
+            var rhrModifier: Double?
+
+            if let hrv = dailyHRV, let baseline = baselineHRV {
+                hrvModifier = PhysiologyModifier.calculateHRVModifier(currentHRV: hrv, baselineHRV: baseline)
+            }
+
+            if let rhr = dailyRHR, let baseline = baselineRHR {
+                rhrModifier = PhysiologyModifier.calculateRHRModifier(currentRHR: rhr, baselineRHR: baseline)
+            }
+
+            physiologyMap[currentDate] = (dailyHRV, dailyRHR, hrvModifier, rhrModifier)
+            currentDate = currentDate.addingDays(1)
+        }
+
+        return physiologyMap
+    }
+
     /// Process workouts and aggregate TSS by day
     private func processDailyTSS(workouts: [HKWorkout], ftp: Int?) async throws -> [Date: Double] {
         var dailyTSSMap: [Date: Double] = [:]
@@ -199,13 +257,32 @@ class BodyBatteryEngine {
         // Calculate time series
         let timeSeries = LoadCalculator.calculateTimeSeries(tssValues: tssValues)
 
+        // Fetch and process physiological data (HRV/RHR)
+        let physiologyMap = try await processPhysiologyData(from: startDate, to: endDate)
+
         // Save each day's aggregate
         for (index, date) in allDates.enumerated() {
             let tss = tssValues[index]
             let metrics = timeSeries[index]
 
-            // Calculate Body Battery score
-            let bodyBatteryScore = BodyBatteryCalculator.calculateScore(from: metrics.tsb)
+            // Get physiological data for this day
+            let physiology = physiologyMap[date]
+            let avgHRV = physiology?.hrv
+            let avgRHR = physiology?.rhr
+            let hrvModifier = physiology?.hrvMod
+            let rhrModifier = physiology?.rhrMod
+
+            // Calculate base Body Battery score from TSB
+            let baseScore = BodyBatteryCalculator.calculateScore(from: metrics.tsb)
+
+            // Apply physiological modifiers
+            let combinedModifier = PhysiologyModifier.calculateCombinedModifier(
+                hrvModifier: hrvModifier,
+                rhrModifier: rhrModifier
+            )
+
+            // Final score with modifiers applied
+            let bodyBatteryScore = Int((Double(baseScore) + combinedModifier).clamped(to: 0...100))
 
             // Calculate ramp rate if we have data from a week ago
             var rampRate: Double?
@@ -228,6 +305,10 @@ class BodyBatteryEngine {
                 existing.rampRate = rampRate
                 existing.workoutCount = workoutCount
                 existing.maxTSSWorkout = tss > 0 ? tss : nil
+                existing.avgHRV = avgHRV
+                existing.avgRHR = avgRHR
+                existing.hrvModifier = hrvModifier
+                existing.rhrModifier = rhrModifier
 
                 try dataStore.saveDayAggregate(existing)
             } else {
@@ -241,7 +322,11 @@ class BodyBatteryEngine {
                     bodyBatteryScore: bodyBatteryScore,
                     rampRate: rampRate,
                     workoutCount: workoutCount,
-                    maxTSSWorkout: tss > 0 ? tss : nil
+                    maxTSSWorkout: tss > 0 ? tss : nil,
+                    avgHRV: avgHRV,
+                    avgRHR: avgRHR,
+                    hrvModifier: hrvModifier,
+                    rhrModifier: rhrModifier
                 )
 
                 try dataStore.saveDayAggregate(aggregate)
