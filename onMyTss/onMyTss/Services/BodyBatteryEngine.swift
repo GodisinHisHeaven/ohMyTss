@@ -186,6 +186,32 @@ class BodyBatteryEngine {
         return physiologyMap
     }
 
+    /// Fetch and process sleep data for a date range
+    private func processSleepData(from startDate: Date, to endDate: Date) async throws -> [Date: SleepQuality] {
+        var sleepMap: [Date: SleepQuality] = [:]
+
+        // Fetch all sleep samples for the range
+        let sleepSamples = try await healthKitManager.fetchSleepSamples(from: startDate, to: endDate)
+
+        // Group samples by day (sleep belongs to the day it ends, not starts)
+        var dailySleepSamples: [Date: [HKCategorySample]] = [:]
+
+        for sample in sleepSamples {
+            // Assign sleep to the day it ends (morning day)
+            let day = sample.endDate.startOfDay
+            dailySleepSamples[day, default: []].append(sample)
+        }
+
+        // Process each day
+        for (date, samples) in dailySleepSamples {
+            if let quality = SleepAnalyzer.calculateSleepQuality(from: samples) {
+                sleepMap[date] = quality
+            }
+        }
+
+        return sleepMap
+    }
+
     /// Process workouts and aggregate TSS by day
     private func processDailyTSS(workouts: [HKWorkout], ftp: Int?) async throws -> [Date: Double] {
         var dailyTSSMap: [Date: Double] = [:]
@@ -295,6 +321,9 @@ class BodyBatteryEngine {
         // Fetch and process physiological data (HRV/RHR)
         let physiologyMap = try await processPhysiologyData(from: startDate, to: endDate)
 
+        // Fetch and process sleep data
+        let sleepMap = try await processSleepData(from: startDate, to: endDate)
+
         // Save each day's aggregate
         for (index, date) in allDates.enumerated() {
             let tss = tssValues[index]
@@ -319,6 +348,12 @@ class BodyBatteryEngine {
                 hrvModifier: hrvModifier,
                 rhrModifier: rhrModifier
             )
+
+            // Get sleep data for this day
+            let sleep = sleepMap[date]
+            let sleepDuration = sleep?.durationHours
+            let sleepQualityScore = sleep?.qualityScore
+            let deepSleepDuration = sleep?.deepSleepHours
 
             // Calculate ramp rate if we have data from a week ago
             var rampRate: Double?
@@ -346,6 +381,9 @@ class BodyBatteryEngine {
                 existing.hrvModifier = hrvModifier
                 existing.rhrModifier = rhrModifier
                 existing.illnessLikelihood = illnessLikelihood
+                existing.sleepDuration = sleepDuration
+                existing.sleepQualityScore = sleepQualityScore
+                existing.deepSleepDuration = deepSleepDuration
 
                 try dataStore.saveDayAggregate(existing)
             } else {
@@ -364,7 +402,10 @@ class BodyBatteryEngine {
                     avgRHR: avgRHR,
                     hrvModifier: hrvModifier,
                     rhrModifier: rhrModifier,
-                    illnessLikelihood: illnessLikelihood
+                    illnessLikelihood: illnessLikelihood,
+                    sleepDuration: sleepDuration,
+                    sleepQualityScore: sleepQualityScore,
+                    deepSleepDuration: deepSleepDuration
                 )
 
                 try dataStore.saveDayAggregate(aggregate)
