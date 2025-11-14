@@ -307,17 +307,12 @@ class BodyBatteryEngine {
             let hrvModifier = physiology?.hrvMod
             let rhrModifier = physiology?.rhrMod
 
-            // Calculate base Body Battery score from TSB
-            let baseScore = BodyBatteryCalculator.calculateScore(from: metrics.tsb)
-
-            // Apply physiological modifiers
-            let combinedModifier = PhysiologyModifier.calculateCombinedModifier(
+            // Calculate Body Battery score with HRV/RHR modifiers
+            let bodyBatteryScore = BodyBatteryCalculator.calculateScoreWithModifiers(
+                tsb: metrics.tsb,
                 hrvModifier: hrvModifier,
                 rhrModifier: rhrModifier
             )
-
-            // Final score with modifiers applied
-            let bodyBatteryScore = Int((Double(baseScore) + combinedModifier).clamped(to: 0...100))
 
             // Calculate ramp rate if we have data from a week ago
             var rampRate: Double?
