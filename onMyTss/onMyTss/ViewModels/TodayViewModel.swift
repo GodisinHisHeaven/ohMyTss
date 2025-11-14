@@ -108,7 +108,8 @@ class TodayViewModel {
             avgHRV: aggregate.avgHRV,
             avgRHR: aggregate.avgRHR,
             hrvModifier: aggregate.hrvModifier,
-            rhrModifier: aggregate.rhrModifier
+            rhrModifier: aggregate.rhrModifier,
+            illnessLikelihood: aggregate.illnessLikelihood
         )
     }
 
@@ -276,6 +277,55 @@ class TodayViewModel {
             return "🚨 Very poor recovery - consider rest"
         }
     }
+
+    /// Illness alert message if detection threshold is reached
+    var illnessAlert: IllnessAlert? {
+        guard let likelihood = todayMetrics?.illnessLikelihood else {
+            return nil
+        }
+
+        if likelihood >= 1.0 {
+            return IllnessAlert(
+                severity: .high,
+                title: "Potential Illness Detected",
+                message: "Your HRV and resting heart rate show strong signs of illness or severe fatigue. Consider taking a rest day and monitoring your symptoms."
+            )
+        } else if likelihood >= 0.7 {
+            return IllnessAlert(
+                severity: .medium,
+                title: "Recovery Warning",
+                message: "Your recovery markers suggest possible overtraining or early illness. Consider reducing training intensity today."
+            )
+        } else if likelihood >= 0.3 {
+            return IllnessAlert(
+                severity: .low,
+                title: "Recovery Alert",
+                message: "Your body may not be fully recovered. Focus on lighter activities and prioritize rest."
+            )
+        }
+
+        return nil
+    }
+}
+
+// MARK: - Illness Alert
+
+struct IllnessAlert {
+    enum Severity {
+        case low, medium, high
+    }
+
+    let severity: Severity
+    let title: String
+    let message: String
+
+    var color: String {
+        switch severity {
+        case .low: return "yellow"
+        case .medium: return "orange"
+        case .high: return "red"
+        }
+    }
 }
 
 // MARK: - Day Metrics
@@ -294,4 +344,5 @@ struct DayMetrics {
     let avgRHR: Double?
     let hrvModifier: Double?
     let rhrModifier: Double?
+    let illnessLikelihood: Double?
 }

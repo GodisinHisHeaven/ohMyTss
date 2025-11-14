@@ -48,13 +48,18 @@ struct TodayView: View {
 
     private var contentView: some View {
         VStack(spacing: 24) {
+            // Illness Alert (if detected)
+            if let alert = viewModel.illnessAlert {
+                illnessAlertBanner(alert: alert)
+            }
+
             // Gauge
             BodyBatteryGauge(
                 score: viewModel.todayScore,
                 readinessLevel: viewModel.readinessLevel
             )
             .frame(width: 220, height: 220)
-            .padding(.top, 20)
+            .padding(.top, viewModel.illnessAlert == nil ? 20 : 0)
 
             // Readiness Info
             VStack(spacing: 8) {
@@ -261,6 +266,45 @@ struct TodayView: View {
             Spacer()
         }
         .transition(.move(edge: .top).combined(with: .opacity))
+    }
+
+    private func illnessAlertBanner(alert: IllnessAlert) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                Image(systemName: alert.severity == .high ? "cross.case.fill" :
+                                   alert.severity == .medium ? "exclamationmark.triangle.fill" :
+                                   "info.circle.fill")
+                    .font(.title2)
+                    .foregroundStyle(alert.severity == .high ? .red :
+                                     alert.severity == .medium ? .orange :
+                                     .yellow)
+
+                Text(alert.title)
+                    .font(.headline.weight(.semibold))
+                    .foregroundStyle(.primary)
+            }
+
+            Text(alert.message)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding()
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(alert.severity == .high ? Color.red.opacity(0.1) :
+                      alert.severity == .medium ? Color.orange.opacity(0.1) :
+                      Color.yellow.opacity(0.1))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(alert.severity == .high ? Color.red.opacity(0.3) :
+                             alert.severity == .medium ? Color.orange.opacity(0.3) :
+                             Color.yellow.opacity(0.3), lineWidth: 1)
+        )
+        .padding(.horizontal)
+        .padding(.top, 8)
     }
 }
 
