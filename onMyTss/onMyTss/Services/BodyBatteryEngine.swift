@@ -314,6 +314,12 @@ class BodyBatteryEngine {
                 rhrModifier: rhrModifier
             )
 
+            // Detect potential illness from HRV/RHR signals
+            let illnessLikelihood = PhysiologyModifier.detectIllness(
+                hrvModifier: hrvModifier,
+                rhrModifier: rhrModifier
+            )
+
             // Calculate ramp rate if we have data from a week ago
             var rampRate: Double?
             if index >= 7 {
@@ -339,6 +345,7 @@ class BodyBatteryEngine {
                 existing.avgRHR = avgRHR
                 existing.hrvModifier = hrvModifier
                 existing.rhrModifier = rhrModifier
+                existing.illnessLikelihood = illnessLikelihood
 
                 try dataStore.saveDayAggregate(existing)
             } else {
@@ -356,7 +363,8 @@ class BodyBatteryEngine {
                     avgHRV: avgHRV,
                     avgRHR: avgRHR,
                     hrvModifier: hrvModifier,
-                    rhrModifier: rhrModifier
+                    rhrModifier: rhrModifier,
+                    illnessLikelihood: illnessLikelihood
                 )
 
                 try dataStore.saveDayAggregate(aggregate)
