@@ -43,20 +43,25 @@ struct BodyBatteryCalculator {
         return Int(score.clamped(to: 0...100))
     }
 
-    /// Calculate score with modifiers (for future HRV/RHR integration)
-    /// In MVP, modifiers are ignored
+    /// Calculate score with HRV/RHR modifiers applied
+    /// Combines base TSB score with physiological recovery signals
     static func calculateScoreWithModifiers(
         tsb: Double,
         hrvModifier: Double? = nil,
         rhrModifier: Double? = nil
     ) -> Int {
-        let baseScore = calculateScore(from: tsb)
+        let baseScore = Double(calculateScore(from: tsb))
 
-        // For MVP, modifiers are not used
-        // In v1.0, we'll apply HRV and RHR adjustments here
-        // let modifiedScore = applyModifiers(baseScore, hrvModifier, rhrModifier)
+        // Calculate combined modifier from HRV and RHR
+        let combinedModifier = PhysiologyModifier.calculateCombinedModifier(
+            hrvModifier: hrvModifier,
+            rhrModifier: rhrModifier
+        )
 
-        return baseScore
+        // Apply modifier to base score and clamp to 0-100
+        let modifiedScore = (baseScore + combinedModifier).clamped(to: 0...100)
+
+        return Int(modifiedScore)
     }
 
     // MARK: - Score Interpretation
