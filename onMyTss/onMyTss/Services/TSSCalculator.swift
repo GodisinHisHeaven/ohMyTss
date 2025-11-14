@@ -115,19 +115,24 @@ struct TSSCalculator {
 
         let hrRatio = min(max((avgHR - restingHR) / hrReserve, 0.0), 1.0)
 
-        // Exponential factor based on HR ratio (modified TRIMP method)
-        // This creates a non-linear relationship where higher intensities contribute more stress
-        let expFactor = exp(1.92 * hrRatio)
-
-        // Calculate TRIMP-based TSS
-        // Normalized to match power-based TSS scale (60 min at FTP = 100 TSS)
+        // Calculate exercise TRIMP using Bannister equation
+        // TRIMP = duration_minutes × %HRR × exp(k × %HRR)
+        // where k = 1.92 for males (we use male factor as default)
         let durationMinutes = duration / 60.0
+        let exerciseTRIMP = durationMinutes * hrRatio * exp(1.92 * hrRatio)
 
-        // Base TSS calculation using HR reserve and exponential weighting
-        // The division by 60 normalizes to a 1-hour baseline
-        let baseTSS = (durationMinutes * hrRatio * expFactor) / 60.0 * 100
+        // Calculate 1-hour FTP TRIMP for normalization
+        // We estimate threshold HR at 85% of HR reserve (typical for well-trained athletes)
+        // This gives us: hrAtFTP = restingHR + (0.85 × hrReserve)
+        let hrRatioAtFTP = 0.85 // Threshold is typically at 85% of HR reserve
+        let oneHourFTPTRIMP = 60.0 * hrRatioAtFTP * exp(1.92 * hrRatioAtFTP)
 
-        return max(0, baseTSS.rounded(toPlaces: 1))
+        // Normalize exercise TRIMP to TSS scale
+        // hrTSS = (exerciseTRIMP / oneHourFTPTRIMP) × 100
+        // This ensures that 1 hour at threshold = 100 TSS
+        let hrTSS = (exerciseTRIMP / oneHourFTPTRIMP) * 100.0
+
+        return max(0, hrTSS.rounded(toPlaces: 1))
     }
 
     /// Calculate TSS from heart rate with workout type context
