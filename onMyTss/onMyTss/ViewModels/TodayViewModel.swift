@@ -109,7 +109,10 @@ class TodayViewModel {
             avgRHR: aggregate.avgRHR,
             hrvModifier: aggregate.hrvModifier,
             rhrModifier: aggregate.rhrModifier,
-            illnessLikelihood: aggregate.illnessLikelihood
+            illnessLikelihood: aggregate.illnessLikelihood,
+            sleepDuration: aggregate.sleepDuration,
+            sleepQualityScore: aggregate.sleepQualityScore,
+            deepSleepDuration: aggregate.deepSleepDuration
         )
     }
 
@@ -278,6 +281,46 @@ class TodayViewModel {
         }
     }
 
+    // MARK: - Sleep Properties
+
+    /// Formatted sleep duration (e.g., "7.5h")
+    var sleepDurationFormatted: String? {
+        guard let duration = todayMetrics?.sleepDuration else { return nil }
+        return String(format: "%.1fh", duration)
+    }
+
+    /// Formatted deep sleep duration (e.g., "1.5h")
+    var deepSleepFormatted: String? {
+        guard let deep = todayMetrics?.deepSleepDuration else { return nil }
+        return String(format: "%.1fh", deep)
+    }
+
+    /// Sleep quality score formatted
+    var sleepQualityFormatted: String? {
+        guard let score = todayMetrics?.sleepQualityScore else { return nil }
+        return "\(score)"
+    }
+
+    /// Whether we have sleep data to display
+    var hasSleepData: Bool {
+        todayMetrics?.sleepDuration != nil
+    }
+
+    /// Sleep quality description
+    var sleepQualityDescription: String? {
+        guard let score = todayMetrics?.sleepQualityScore else { return nil }
+
+        if score >= 80 {
+            return "Excellent sleep quality"
+        } else if score >= 60 {
+            return "Good sleep quality"
+        } else if score >= 40 {
+            return "Fair sleep quality"
+        } else {
+            return "Poor sleep quality"
+        }
+    }
+
     /// Illness alert message if detection threshold is reached
     var illnessAlert: IllnessAlert? {
         guard let likelihood = todayMetrics?.illnessLikelihood else {
@@ -345,4 +388,9 @@ struct DayMetrics {
     let hrvModifier: Double?
     let rhrModifier: Double?
     let illnessLikelihood: Double?
+
+    // Sleep quality data
+    let sleepDuration: Double?
+    let sleepQualityScore: Int?
+    let deepSleepDuration: Double?
 }
