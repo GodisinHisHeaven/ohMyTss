@@ -77,7 +77,11 @@ class HealthKitManager {
                 }
 
                 let workouts = samples as? [HKWorkout] ?? []
-                continuation.resume(returning: workouts)
+
+                // Deduplicate workouts synced from multiple devices
+                let deduplicatedWorkouts = self.deduplicateWorkouts(workouts)
+
+                continuation.resume(returning: deduplicatedWorkouts)
             }
 
             healthStore.execute(query)
@@ -101,7 +105,11 @@ class HealthKitManager {
                 }
 
                 let workouts = addedSamples as? [HKWorkout] ?? []
-                continuation.resume(returning: (workouts, newAnchor ?? HKQueryAnchor(fromValue: 0)))
+
+                // Deduplicate workouts synced from multiple devices
+                let deduplicatedWorkouts = self.deduplicateWorkouts(workouts)
+
+                continuation.resume(returning: (deduplicatedWorkouts, newAnchor ?? HKQueryAnchor(fromValue: 0)))
             }
 
             healthStore.execute(query)
@@ -256,6 +264,46 @@ class HealthKitManager {
     /// Convert Data back to HKQueryAnchor
     func decodeAnchor(from data: Data) -> HKQueryAnchor? {
         try? NSKeyedUnarchiver.unarchivedObject(ofClass: HKQueryAnchor.self, from: data)
+    }
+
+    /// Deduplicate workouts that may have been synced from multiple devices
+    /// Workouts are considered duplicates if they have the same start time, duration, and type
+    private nonisolated func deduplicateWorkouts(_ workouts: [HKWorkout]) -> [HKWorkout] {
+        var uniqueWorkouts: [HKWorkout] = []
+
+        // Sort workouts by start date to process chronologically
+        let sortedWorkouts = workouts.sorted { $0.startDate < $1.startDate }
+
+        for workout in sortedWorkouts {
+            // Check if this workout is a duplicate of any already-added workout
+            let isDuplicate = uniqueWorkouts.contains { existingWorkout in
+                // Same workout type
+                guard workout.workoutActivityType == existingWorkout.workoutActivityType else {
+                    return false
+                }
+
+                // Start times within 60 seconds of each other (handles sync timing differences)
+                let timeDiff = abs(workout.startDate.timeIntervalSince(existingWorkout.startDate))
+                guard timeDiff < 60 else {
+                    return false
+                }
+
+                // Durations within 5 seconds of each other (handles minor rounding differences)
+                let durationDiff = abs(workout.duration - existingWorkout.duration)
+                guard durationDiff < 5 else {
+                    return false
+                }
+
+                // If we get here, it's a duplicate
+                return true
+            }
+
+            if !isDuplicate {
+                uniqueWorkouts.append(workout)
+            }
+        }
+
+        return uniqueWorkouts
     }
 }
 

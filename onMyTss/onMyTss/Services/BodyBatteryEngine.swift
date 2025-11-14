@@ -190,8 +190,6 @@ class BodyBatteryEngine {
     private func processDailyTSS(workouts: [HKWorkout], ftp: Int?) async throws -> [Date: Double] {
         var dailyTSSMap: [Date: Double] = [:]
 
-        print("\n📊 [TSS DEBUG] Processing \(workouts.count) workouts...")
-
         for workout in workouts {
             // Calculate TSS for this workout
             let tss = try await calculateWorkoutTSS(workout: workout, ftp: ftp)
@@ -199,15 +197,6 @@ class BodyBatteryEngine {
             // Aggregate by day
             let day = workout.startDate.startOfDay
             dailyTSSMap[day, default: 0] += tss
-        }
-
-        // DEBUG: Log daily TSS summary
-        let sortedDays = dailyTSSMap.keys.sorted()
-        print("\n📅 [TSS DEBUG] Daily TSS Summary (\(sortedDays.count) days):")
-        for day in sortedDays.suffix(7) { // Show last 7 days
-            let formatter = DateFormatter()
-            formatter.dateFormat = "MMM d"
-            print("  \(formatter.string(from: day)): \(Int(dailyTSSMap[day] ?? 0)) TSS")
         }
 
         return dailyTSSMap
@@ -224,16 +213,11 @@ class BodyBatteryEngine {
             let powerSamples = try await healthKitManager.fetchPowerSamples(for: workout)
 
             if !powerSamples.isEmpty, let ftp = ftp, ftp > 0 {
-                let tss = TSSCalculator.calculateTSS(
+                return TSSCalculator.calculateTSS(
                     powerSamples: powerSamples,
                     ftp: ftp,
                     duration: duration
                 )
-
-                // DEBUG: Log power-based TSS
-                print("🚴 [TSS DEBUG] Power-based - Type: \(workoutType), Duration: \(Int(duration/60))min, Samples: \(powerSamples.count), FTP: \(ftp), TSS: \(tss)")
-
-                return tss
             }
         }
 
@@ -241,33 +225,27 @@ class BodyBatteryEngine {
         // This is the primary method for running, swimming, and cycling without power
         let heartRateSamples = try await healthKitManager.fetchHeartRateSamples(for: workout)
 
-        if !heartRateSamples.isEmpty {
+        // Require minimum HR sample density for reliable TSS calculation
+        // We need at least 1 sample per 5 minutes, or 10 samples minimum (whichever is higher)
+        let durationMinutes = duration / 60.0
+        let minRequiredSamples = max(10, Int(durationMinutes / 5.0))
+
+        if heartRateSamples.count >= minRequiredSamples {
             // Get recent RHR data to improve HR-based TSS accuracy
             let recentRHR = try? await getRecentRestingHeartRate()
 
             // Use sport-specific TSS calculation for better accuracy
-            let tss = TSSCalculator.calculateTSSFromHeartRateWithType(
+            return TSSCalculator.calculateTSSFromHeartRateWithType(
                 heartRateSamples: heartRateSamples,
                 duration: duration,
                 workoutType: workoutType,
                 maxHeartRate: nil, // Will use age-based estimation
                 restingHeartRate: recentRHR
             )
-
-            // DEBUG: Log HR-based TSS
-            let avgHR = heartRateSamples.map { $0.quantity.doubleValue(for: .count().unitDivided(by: .minute())) }.reduce(0, +) / Double(heartRateSamples.count)
-            print("💓 [TSS DEBUG] HR-based - Type: \(workoutType), Duration: \(Int(duration/60))min, HR Samples: \(heartRateSamples.count), Avg HR: \(Int(avgHR)), RHR: \(recentRHR ?? 0), TSS: \(tss)")
-
-            return tss
         }
 
         // Strategy 3: Duration-based estimation (last resort when no HR data)
-        let tss = TSSCalculator.estimateTSSFromDuration(workout: workout)
-
-        // DEBUG: Log duration-based TSS
-        print("⏱️  [TSS DEBUG] Duration-based - Type: \(workoutType), Duration: \(Int(duration/60))min, TSS: \(tss)")
-
-        return tss
+        return TSSCalculator.estimateTSSFromDuration(workout: workout)
     }
 
     /// Get recent resting heart rate for more accurate HR-based TSS calculations
@@ -313,15 +291,6 @@ class BodyBatteryEngine {
 
         // Calculate time series
         let timeSeries = LoadCalculator.calculateTimeSeries(tssValues: tssValues)
-
-        // DEBUG: Log CTL/ATL/TSB for last 7 days
-        print("\n📈 [CTL/ATL DEBUG] Training Load Metrics (last 7 days):")
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MMM d"
-        for (index, date) in allDates.enumerated().suffix(7) {
-            let metrics = timeSeries[index]
-            print("  \(formatter.string(from: date)): TSS=\(Int(tssValues[index])), CTL=\(Int(metrics.ctl)), ATL=\(Int(metrics.atl)), TSB=\(Int(metrics.tsb))")
-        }
 
         // Fetch and process physiological data (HRV/RHR)
         let physiologyMap = try await processPhysiologyData(from: startDate, to: endDate)
