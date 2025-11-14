@@ -38,7 +38,8 @@ class HealthKitManager {
             HKObjectType.quantityType(forIdentifier: .restingHeartRate)!,
             HKObjectType.quantityType(forIdentifier: .activeEnergyBurned)!,
             HKObjectType.quantityType(forIdentifier: .cyclingPower)!,
-            HKObjectType.quantityType(forIdentifier: .cyclingCadence)!
+            HKObjectType.quantityType(forIdentifier: .cyclingCadence)!,
+            HKObjectType.categoryType(forIdentifier: .sleepAnalysis)!
         ]
 
         do {
@@ -248,6 +249,36 @@ class HealthKitManager {
 
                 let rhrSamples = samples as? [HKQuantitySample] ?? []
                 continuation.resume(returning: rhrSamples)
+            }
+
+            healthStore.execute(query)
+        }
+    }
+
+    // MARK: - Sleep Analysis
+
+    /// Fetch sleep analysis samples for a date range
+    func fetchSleepSamples(from startDate: Date, to endDate: Date) async throws -> [HKCategorySample] {
+        guard let sleepType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else {
+            throw HealthKitError.invalidType
+        }
+
+        let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
+
+        return try await withCheckedThrowingContinuation { continuation in
+            let query = HKSampleQuery(
+                sampleType: sleepType,
+                predicate: predicate,
+                limit: HKObjectQueryNoLimit,
+                sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)]
+            ) { _, samples, error in
+                if let error = error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+
+                let sleepSamples = samples as? [HKCategorySample] ?? []
+                continuation.resume(returning: sleepSamples)
             }
 
             healthStore.execute(query)

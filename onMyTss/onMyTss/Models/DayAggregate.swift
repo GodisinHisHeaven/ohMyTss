@@ -27,6 +27,11 @@ final class DayAggregate {
     var rhrModifier: Double? // BB modifier from RHR (-20 to +20)
     var illnessLikelihood: Double? // Illness detection score (0.0-1.0)
 
+    // Sleep quality data
+    var sleepDuration: Double? // Total sleep duration in hours
+    var sleepQualityScore: Int? // Sleep quality score (0-100)
+    var deepSleepDuration: Double? // Deep sleep duration in hours
+
     init(
         date: Date,
         totalTSS: Double = 0.0,
@@ -41,7 +46,10 @@ final class DayAggregate {
         avgRHR: Double? = nil,
         hrvModifier: Double? = nil,
         rhrModifier: Double? = nil,
-        illnessLikelihood: Double? = nil
+        illnessLikelihood: Double? = nil,
+        sleepDuration: Double? = nil,
+        sleepQualityScore: Int? = nil,
+        deepSleepDuration: Double? = nil
     ) {
         self.date = date
         self.totalTSS = totalTSS
@@ -57,5 +65,8 @@ final class DayAggregate {
         self.hrvModifier = hrvModifier
         self.rhrModifier = rhrModifier
         self.illnessLikelihood = illnessLikelihood
+        self.sleepDuration = sleepDuration
+        self.sleepQualityScore = sleepQualityScore
+        self.deepSleepDuration = deepSleepDuration
     }
 }
