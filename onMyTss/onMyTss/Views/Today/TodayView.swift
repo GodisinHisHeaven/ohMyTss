@@ -269,15 +269,30 @@ struct TodayView: View {
     }
 
     private func illnessAlertBanner(alert: IllnessAlert) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        let iconName: String = {
+            switch alert.severity {
+            case .high: return "cross.case.fill"
+            case .medium: return "exclamationmark.triangle.fill"
+            case .low: return "info.circle.fill"
+            }
+        }()
+
+        let iconColor: Color = {
+            switch alert.severity {
+            case .high: return .red
+            case .medium: return .orange
+            case .low: return .yellow
+            }
+        }()
+
+        let bgColor = iconColor.opacity(0.1)
+        let borderColor = iconColor.opacity(0.3)
+
+        return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 12) {
-                Image(systemName: alert.severity == .high ? "cross.case.fill" :
-                                   alert.severity == .medium ? "exclamationmark.triangle.fill" :
-                                   "info.circle.fill")
+                Image(systemName: iconName)
                     .font(.title2)
-                    .foregroundStyle(alert.severity == .high ? .red :
-                                     alert.severity == .medium ? .orange :
-                                     .yellow)
+                    .foregroundStyle(iconColor)
 
                 Text(alert.title)
                     .font(.headline.weight(.semibold))
@@ -291,18 +306,8 @@ struct TodayView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding()
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(alert.severity == .high ? Color.red.opacity(0.1) :
-                      alert.severity == .medium ? Color.orange.opacity(0.1) :
-                      Color.yellow.opacity(0.1))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(alert.severity == .high ? Color.red.opacity(0.3) :
-                             alert.severity == .medium ? Color.orange.opacity(0.3) :
-                             Color.yellow.opacity(0.3), lineWidth: 1)
-        )
+        .background(RoundedRectangle(cornerRadius: 12).fill(bgColor))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(borderColor, lineWidth: 1))
         .padding(.horizontal)
         .padding(.top, 8)
     }
