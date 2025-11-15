@@ -14,7 +14,9 @@ struct onMyTssApp: App {
         let schema = Schema([
             DayAggregate.self,
             UserThresholds.self,
-            AppState.self
+            AppState.self,
+            Workout.self,
+            StravaAuth.self
         ])
         let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
 

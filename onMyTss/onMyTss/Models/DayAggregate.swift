@@ -32,6 +32,12 @@ final class DayAggregate {
     var sleepQualityScore: Int? // Sleep quality score (0-100)
     var deepSleepDuration: Double? // Deep sleep duration in hours
 
+    // MARK: - Relationships
+
+    /// Individual workouts for this day
+    @Relationship(deleteRule: .cascade, inverse: \Workout.dayAggregate)
+    var workouts: [Workout] = []
+
     init(
         date: Date,
         totalTSS: Double = 0.0,

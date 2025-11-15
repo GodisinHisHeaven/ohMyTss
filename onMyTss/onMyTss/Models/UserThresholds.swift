@@ -27,6 +27,13 @@ final class UserThresholds {
     // Cycling thresholds
     var cyclingFTP: Int? // Functional Threshold Power (watts)
 
+    // Strava integration
+    var stravaFTP: Int? // FTP from Strava athlete profile
+    var preferStravaFTP: Bool // Whether to use Strava FTP over manual FTP
+
+    // Heart rate
+    var maxHeartRate: Int // Maximum heart rate (bpm)
+
     // Running thresholds (future v1.0)
     var runningLTPace: Int? // Lactate Threshold Pace (seconds per km)
     var runningLTHeartRate: Int? // LT Heart Rate (bpm)
@@ -45,6 +52,9 @@ final class UserThresholds {
     init(
         id: String = "user_thresholds",
         cyclingFTP: Int? = nil,
+        stravaFTP: Int? = nil,
+        preferStravaFTP: Bool = false,
+        maxHeartRate: Int = 190,
         runningLTPace: Int? = nil,
         runningLTHeartRate: Int? = nil,
         swimmingLTPace: Int? = nil,
@@ -55,6 +65,9 @@ final class UserThresholds {
     ) {
         self.id = id
         self.cyclingFTP = cyclingFTP
+        self.stravaFTP = stravaFTP
+        self.preferStravaFTP = preferStravaFTP
+        self.maxHeartRate = maxHeartRate
         self.runningLTPace = runningLTPace
         self.runningLTHeartRate = runningLTHeartRate
         self.swimmingLTPace = swimmingLTPace

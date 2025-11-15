@@ -180,4 +180,94 @@ class DataStore {
         appState.isComputationInProgress = false
         try modelContext.save()
     }
+
+    // MARK: - Workout Operations
+
+    func saveWorkout(_ workout: Workout) throws {
+        modelContext.insert(workout)
+        try modelContext.save()
+    }
+
+    func saveWorkouts(_ workouts: [Workout]) throws {
+        for workout in workouts {
+            modelContext.insert(workout)
+        }
+        try modelContext.save()
+    }
+
+    func fetchWorkout(byId id: String) throws -> Workout? {
+        let descriptor = FetchDescriptor<Workout>(
+            predicate: #Predicate { $0.id == id }
+        )
+        let results = try modelContext.fetch(descriptor)
+        return results.first
+    }
+
+    func fetchWorkouts(from startDate: Date, to endDate: Date, includeSupressed: Bool = false) throws -> [Workout] {
+        let calendar = Calendar.current
+        let start = calendar.startOfDay(for: startDate)
+        let end = calendar.startOfDay(for: endDate)
+
+        let descriptor = FetchDescriptor<Workout>(
+            predicate: #Predicate { workout in
+                workout.date >= start && workout.date <= end && (includeSupressed || !workout.isSuppressed)
+            },
+            sortBy: [SortDescriptor(\.startTime, order: .forward)]
+        )
+
+        return try modelContext.fetch(descriptor)
+    }
+
+    func fetchWorkoutsForDay(_ date: Date) throws -> [Workout] {
+        let calendar = Calendar.current
+        let startOfDay = calendar.startOfDay(for: date)
+
+        let descriptor = FetchDescriptor<Workout>(
+            predicate: #Predicate { $0.date == startOfDay && !$0.isSuppressed },
+            sortBy: [SortDescriptor(\.startTime, order: .forward)]
+        )
+
+        return try modelContext.fetch(descriptor)
+    }
+
+    func deleteWorkout(_ workout: Workout) throws {
+        modelContext.delete(workout)
+        try modelContext.save()
+    }
+
+    func deleteAllWorkouts() throws {
+        let descriptor = FetchDescriptor<Workout>()
+        let allWorkouts = try modelContext.fetch(descriptor)
+        for workout in allWorkouts {
+            modelContext.delete(workout)
+        }
+        try modelContext.save()
+    }
+
+    // MARK: - StravaAuth Operations
+
+    func fetchStravaAuth() throws -> StravaAuth? {
+        let descriptor = FetchDescriptor<StravaAuth>()
+        let results = try modelContext.fetch(descriptor)
+        return results.first
+    }
+
+    func saveStravaAuth(_ auth: StravaAuth) throws {
+        // Delete any existing auth first (there should only be one)
+        if let existing = try fetchStravaAuth() {
+            modelContext.delete(existing)
+        }
+
+        modelContext.insert(auth)
+        try modelContext.save()
+    }
+
+    func updateStravaAuth(_ auth: StravaAuth) throws {
+        try modelContext.save()
+    }
+
+    func deleteStravaAuth(_ auth: StravaAuth) throws {
+        modelContext.delete(auth)
+        try modelContext.save()
+    }
 }
