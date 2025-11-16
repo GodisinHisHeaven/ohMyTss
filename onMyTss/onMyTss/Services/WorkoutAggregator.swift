@@ -190,7 +190,7 @@ final class WorkoutAggregator {
             let tss = calculateTSSFromStrava(
                 activity: activity,
                 userFTP: ftp,
-                userMaxHR: thresholds.maxHeartRate
+                userMaxHR: thresholds.maxHeartRate ?? 190
             )
 
             let workout = Workout(
