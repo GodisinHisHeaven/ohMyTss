@@ -49,52 +49,32 @@ This allows Strava to redirect back to your app after OAuth authentication.
 
 ## Step 3: Configure Strava API Credentials
 
-You have two options for configuring your Strava credentials:
+The app uses a gitignored configuration file to keep your credentials safe:
 
-### Option A: Direct Code Update (Development Only)
-
-⚠️ **WARNING:** Only use this for local development. Never commit credentials to version control!
-
-1. Open `onMyTss/Services/StravaAPI.swift`
-2. Replace the placeholder values on lines 19-21:
-
-```swift
-static var clientID: String = "YOUR_CLIENT_ID"        // Replace with your Client ID
-static var clientSecret: String = "YOUR_CLIENT_SECRET" // Replace with your Client Secret
-static var redirectURI: String = "onmytss://strava-auth" // Already correct
-```
-
-3. Add `StravaAPI.swift` to your `.gitignore` (or use Option B)
-
-### Option B: Environment Variables (Recommended for Production)
-
-For production builds, use Xcode build configurations:
-
-1. Create a new file: `Config.xcconfig`
-2. Add your credentials:
+1. Navigate to `onMyTss/Services/`
+2. Copy `StravaConfig.swift.template` to `StravaConfig.swift`:
+   ```bash
+   cd onMyTss/Services
+   cp StravaConfig.swift.template StravaConfig.swift
    ```
-   STRAVA_CLIENT_ID = YOUR_CLIENT_ID
-   STRAVA_CLIENT_SECRET = YOUR_CLIENT_SECRET
-   ```
-3. Add `Config.xcconfig` to `.gitignore`
-4. In Xcode project settings, set this config file for your build configurations
-5. Update `StravaAPI.swift` to read from environment:
+
+3. Open `StravaConfig.swift` and replace the placeholder values:
    ```swift
-   static var clientID: String = ProcessInfo.processInfo.environment["STRAVA_CLIENT_ID"] ?? "YOUR_CLIENT_ID"
-   static var clientSecret: String = ProcessInfo.processInfo.environment["STRAVA_CLIENT_SECRET"] ?? "YOUR_CLIENT_SECRET"
+   struct StravaConfig {
+       static let clientID = "YOUR_CLIENT_ID"        // Replace with your Client ID from Step 1
+       static let clientSecret = "YOUR_CLIENT_SECRET" // Replace with your Client Secret from Step 1
+   }
    ```
 
-## Step 4: Update .gitignore
+4. Save the file
 
-Add the following to your `.gitignore`:
+**IMPORTANT:**
+- `StravaConfig.swift` is already in `.gitignore` and will NOT be committed to git
+- Never commit this file or share it publicly
+- The template file (`StravaConfig.swift.template`) is safe to commit
+- The `.gitignore` is already configured to protect your credentials
 
-```
-# Strava API credentials
-Config.xcconfig
-**/StravaAPI.swift.local
-```
-
-## Step 5: Test the Integration
+## Step 4: Test the Integration
 
 1. Build and run the app on a device or simulator
 2. Complete onboarding
