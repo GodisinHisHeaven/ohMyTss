@@ -41,6 +41,84 @@ struct SettingsView: View {
                     }
                 }
 
+                // Strava Integration
+                Section {
+                    if viewModel.isStravaConnected {
+                        // Connected state
+                        HStack {
+                            Label(viewModel.stravaAthleteDisplay, systemImage: "person.fill")
+                            Spacer()
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                        }
+
+                        if let stravaFTP = viewModel.stravaFTPDisplay {
+                            HStack {
+                                Label("Strava FTP", systemImage: "bolt.fill")
+                                Spacer()
+                                Text(stravaFTP)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+
+                        // FTP Source Toggle (only if both FTPs exist)
+                        if viewModel.showFTPToggle {
+                            Toggle(isOn: $viewModel.preferStravaFTP) {
+                                Label("Use Strava FTP", systemImage: "chart.line.uptrend.xyaxis")
+                            }
+                            .onChange(of: viewModel.preferStravaFTP) { _, _ in
+                                Task {
+                                    await viewModel.toggleStravaFTPPreference()
+                                }
+                            }
+
+                            HStack {
+                                Text("Active FTP Source")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                Text(viewModel.activeFTPSource)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+
+                        Button(role: .destructive) {
+                            Task {
+                                await viewModel.disconnectStrava()
+                            }
+                        } label: {
+                            Label("Disconnect Strava", systemImage: "link.badge.minus")
+                        }
+                        .disabled(viewModel.isSaving)
+
+                    } else {
+                        // Not connected state
+                        Button {
+                            Task {
+                                await viewModel.connectStrava()
+                            }
+                        } label: {
+                            HStack {
+                                Label("Connect to Strava", systemImage: "link.badge.plus")
+                                Spacer()
+                                if viewModel.isConnectingStrava {
+                                    ProgressView()
+                                }
+                            }
+                        }
+                        .disabled(viewModel.isConnectingStrava)
+                    }
+                } header: {
+                    Text("Strava")
+                } footer: {
+                    if viewModel.isStravaConnected {
+                        Text("Strava workouts will be synced and prioritized over HealthKit duplicates.")
+                    } else {
+                        Text("Connect your Strava account to sync activities and use Strava's FTP.")
+                    }
+                }
+
                 // Data Management
                 Section("Data") {
                     Button {
