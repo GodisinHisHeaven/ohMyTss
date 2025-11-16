@@ -32,7 +32,7 @@ final class UserThresholds {
     var preferStravaFTP: Bool // Whether to use Strava FTP over manual FTP
 
     // Heart rate
-    var maxHeartRate: Int // Maximum heart rate (bpm)
+    var maxHeartRate: Int? // Maximum heart rate (bpm)
 
     // Running thresholds (future v1.0)
     var runningLTPace: Int? // Lactate Threshold Pace (seconds per km)
@@ -54,7 +54,7 @@ final class UserThresholds {
         cyclingFTP: Int? = nil,
         stravaFTP: Int? = nil,
         preferStravaFTP: Bool = false,
-        maxHeartRate: Int = 190,
+        maxHeartRate: Int? = 190,
         runningLTPace: Int? = nil,
         runningLTHeartRate: Int? = nil,
         swimmingLTPace: Int? = nil,
