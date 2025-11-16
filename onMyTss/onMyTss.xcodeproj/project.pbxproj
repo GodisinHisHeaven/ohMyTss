@@ -397,6 +397,15 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleURLTypes = (
+					{
+						CFBundleTypeRole = Editor;
+						CFBundleURLName = "com.onmytss.strava-auth";
+						CFBundleURLSchemes = (
+							onmytss,
+						);
+					},
+				);
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "Body Battery needs access to your workout data, heart rate, and HRV to calculate your daily readiness score and training load metrics.";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "Body Battery does not write any data to HealthKit.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
@@ -439,6 +448,15 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleURLTypes = (
+					{
+						CFBundleTypeRole = Editor;
+						CFBundleURLName = "com.onmytss.strava-auth";
+						CFBundleURLSchemes = (
+							onmytss,
+						);
+					},
+				);
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "Body Battery needs access to your workout data, heart rate, and HRV to calculate your daily readiness score and training load metrics.";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "Body Battery does not write any data to HealthKit.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;

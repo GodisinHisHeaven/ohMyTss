@@ -14,10 +14,10 @@ final class StravaAPI {
 
     // MARK: - Configuration
 
-    /// These will be set from environment or configuration
-    /// For now, they're placeholders - user needs to register app at developers.strava.com
-    static var clientID: String = "YOUR_CLIENT_ID"
-    static var clientSecret: String = "YOUR_CLIENT_SECRET"
+    /// Strava OAuth credentials loaded from StravaConfig.swift
+    /// See StravaConfig.swift.template for setup instructions
+    static var clientID: String = StravaConfig.clientID
+    static var clientSecret: String = StravaConfig.clientSecret
     static var redirectURI: String = "onmytss://strava-auth"
 
     // MARK: - Endpoints

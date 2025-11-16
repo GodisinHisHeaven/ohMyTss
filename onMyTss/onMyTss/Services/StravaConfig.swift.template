@@ -1,0 +1,20 @@
+//
+//  StravaConfig.swift.template
+//  onMyTss
+//
+//  SETUP INSTRUCTIONS:
+//  1. Copy this file to StravaConfig.swift
+//  2. Replace YOUR_CLIENT_ID and YOUR_CLIENT_SECRET with your actual credentials
+//  3. Get your credentials from https://www.strava.com/settings/api
+//
+//  IMPORTANT: StravaConfig.swift is in .gitignore and will not be committed
+//
+
+import Foundation
+
+/// Strava API configuration
+/// Get your credentials from https://www.strava.com/settings/api
+struct StravaConfig {
+    static let clientID = "YOUR_CLIENT_ID"
+    static let clientSecret = "YOUR_CLIENT_SECRET"
+}

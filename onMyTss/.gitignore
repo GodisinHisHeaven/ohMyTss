@@ -89,6 +89,7 @@ iOSInjectionProject/
 
 # Strava API credentials - IMPORTANT: Never commit these!
 Config.xcconfig
+**/StravaConfig.swift
 **/StravaAPI.swift.local
 .env
 .env.local
