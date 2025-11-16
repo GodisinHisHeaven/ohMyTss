@@ -16,15 +16,27 @@ import SwiftData
 class BodyBatteryEngine {
     private let healthKitManager: HealthKitManager
     private let dataStore: DataStore
+    private let workoutAggregator: WorkoutAggregator
 
     // Observable state
     var isProcessing: Bool = false
     var lastError: Error?
     var lastSyncDate: Date?
 
-    init(healthKitManager: HealthKitManager, dataStore: DataStore) {
+    init(healthKitManager: HealthKitManager, dataStore: DataStore, stravaAuthManager: StravaAuthManager) {
         self.healthKitManager = healthKitManager
         self.dataStore = dataStore
+        self.workoutAggregator = WorkoutAggregator(
+            healthKitManager: healthKitManager,
+            stravaAuthManager: stravaAuthManager,
+            dataStore: dataStore
+        )
+    }
+
+    // Convenience init for backward compatibility (no Strava)
+    convenience init(healthKitManager: HealthKitManager, dataStore: DataStore) {
+        let stravaAuthManager = StravaAuthManager(dataStore: dataStore)
+        self.init(healthKitManager: healthKitManager, dataStore: dataStore, stravaAuthManager: stravaAuthManager)
     }
 
     // MARK: - Main Computation
@@ -54,14 +66,17 @@ class BodyBatteryEngine {
             let endDate = Date()
             let startDate = Calendar.current.date(byAdding: .day, value: -Constants.initialSyncDays, to: endDate) ?? endDate
 
-            // Step 3: Fetch workouts from HealthKit
-            let workouts = try await healthKitManager.fetchWorkouts(from: startDate, to: endDate)
+            // Step 3: Fetch workouts from both Strava and HealthKit
+            let workouts = try await workoutAggregator.fetchWorkouts(from: startDate, to: endDate)
 
-            // Step 4: Process each workout and calculate daily TSS
-            let dailyTSSMap = try await processDailyTSS(workouts: workouts, ftp: thresholds.cyclingFTP)
+            // Step 4: Save workouts to database
+            try dataStore.saveWorkouts(workouts)
 
-            // Step 5: Calculate CTL/ATL/TSB time series
-            try await computeAndSaveMetrics(dailyTSSMap: dailyTSSMap, startDate: startDate, endDate: endDate)
+            // Step 5: Process each workout and calculate daily TSS
+            let dailyTSSMap = processDailyTSS(workouts: workouts)
+
+            // Step 6: Calculate CTL/ATL/TSB time series
+            try await computeAndSaveMetrics(dailyTSSMap: dailyTSSMap, startDate: startDate, endDate: endDate, workouts: workouts)
 
             // Step 6: Update sync state
             try dataStore.updateHealthKitSyncDate(Date(), anchor: nil)
@@ -85,23 +100,23 @@ class BodyBatteryEngine {
         defer { isProcessing = false }
 
         do {
-            // Fetch app state to get last anchor
+            // Get last sync date for incremental Strava fetch
             let appState = try dataStore.fetchAppState()
-            let anchor = appState.healthKitAnchor.flatMap { healthKitManager.decodeAnchor(from: $0) }
+            let previousSyncDate = appState.lastHealthKitSyncDate ?? Calendar.current.date(byAdding: .day, value: -7, to: Date())!
 
-            // Fetch new workouts since last sync
-            let result = try await healthKitManager.fetchWorkouts(anchor: anchor)
+            // Fetch workouts from both sources since last sync
+            let workouts = try await workoutAggregator.fetchWorkouts(from: previousSyncDate, to: Date())
 
-            guard !result.workouts.isEmpty else {
+            guard !workouts.isEmpty else {
                 // No new workouts
                 return
             }
 
-            // Get user thresholds
-            let thresholds = try dataStore.fetchUserThresholds()
+            // Save workouts to database
+            try dataStore.saveWorkouts(workouts)
 
             // Process new workouts
-            let dailyTSSMap = try await processDailyTSS(workouts: result.workouts, ftp: thresholds.cyclingFTP)
+            let dailyTSSMap = processDailyTSS(workouts: workouts)
 
             // Get the date range of new workouts
             let dates = dailyTSSMap.keys.sorted()
@@ -110,12 +125,10 @@ class BodyBatteryEngine {
             }
 
             // Recompute metrics from the earliest affected date
-            try await computeAndSaveMetrics(dailyTSSMap: dailyTSSMap, startDate: startDate, endDate: Date())
+            try await computeAndSaveMetrics(dailyTSSMap: dailyTSSMap, startDate: startDate, endDate: Date(), workouts: workouts)
 
-            // Save new anchor
-            if let anchorData = healthKitManager.encodeAnchor(result.newAnchor) {
-                try dataStore.updateHealthKitSyncDate(Date(), anchor: anchorData)
-            }
+            // Update sync date
+            try dataStore.updateHealthKitSyncDate(Date(), anchor: nil)
 
             lastSyncDate = Date()
             lastError = nil
@@ -213,68 +226,23 @@ class BodyBatteryEngine {
     }
 
     /// Process workouts and aggregate TSS by day
-    private func processDailyTSS(workouts: [HKWorkout], ftp: Int?) async throws -> [Date: Double] {
+    /// TSS is already calculated by WorkoutAggregator, just aggregate by day
+    private func processDailyTSS(workouts: [Workout]) -> [Date: Double] {
         var dailyTSSMap: [Date: Double] = [:]
 
         for workout in workouts {
-            // Calculate TSS for this workout
-            let tss = try await calculateWorkoutTSS(workout: workout, ftp: ftp)
+            // Skip suppressed workouts (duplicates)
+            guard !workout.isSuppressed else { continue }
 
-            // Aggregate by day
-            let day = workout.startDate.startOfDay
-            dailyTSSMap[day, default: 0] += tss
+            // Aggregate TSS by day
+            dailyTSSMap[workout.date, default: 0] += workout.tss
         }
 
         return dailyTSSMap
     }
 
-    /// Calculate TSS for a single workout
-    /// Supports multiple sport types with power-based and heart rate-based calculations
-    private func calculateWorkoutTSS(workout: HKWorkout, ftp: Int?) async throws -> Double {
-        let workoutType = workout.workoutActivityType
-        let duration = workout.duration
-
-        // Strategy 1: Power-based TSS (cycling with power meter)
-        if workoutType == .cycling {
-            let powerSamples = try await healthKitManager.fetchPowerSamples(for: workout)
-
-            if !powerSamples.isEmpty, let ftp = ftp, ftp > 0 {
-                return TSSCalculator.calculateTSS(
-                    powerSamples: powerSamples,
-                    ftp: ftp,
-                    duration: duration
-                )
-            }
-        }
-
-        // Strategy 2: Heart rate-based TSS (all workout types)
-        // This is the primary method for running, swimming, and cycling without power
-        let heartRateSamples = try await healthKitManager.fetchHeartRateSamples(for: workout)
-
-        // Require minimum HR sample density for reliable TSS calculation
-        // We need at least 1 sample per 5 minutes, or 10 samples minimum (whichever is higher)
-        let durationMinutes = duration / 60.0
-        let minRequiredSamples = max(10, Int(durationMinutes / 5.0))
-
-        if heartRateSamples.count >= minRequiredSamples {
-            // Get recent RHR data to improve HR-based TSS accuracy
-            let recentRHR = try? await getRecentRestingHeartRate()
-
-            // Use sport-specific TSS calculation for better accuracy
-            return TSSCalculator.calculateTSSFromHeartRateWithType(
-                heartRateSamples: heartRateSamples,
-                duration: duration,
-                workoutType: workoutType,
-                maxHeartRate: nil, // Will use age-based estimation
-                restingHeartRate: recentRHR
-            )
-        }
-
-        // Strategy 3: Duration-based estimation (last resort when no HR data)
-        return TSSCalculator.estimateTSSFromDuration(workout: workout)
-    }
-
     /// Get recent resting heart rate for more accurate HR-based TSS calculations
+    /// Note: TSS calculation is now handled by WorkoutAggregator
     private func getRecentRestingHeartRate() async throws -> Int? {
         let today = Date().startOfDay
 
@@ -298,8 +266,14 @@ class BodyBatteryEngine {
     private func computeAndSaveMetrics(
         dailyTSSMap: [Date: Double],
         startDate: Date,
-        endDate: Date
+        endDate: Date,
+        workouts: [Workout]
     ) async throws {
+        // Group workouts by day for linking to aggregates
+        var workoutsByDay: [Date: [Workout]] = [:]
+        for workout in workouts where !workout.isSuppressed {
+            workoutsByDay[workout.date, default: []].append(workout)
+        }
         // Generate array of all dates in range
         let calendar = Calendar.current
         var currentDate = startDate.startOfDay
@@ -365,6 +339,11 @@ class BodyBatteryEngine {
             // Get workout count for this day
             let workoutCount = dailyTSSMap[date] != nil ? 1 : 0 // Simplified for MVP
 
+            // Get workouts for this day
+            let dayWorkouts = workoutsByDay[date] ?? []
+            let actualWorkoutCount = dayWorkouts.count
+            let maxTSS = dayWorkouts.map { $0.tss }.max()
+
             // Try to fetch existing aggregate or create new one
             if let existing = try dataStore.fetchDayAggregate(for: date) {
                 // Update existing
@@ -374,8 +353,8 @@ class BodyBatteryEngine {
                 existing.tsb = metrics.tsb
                 existing.bodyBatteryScore = bodyBatteryScore
                 existing.rampRate = rampRate
-                existing.workoutCount = workoutCount
-                existing.maxTSSWorkout = tss > 0 ? tss : nil
+                existing.workoutCount = actualWorkoutCount
+                existing.maxTSSWorkout = maxTSS
                 existing.avgHRV = avgHRV
                 existing.avgRHR = avgRHR
                 existing.hrvModifier = hrvModifier
@@ -384,6 +363,11 @@ class BodyBatteryEngine {
                 existing.sleepDuration = sleepDuration
                 existing.sleepQualityScore = sleepQualityScore
                 existing.deepSleepDuration = deepSleepDuration
+
+                // Link workouts to aggregate
+                for workout in dayWorkouts {
+                    workout.dayAggregate = existing
+                }
 
                 try dataStore.saveDayAggregate(existing)
             } else {
@@ -396,8 +380,8 @@ class BodyBatteryEngine {
                     tsb: metrics.tsb,
                     bodyBatteryScore: bodyBatteryScore,
                     rampRate: rampRate,
-                    workoutCount: workoutCount,
-                    maxTSSWorkout: tss > 0 ? tss : nil,
+                    workoutCount: actualWorkoutCount,
+                    maxTSSWorkout: maxTSS,
                     avgHRV: avgHRV,
                     avgRHR: avgRHR,
                     hrvModifier: hrvModifier,
@@ -409,6 +393,11 @@ class BodyBatteryEngine {
                 )
 
                 try dataStore.saveDayAggregate(aggregate)
+
+                // Link workouts to aggregate
+                for workout in dayWorkouts {
+                    workout.dayAggregate = aggregate
+                }
             }
         }
     }
