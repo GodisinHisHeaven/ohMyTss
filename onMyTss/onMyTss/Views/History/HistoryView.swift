@@ -136,19 +136,22 @@ struct HistoryView: View {
                     .padding(.horizontal)
 
                 Chart(viewModel.chartData) { point in
+                    // Use linear interpolation for large datasets for better performance
+                    let interpolation: InterpolationMethod = viewModel.chartData.count > 30 ? .linear : .catmullRom
+
                     LineMark(
                         x: .value("Date", point.date),
                         y: .value("CTL", point.ctl)
                     )
                     .foregroundStyle(.blue)
-                    .interpolationMethod(.catmullRom)
+                    .interpolationMethod(interpolation)
 
                     LineMark(
                         x: .value("Date", point.date),
                         y: .value("ATL", point.atl)
                     )
                     .foregroundStyle(.orange)
-                    .interpolationMethod(.catmullRom)
+                    .interpolationMethod(interpolation)
                 }
                 .chartYAxisLabel("Load", alignment: .leading)
                 .chartLegend(position: .bottom) {
