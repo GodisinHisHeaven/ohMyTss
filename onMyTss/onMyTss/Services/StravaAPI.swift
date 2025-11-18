@@ -177,10 +177,18 @@ final class StravaAPI {
 
     // MARK: - Request Execution
 
+    /// Configured URLSession with timeouts to prevent indefinite hangs
+    private static let session: URLSession = {
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 30  // 30 seconds per request
+        config.timeoutIntervalForResource = 60 // 60 seconds total
+        return URLSession(configuration: config)
+    }()
+
     /// Generic request performer with error handling
     private static func performRequest<T: Decodable>(_ request: URLRequest) async throws -> T {
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await session.data(for: request)
 
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw StravaAPIError.invalidResponse

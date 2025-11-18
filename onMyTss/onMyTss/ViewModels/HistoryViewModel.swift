@@ -109,7 +109,7 @@ class HistoryViewModel {
 
 // MARK: - History Item
 
-struct HistoryItem: Identifiable {
+struct HistoryItem: Identifiable, Equatable {
     let id = UUID()
     let date: Date
     let score: Int
@@ -119,6 +119,11 @@ struct HistoryItem: Identifiable {
     let tsb: Double
     let workoutCount: Int
     let readinessLevel: ReadinessLevel
+
+    // Equatable conformance for efficient SwiftUI diffing
+    static func == (lhs: HistoryItem, rhs: HistoryItem) -> Bool {
+        lhs.date == rhs.date && lhs.score == rhs.score && lhs.tss == rhs.tss
+    }
 
     var dateDisplay: String {
         let formatter = DateFormatter()
