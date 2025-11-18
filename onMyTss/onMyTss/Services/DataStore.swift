@@ -28,6 +28,14 @@ class DataStore {
         try modelContext.save()
     }
 
+    /// Batch save multiple day aggregates in a single transaction for better performance
+    func saveDayAggregatesBatch(_ dayAggregates: [DayAggregate]) throws {
+        for aggregate in dayAggregates {
+            modelContext.insert(aggregate)
+        }
+        try modelContext.save()
+    }
+
     func fetchDayAggregate(for date: Date) throws -> DayAggregate? {
         let calendar = Calendar.current
         let startOfDay = calendar.startOfDay(for: date)
