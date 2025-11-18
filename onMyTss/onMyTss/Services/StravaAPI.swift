@@ -18,7 +18,7 @@ final class StravaAPI {
     /// See StravaConfig.swift.template for setup instructions
     static var clientID: String = StravaConfig.clientID
     static var clientSecret: String = StravaConfig.clientSecret
-    static var redirectURI: String = "onmytss://strava-auth"
+    static var redirectURI: String = "onmytss://onmytss.com"
 
     // MARK: - Endpoints
 
