@@ -135,43 +135,40 @@ struct HistoryView: View {
                     .foregroundStyle(.secondary)
                     .padding(.horizontal)
 
-                Chart(viewModel.chartData) { point in
+                Chart {
                     // Use linear interpolation for large datasets for better performance
                     let interpolation: InterpolationMethod = viewModel.chartData.count > 30 ? .linear : .catmullRom
 
-                    LineMark(
-                        x: .value("Date", point.date),
-                        y: .value("CTL", point.ctl)
-                    )
-                    .foregroundStyle(.blue)
-                    .interpolationMethod(interpolation)
+                    // CTL (Fitness) line - shown in blue
+                    ForEach(viewModel.chartData) { point in
+                        LineMark(
+                            x: .value("Date", point.date),
+                            y: .value("Load", point.ctl),
+                            series: .value("Metric", "CTL (Fitness)")
+                        )
+                        .foregroundStyle(.blue)
+                        .lineStyle(StrokeStyle(lineWidth: 2))
+                        .interpolationMethod(interpolation)
+                        .symbol(Circle().strokeBorder(lineWidth: 1.5))
+                        .symbolSize(30)
+                    }
 
-                    LineMark(
-                        x: .value("Date", point.date),
-                        y: .value("ATL", point.atl)
-                    )
-                    .foregroundStyle(.orange)
-                    .interpolationMethod(interpolation)
-                }
-                .chartYAxisLabel("Load", alignment: .leading)
-                .chartLegend(position: .bottom) {
-                    HStack(spacing: 20) {
-                        HStack(spacing: 4) {
-                            Circle()
-                                .fill(.blue)
-                                .frame(width: 8, height: 8)
-                            Text("CTL (Fitness)")
-                                .font(.caption)
-                        }
-                        HStack(spacing: 4) {
-                            Circle()
-                                .fill(.orange)
-                                .frame(width: 8, height: 8)
-                            Text("ATL (Fatigue)")
-                                .font(.caption)
-                        }
+                    // ATL (Fatigue) line - shown in orange
+                    ForEach(viewModel.chartData) { point in
+                        LineMark(
+                            x: .value("Date", point.date),
+                            y: .value("Load", point.atl),
+                            series: .value("Metric", "ATL (Fatigue)")
+                        )
+                        .foregroundStyle(.orange)
+                        .lineStyle(StrokeStyle(lineWidth: 2))
+                        .interpolationMethod(interpolation)
+                        .symbol(Circle().strokeBorder(lineWidth: 1.5))
+                        .symbolSize(30)
                     }
                 }
+                .chartYAxisLabel("Load", alignment: .leading)
+                .chartLegend(position: .bottom)
                 .frame(height: 200)
                 .padding()
                 .background(
