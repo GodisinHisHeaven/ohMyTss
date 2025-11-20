@@ -13,12 +13,10 @@ struct HealthPermissionView: View {
     @State private var error: Error?
 
     var onContinue: () -> Void
-    var onSkip: () -> Void
 
-    init(healthKitManager: HealthKitManager, onContinue: @escaping () -> Void, onSkip: @escaping () -> Void) {
+    init(healthKitManager: HealthKitManager, onContinue: @escaping () -> Void) {
         self.healthKitManager = healthKitManager
         self.onContinue = onContinue
-        self.onSkip = onSkip
     }
 
     var body: some View {
@@ -87,7 +85,7 @@ struct HealthPermissionView: View {
                         .frame(maxWidth: .infinity)
                         .padding()
                 } else {
-                    Text("Allow Access")
+                    Text("Continue")
                         .font(.headline)
                         .foregroundColor(.white)
                         .frame(maxWidth: .infinity)
@@ -98,12 +96,6 @@ struct HealthPermissionView: View {
             .cornerRadius(12)
             .disabled(isRequesting)
             .padding(.horizontal)
-
-            // Skip Button
-            Button("Skip for Now") {
-                onSkip()
-            }
-            .foregroundColor(.secondary)
             .padding(.bottom, 30)
         }
         .padding()
@@ -149,7 +141,6 @@ struct HealthDataRow: View {
 #Preview {
     HealthPermissionView(
         healthKitManager: HealthKitManager(),
-        onContinue: {},
-        onSkip: {}
+        onContinue: {}
     )
 }

@@ -36,11 +36,6 @@ struct OnboardingContainerView: View {
                         withAnimation {
                             currentStep = .thresholdInput
                         }
-                    },
-                    onSkip: {
-                        withAnimation {
-                            currentStep = .thresholdInput
-                        }
                     }
                 )
 
