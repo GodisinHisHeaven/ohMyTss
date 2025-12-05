@@ -20,7 +20,7 @@ jobs:
           python-version: '3.9'
 
       - name: Install dependencies
-        run: pip install requests
+        run: pip install requests google-genai
 
       - name: Analyze Issue with Gemini Pro
         env:
@@ -36,6 +36,9 @@ jobs:
           import requests
           import json
 
+          # Prefer a stable flash model for v1beta; gemini-2.5 is the target
+          PREFERRED_MODEL = "models/gemini-2.5-flash"
+
           # 1. Setup Data
           api_key = os.environ.get('GEMINI_API_KEY')
           issue_title = os.environ.get('ISSUE_TITLE')
@@ -44,9 +47,38 @@ jobs:
           issue_number = os.environ.get('ISSUE_NUMBER')
           gh_token = os.environ.get('GITHUB_TOKEN')
 
-          # 2. Construct the Gemini Payload
-          # Recommended: Stable, fast, and higher rate limits
-          url = f'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-002:generateContent?key={api_key}'
+          # 2. Discover a supported model for v1beta; prefer 2.5 flash, fall back to pro
+          list_url = f'https://generativelanguage.googleapis.com/v1beta/models?key={api_key}'
+          model_name = PREFERRED_MODEL
+          try:
+              list_resp = requests.get(list_url, timeout=10)
+              list_resp.raise_for_status()
+              models = list_resp.json().get('models', [])
+
+              # Filter models that support generateContent
+              def supports_generate(model):
+                  methods = model.get('supportedGenerationMethods', []) or []
+                  return any('generateContent' in m for m in methods)
+
+              names = [m.get('name') for m in models if m.get('name') and supports_generate(m)]
+
+              # Prefer any 2.5 flash, then any flash, else pro
+              flash_25 = [n for n in names if 'gemini-2.5-flash' in n]
+              flash_any = [n for n in names if 'flash' in n]
+              pro_any = [n for n in names if 'pro' in n]
+
+              if flash_25:
+                  model_name = flash_25[0]
+              elif flash_any:
+                  model_name = flash_any[0]
+              elif pro_any:
+                  model_name = pro_any[0]
+              else:
+                  model_name = names[0] if names else PREFERRED_MODEL
+          except Exception as e:
+              print(f'Warning: could not list models, defaulting to {PREFERRED_MODEL}. Error: {e}')
+
+          url = f'https://generativelanguage.googleapis.com/v1beta/{model_name}:generateContent?key={api_key}'
           
           system_instruction = 'You are a senior technical project manager. Read the issue description and convert it into a clear, actionable Markdown checklist. Do not include introductory text, just the checklist.'
           user_content = f'Title: {issue_title}\n\nDescription:\n{issue_body}'
@@ -60,7 +92,7 @@ jobs:
           # 3. Call Google Gemini API
           headers = {'Content-Type': 'application/json'}
           
-          print('Sending request to Gemini...')
+          print(f'Sending request to Gemini with model: {model_name} ...')
           response = requests.post(url, headers=headers, json=payload)
           
           if response.status_code != 200:
