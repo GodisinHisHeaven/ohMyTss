@@ -51,6 +51,10 @@ class BodyBatteryEngine {
             throw EngineError.alreadyProcessing
         }
 
+#if DEBUG
+        print("[BBEngine] recomputeAll start")
+#endif
+
         isProcessing = true
         defer { isProcessing = false }
 
@@ -84,9 +88,15 @@ class BodyBatteryEngine {
             lastError = nil
 
         } catch {
+#if DEBUG
+            print("[BBEngine] recomputeAll error: \(error)")
+#endif
             lastError = error
             throw error
         }
+#if DEBUG
+        print("[BBEngine] recomputeAll done")
+#endif
     }
 
     /// Incremental update using HealthKit anchored query
@@ -315,7 +325,7 @@ class BodyBatteryEngine {
             let hrvModifier = physiologyData?.hrvMod
             let rhrModifier = physiologyData?.rhrMod
 
-            // Calculate Body Battery score with HRV/RHR modifiers
+            // Calculate Body Battery score with HRV/RHR modifiers. Even with zero TSS today, we still compute based on existing CTL/ATL.
             let bodyBatteryScore = BodyBatteryCalculator.calculateScoreWithModifiers(
                 tsb: metrics.tsb,
                 hrvModifier: hrvModifier,
