@@ -14,10 +14,16 @@ final class StravaAPI {
 
     // MARK: - Configuration
 
-    /// Strava OAuth credentials loaded from StravaConfig.swift
+    /// Strava OAuth credentials loaded from environment variables via StravaConfig
     /// See StravaConfig.swift.template for setup instructions
-    static var clientID: String = StravaConfig.clientID
-    static var clientSecret: String = StravaConfig.clientSecret
+    private static func loadCredentials() throws -> (clientID: String, clientSecret: String) {
+        guard let clientID = StravaConfig.clientID,
+              let clientSecret = StravaConfig.clientSecret else {
+            throw StravaAPIError.missingConfiguration
+        }
+
+        return (clientID, clientSecret)
+    }
     static var redirectURI: String = "onmytss://onmytss.com"
 
     // MARK: - Endpoints
@@ -40,6 +46,7 @@ final class StravaAPI {
         case unauthorized
         case rateLimited
         case networkError(Error)
+        case missingConfiguration
 
         var errorDescription: String? {
             switch self {
@@ -57,6 +64,8 @@ final class StravaAPI {
                 return "Strava API rate limit exceeded - please try again later"
             case .networkError(let error):
                 return "Network error: \(error.localizedDescription)"
+            case .missingConfiguration:
+                return "Missing Strava credentials. Set STRAVA_CLIENT_ID and STRAVA_CLIENT_SECRET environment variables."
             }
         }
     }
@@ -64,20 +73,25 @@ final class StravaAPI {
     // MARK: - OAuth
 
     /// Generate authorization URL for OAuth flow
-    static func getAuthorizationURL() -> URL? {
+    static func getAuthorizationURL() throws -> URL {
+        let credentials = try loadCredentials()
         var components = URLComponents(string: Endpoint.authorize)
         components?.queryItems = [
-            URLQueryItem(name: "client_id", value: clientID),
+            URLQueryItem(name: "client_id", value: credentials.clientID),
             URLQueryItem(name: "redirect_uri", value: redirectURI),
             URLQueryItem(name: "response_type", value: "code"),
             URLQueryItem(name: "scope", value: "read,activity:read_all"),
             URLQueryItem(name: "approval_prompt", value: "auto")
         ]
-        return components?.url
+        guard let url = components?.url else {
+            throw StravaAPIError.invalidURL
+        }
+        return url
     }
 
     /// Exchange authorization code for access and refresh tokens
     static func exchangeToken(code: String) async throws -> TokenResponse {
+        let credentials = try loadCredentials()
         guard let url = URL(string: Endpoint.token) else {
             throw StravaAPIError.invalidURL
         }
@@ -87,8 +101,8 @@ final class StravaAPI {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         let body: [String: Any] = [
-            "client_id": clientID,
-            "client_secret": clientSecret,
+            "client_id": credentials.clientID,
+            "client_secret": credentials.clientSecret,
             "code": code,
             "grant_type": "authorization_code"
         ]
@@ -100,6 +114,7 @@ final class StravaAPI {
 
     /// Refresh access token using refresh token
     static func refreshToken(_ refreshToken: String) async throws -> TokenResponse {
+        let credentials = try loadCredentials()
         guard let url = URL(string: Endpoint.token) else {
             throw StravaAPIError.invalidURL
         }
@@ -109,8 +124,8 @@ final class StravaAPI {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         let body: [String: Any] = [
-            "client_id": clientID,
-            "client_secret": clientSecret,
+            "client_id": credentials.clientID,
+            "client_secret": credentials.clientSecret,
             "refresh_token": refreshToken,
             "grant_type": "refresh_token"
         ]

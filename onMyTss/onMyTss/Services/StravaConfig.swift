@@ -1,14 +1,9 @@
 //
-//  StravaConfig.swift.template
+//  StravaConfig.swift
 //  onMyTss
 //
-//  SETUP INSTRUCTIONS:
-//  1. Copy this file to StravaConfig.swift
-//  2. Set environment variables STRAVA_CLIENT_ID and STRAVA_CLIENT_SECRET
-//     in your Xcode scheme or `.xcode.env` (not committed)
-//  3. Get your credentials from https://www.strava.com/settings/api
-//
-//  IMPORTANT: StravaConfig.swift is in .gitignore and will not be committed
+//  IMPORTANT: This file references your Strava API credentials via environment variables
+//  DO NOT commit real credentials to version control! This file is in .gitignore
 //
 
 import Foundation
