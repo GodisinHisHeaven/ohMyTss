@@ -14,7 +14,7 @@ struct SettingsView: View {
     @State private var showingResetConfirmation = false
     @State private var showingFTPEditor = false
 
-    init(dataStore: DataStore, engine: BodyBatteryEngine) {
+    init(dataStore: DataStore, engine: any BodyBatteryEngineProtocol) {
         _viewModel = State(initialValue: SettingsViewModel(dataStore: dataStore, engine: engine))
     }
 

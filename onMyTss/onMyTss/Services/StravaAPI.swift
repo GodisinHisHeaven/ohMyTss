@@ -232,7 +232,7 @@ struct TokenResponse: Codable {
     let expiresIn: Int
     let refreshToken: String
     let accessToken: String
-    let athlete: StravaAthlete
+    let athlete: StravaAthlete?
 
     var expirationDate: Date {
         Date(timeIntervalSince1970: TimeInterval(expiresAt))

@@ -10,7 +10,7 @@ import SwiftData
 
 /// Main tab view containing Today, History, and Settings screens
 struct MainTabView: View {
-    let engine: BodyBatteryEngine
+    let engine: any BodyBatteryEngineProtocol
     let dataStore: DataStore
 
     @State private var selectedTab: Tab = .today
