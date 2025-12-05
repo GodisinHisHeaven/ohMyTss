@@ -22,7 +22,7 @@ jobs:
       - name: Install dependencies
         run: pip install requests
 
-      - name: Analyze Issue with Gemini Flash
+      - name: Analyze Issue with Gemini Pro
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -30,30 +30,30 @@ jobs:
           ISSUE_BODY: ${{ github.event.issue.body }}
           REPO_FULL_NAME: ${{ github.repository }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
-        shell: python
         run: |
+          python -c "
           import os
           import requests
           import json
 
           # 1. Setup Data
           api_key = os.environ.get('GEMINI_API_KEY')
-          issue_title = os.environ.get('ISSUE_TITLE') or ""
-          issue_body = os.environ.get('ISSUE_BODY') or ""
+          issue_title = os.environ.get('ISSUE_TITLE')
+          issue_body = os.environ.get('ISSUE_BODY')
           repo = os.environ.get('REPO_FULL_NAME')
           issue_number = os.environ.get('ISSUE_NUMBER')
           gh_token = os.environ.get('GITHUB_TOKEN')
 
           # 2. Construct the Gemini Payload
-          # We use gemini-1.5-flash for speed and higher rate limits (15 RPM)
+          # Recommended: Stable, fast, and higher rate limits
           url = f'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-002:generateContent?key={api_key}'
           
-          system_instruction = "You are a senior technical project manager. Read the issue description and convert it into a clear, actionable Markdown checklist. Do not include introductory text, just the checklist."
-          user_content = f"Title: {issue_title}\n\nDescription:\n{issue_body}"
+          system_instruction = 'You are a senior technical project manager. Read the issue description and convert it into a clear, actionable Markdown checklist. Do not include introductory text, just the checklist.'
+          user_content = f'Title: {issue_title}\n\nDescription:\n{issue_body}'
 
           payload = {
-              "contents": [{
-                  "parts": [{"text": system_instruction + "\n\n" + user_content}]
+              'contents': [{
+                  'parts': [{'text': system_instruction + '\n\n' + user_content}]
               }]
           }
 
@@ -61,22 +61,18 @@ jobs:
           headers = {'Content-Type': 'application/json'}
           
           print('Sending request to Gemini...')
-          try:
-              response = requests.post(url, headers=headers, json=payload)
-              response.raise_for_status() # Raises error for 4xx/5xx
-          except Exception as e:
-              print(f"API Request Failed: {e}")
-              print(response.text)
+          response = requests.post(url, headers=headers, json=payload)
+          
+          if response.status_code != 200:
+              print(f'Error: {response.text}')
               exit(1)
               
+          # Extract text from Gemini response structure
           result = response.json()
-          
-          # Safe extraction logic
           try:
               ai_checklist = result['candidates'][0]['content']['parts'][0]['text']
           except (KeyError, IndexError):
-              print('Error parsing Gemini response. Full response:')
-              print(json.dumps(result, indent=2))
+              print('Error parsing Gemini response')
               exit(1)
 
           # 4. Post comment back to GitHub Issue
@@ -93,3 +89,4 @@ jobs:
           gh_response = requests.post(comment_url, headers=gh_headers, json=comment_data)
           gh_response.raise_for_status()
           print('Done!')
+          "
