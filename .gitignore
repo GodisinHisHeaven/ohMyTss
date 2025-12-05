@@ -80,3 +80,6 @@ iOSInjectionProject/
 # Temporary files
 *.tmp
 *.temp
+
+# Local-only marketing page
+landing/

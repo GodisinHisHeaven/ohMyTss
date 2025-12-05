@@ -1,6 +1,6 @@
 //
-//  onMyTssApp.swift
-//  onMyTss
+//  ohMyTssApp.swift
+//  ohMyTss
 //
 //  Created by Mingjun Liu on 11/7/25.
 //
@@ -9,7 +9,7 @@ import SwiftUI
 import SwiftData
 
 @main
-struct onMyTssApp: App {
+struct ohMyTssApp: App {
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
             DayAggregate.self,

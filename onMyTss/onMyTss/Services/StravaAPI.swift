@@ -256,28 +256,109 @@ struct StravaAthlete: Codable {
 }
 
 struct StravaActivity: Codable {
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case distance
+        case movingTime
+        case elapsedTime
+        case totalElevationGain
+        case type
+        case sportType
+        case startDate
+        case startDateLocal
+        case timezone
+        case averageSpeed
+        case maxSpeed
+        case averageCadence
+        case averageWatts
+        case weightedAverageWatts
+        case kilojoules
+        case deviceWatts
+        case hasHeartrate
+        case averageHeartrate
+        case maxHeartrate
+        case deviceName
+    }
+
     let id: Int
-    let name: String
-    let distance: Double
-    let movingTime: Int
-    let elapsedTime: Int
-    let totalElevationGain: Double
-    let type: String
-    let sportType: String
-    let startDate: String
-    let startDateLocal: String
-    let timezone: String
-    let averageSpeed: Double
-    let maxSpeed: Double
-    let averageCadence: Double?
-    let averageWatts: Double?
-    let weightedAverageWatts: Int? // This is Strava's Normalized Power equivalent
-    let kilojoules: Double?
-    let deviceWatts: Bool?
-    let hasHeartrate: Bool
-    let averageHeartrate: Double?
-    let maxHeartrate: Double?
-    let deviceName: String?
+    var name: String
+    var distance: Double
+    var movingTime: Int
+    var elapsedTime: Int
+    var totalElevationGain: Double
+    var type: String
+    var sportType: String
+    var startDate: String
+    var startDateLocal: String
+    var timezone: String
+    var averageSpeed: Double
+    var maxSpeed: Double
+    var averageCadence: Double?
+    var averageWatts: Double?
+    var weightedAverageWatts: Int? // This is Strava's Normalized Power equivalent
+    var kilojoules: Double?
+    var deviceWatts: Bool?
+    var hasHeartrate: Bool
+    var averageHeartrate: Double?
+    var maxHeartrate: Double?
+    var deviceName: String?
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        id = try container.decodeIfPresent(Int.self, forKey: .id) ?? -1
+        name = try container.decodeIfPresent(String.self, forKey: .name) ?? "Activity"
+        distance = try container.decodeIfPresent(Double.self, forKey: .distance) ?? 0
+        movingTime = try container.decodeIfPresent(Int.self, forKey: .movingTime) ?? 0
+        elapsedTime = try container.decodeIfPresent(Int.self, forKey: .elapsedTime) ?? movingTime
+        totalElevationGain = try container.decodeIfPresent(Double.self, forKey: .totalElevationGain) ?? 0
+
+        let decodedType = try container.decodeIfPresent(String.self, forKey: .type) ?? "Workout"
+        type = decodedType
+        sportType = try container.decodeIfPresent(String.self, forKey: .sportType) ?? decodedType
+
+        startDate = try container.decodeIfPresent(String.self, forKey: .startDate) ?? ""
+        startDateLocal = try container.decodeIfPresent(String.self, forKey: .startDateLocal) ?? startDate
+        timezone = try container.decodeIfPresent(String.self, forKey: .timezone) ?? "UTC"
+        averageSpeed = try container.decodeIfPresent(Double.self, forKey: .averageSpeed) ?? 0
+        maxSpeed = try container.decodeIfPresent(Double.self, forKey: .maxSpeed) ?? 0
+        averageCadence = try container.decodeIfPresent(Double.self, forKey: .averageCadence)
+        averageWatts = try container.decodeIfPresent(Double.self, forKey: .averageWatts)
+        weightedAverageWatts = try container.decodeIfPresent(Int.self, forKey: .weightedAverageWatts)
+        kilojoules = try container.decodeIfPresent(Double.self, forKey: .kilojoules)
+        deviceWatts = try container.decodeIfPresent(Bool.self, forKey: .deviceWatts)
+        hasHeartrate = try container.decodeIfPresent(Bool.self, forKey: .hasHeartrate) ?? false
+        averageHeartrate = try container.decodeIfPresent(Double.self, forKey: .averageHeartrate)
+        maxHeartrate = try container.decodeIfPresent(Double.self, forKey: .maxHeartrate)
+        deviceName = try container.decodeIfPresent(String.self, forKey: .deviceName)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encode(distance, forKey: .distance)
+        try container.encode(movingTime, forKey: .movingTime)
+        try container.encode(elapsedTime, forKey: .elapsedTime)
+        try container.encode(totalElevationGain, forKey: .totalElevationGain)
+        try container.encode(type, forKey: .type)
+        try container.encode(sportType, forKey: .sportType)
+        try container.encode(startDate, forKey: .startDate)
+        try container.encode(startDateLocal, forKey: .startDateLocal)
+        try container.encode(timezone, forKey: .timezone)
+        try container.encode(averageSpeed, forKey: .averageSpeed)
+        try container.encode(maxSpeed, forKey: .maxSpeed)
+        try container.encodeIfPresent(averageCadence, forKey: .averageCadence)
+        try container.encodeIfPresent(averageWatts, forKey: .averageWatts)
+        try container.encodeIfPresent(weightedAverageWatts, forKey: .weightedAverageWatts)
+        try container.encodeIfPresent(kilojoules, forKey: .kilojoules)
+        try container.encodeIfPresent(deviceWatts, forKey: .deviceWatts)
+        try container.encode(hasHeartrate, forKey: .hasHeartrate)
+        try container.encodeIfPresent(averageHeartrate, forKey: .averageHeartrate)
+        try container.encodeIfPresent(maxHeartrate, forKey: .maxHeartrate)
+        try container.encodeIfPresent(deviceName, forKey: .deviceName)
+    }
 
     /// Parse start date from ISO 8601 string
     var startDateTime: Date? {

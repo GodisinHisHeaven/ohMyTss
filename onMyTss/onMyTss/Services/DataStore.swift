@@ -31,7 +31,10 @@ class DataStore {
     /// Batch save multiple day aggregates in a single transaction for better performance
     func saveDayAggregatesBatch(_ dayAggregates: [DayAggregate]) throws {
         for aggregate in dayAggregates {
-            modelContext.insert(aggregate)
+            // Avoid duplicating an existing day; if it exists, the fetched instance is already tracked
+            if try fetchDayAggregate(for: aggregate.date) == nil {
+                modelContext.insert(aggregate)
+            }
         }
         try modelContext.save()
     }
