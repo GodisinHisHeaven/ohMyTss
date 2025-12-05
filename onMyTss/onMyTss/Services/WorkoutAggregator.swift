@@ -49,8 +49,20 @@ final class WorkoutAggregator {
 
         let (hkWorkouts, stWorkouts) = try await (healthKitWorkouts, stravaWorkouts)
 
-        // Combine and deduplicate
-        return deduplicateWorkouts(healthKit: hkWorkouts, strava: stWorkouts)
+        // Prioritize workouts with power data across sources; Strava already prioritized over HK in deduplication
+        let combined = deduplicateWorkouts(healthKit: hkWorkouts, strava: stWorkouts)
+        return combined.sorted { lhs, rhs in
+            // Prefer workouts that have power metrics (averagePower or normalizedPower)
+            let lhsHasPower = lhs.averagePower != nil || lhs.normalizedPower != nil
+            let rhsHasPower = rhs.averagePower != nil || rhs.normalizedPower != nil
+
+            if lhsHasPower == rhsHasPower {
+                // Preserve chronological ordering if both have (or both lack) power
+                return lhs.startTime < rhs.startTime
+            }
+
+            return lhsHasPower && !rhsHasPower
+        }
     }
 
     // MARK: - Private Fetch Methods
@@ -182,7 +194,8 @@ final class WorkoutAggregator {
         var workouts: [Workout] = []
 
         for activity in allActivities {
-            guard let startTime = activity.startDateTime else {
+            // Skip malformed activities (e.g., missing id/start time) to avoid decode crashes further downstream
+            guard activity.id > 0, let startTime = activity.startDateTime else {
                 continue
             }
 
@@ -223,7 +236,7 @@ final class WorkoutAggregator {
 
     /// Deduplicate workouts with Strava priority
     /// Uses same criteria as HealthKit deduplication: time, duration, type
-    private func deduplicateWorkouts(healthKit: [Workout], strava: [Workout]) -> [Workout] {
+    func deduplicateWorkouts(healthKit: [Workout], strava: [Workout]) -> [Workout] {
         var result: [Workout] = []
 
         // Add all Strava workouts first (they have priority)
