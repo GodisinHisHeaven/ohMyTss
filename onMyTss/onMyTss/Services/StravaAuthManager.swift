@@ -151,6 +151,9 @@ final class StravaAuthManager: NSObject, ObservableObject {
 
         // Exchange code for tokens
         let tokenResponse = try await StravaAPI.exchangeToken(code: code)
+        guard let athlete = tokenResponse.athlete else {
+            throw StravaAPI.StravaAPIError.invalidResponse
+        }
 
         // Save tokens to keychain
         try KeychainHelper.saveStravaAccessToken(tokenResponse.accessToken)
@@ -158,9 +161,9 @@ final class StravaAuthManager: NSObject, ObservableObject {
 
         // Create or update StravaAuth
         let auth = StravaAuth(
-            athleteId: tokenResponse.athlete.id,
-            athleteName: tokenResponse.athlete.fullName,
-            profileImageURL: tokenResponse.athlete.profile,
+            athleteId: athlete.id,
+            athleteName: athlete.fullName,
+            profileImageURL: athlete.profile,
             hasAccessToken: true,
             hasRefreshToken: true,
             accessTokenExpiresAt: tokenResponse.expirationDate,
@@ -168,7 +171,7 @@ final class StravaAuthManager: NSObject, ObservableObject {
             lastSyncDate: nil,
             syncCursor: nil,
             isConnected: true,
-            stravaFTP: tokenResponse.athlete.ftp
+            stravaFTP: athlete.ftp
         )
 
         try dataStore.saveStravaAuth(auth)

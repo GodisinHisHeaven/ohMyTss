@@ -207,6 +207,10 @@ class HealthKitManager {
 
         let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
 
+#if DEBUG
+        print("[HK] fetchHRVSamples from \(startDate) to \(endDate)")
+#endif
+
         return try await withCheckedThrowingContinuation { continuation in
             let query = HKSampleQuery(
                 sampleType: hrvType,
@@ -215,11 +219,17 @@ class HealthKitManager {
                 sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)]
             ) { _, samples, error in
                 if let error = error {
+#if DEBUG
+                    print("[HK] fetchHRVSamples error: \(error)")
+#endif
                     continuation.resume(throwing: error)
                     return
                 }
 
                 let hrvSamples = samples as? [HKQuantitySample] ?? []
+#if DEBUG
+                print("[HK] fetchHRVSamples count: \(hrvSamples.count)")
+#endif
                 continuation.resume(returning: hrvSamples)
             }
 
@@ -235,6 +245,10 @@ class HealthKitManager {
 
         let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
 
+#if DEBUG
+        print("[HK] fetchRestingHeartRateSamples from \(startDate) to \(endDate)")
+#endif
+
         return try await withCheckedThrowingContinuation { continuation in
             let query = HKSampleQuery(
                 sampleType: rhrType,
@@ -243,11 +257,17 @@ class HealthKitManager {
                 sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)]
             ) { _, samples, error in
                 if let error = error {
+#if DEBUG
+                    print("[HK] fetchRestingHeartRateSamples error: \(error)")
+#endif
                     continuation.resume(throwing: error)
                     return
                 }
 
                 let rhrSamples = samples as? [HKQuantitySample] ?? []
+#if DEBUG
+                print("[HK] fetchRestingHeartRateSamples count: \(rhrSamples.count)")
+#endif
                 continuation.resume(returning: rhrSamples)
             }
 
