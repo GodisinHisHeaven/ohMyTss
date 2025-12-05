@@ -45,8 +45,8 @@ jobs:
           gh_token = os.environ.get('GITHUB_TOKEN')
 
           # 2. Construct the Gemini Payload
-          # We use gemini-1.5-pro for better reasoning, but you can swap to gemini-1.5-flash for speed
-          url = f'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key={api_key}'
+          # Recommended: Stable, fast, and higher rate limits
+          url = f'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}'
           
           system_instruction = 'You are a senior technical project manager. Read the issue description and convert it into a clear, actionable Markdown checklist. Do not include introductory text, just the checklist.'
           user_content = f'Title: {issue_title}\n\nDescription:\n{issue_body}'
