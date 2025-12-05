@@ -85,7 +85,7 @@ class TodayViewModel {
         let today = Date().startOfDay
 
         guard let aggregate = try dataStore.fetchDayAggregate(for: today) else {
-            // No data for today yet - use default values
+            // No data for today yet - use default values but keep showing empty state
             todayScore = Constants.defaultBodyBatteryScore
             readinessLevel = .medium
             tssRecommendation = nil
