@@ -14,7 +14,7 @@ import SwiftData
 @Observable
 class TodayViewModel {
     // Dependencies
-    private let engine: BodyBatteryEngine
+    private let engine: any BodyBatteryEngineProtocol
     private let dataStore: DataStore
 
     // UI State
@@ -29,7 +29,7 @@ class TodayViewModel {
     var weekScores: [DayScore] = []
     var todayMetrics: DayMetrics?
 
-    init(engine: BodyBatteryEngine, dataStore: DataStore) {
+    init(engine: any BodyBatteryEngineProtocol, dataStore: DataStore) {
         self.engine = engine
         self.dataStore = dataStore
     }
@@ -42,7 +42,14 @@ class TodayViewModel {
         errorMessage = nil
 
         do {
-            try await fetchTodayData()
+            let hasData = try await fetchTodayData()
+
+            if !hasData {
+                // Attempt a sync to populate today's aggregate when missing
+                try await engine.recomputeAll()
+                _ = try await fetchTodayData()
+            }
+
             try await fetchWeekTrend()
         } catch {
             errorMessage = error.localizedDescription
@@ -73,7 +80,8 @@ class TodayViewModel {
     // MARK: - Private Methods
 
     /// Fetch today's metrics
-    private func fetchTodayData() async throws {
+    @discardableResult
+    private func fetchTodayData() async throws -> Bool {
         let today = Date().startOfDay
 
         guard let aggregate = try dataStore.fetchDayAggregate(for: today) else {
@@ -82,7 +90,7 @@ class TodayViewModel {
             readinessLevel = .medium
             tssRecommendation = nil
             todayMetrics = nil
-            return
+            return false
         }
 
         // Update score and readiness
@@ -114,6 +122,7 @@ class TodayViewModel {
             sleepQualityScore: aggregate.sleepQualityScore,
             deepSleepDuration: aggregate.deepSleepDuration
         )
+        return true
     }
 
     /// Fetch last 7 days of scores for trend view
