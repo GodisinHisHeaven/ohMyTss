@@ -22,115 +22,117 @@ struct ThresholdInputView: View {
     }
 
     var body: some View {
-        VStack(spacing: 30) {
-            Spacer()
+        ScrollView {
+            VStack(spacing: 24) {
+                // Icon
+                Image(systemName: "speedometer")
+                    .font(.system(size: 70))
+                    .foregroundColor(.orange)
+                    .padding(.top, 12)
 
-            // Icon
-            Image(systemName: "speedometer")
-                .font(.system(size: 70))
-                .foregroundColor(.orange)
-                .padding(.bottom, 10)
+                // Title
+                Text("Set Your FTP")
+                    .font(.title)
+                    .fontWeight(.bold)
 
-            // Title
-            Text("Set Your FTP")
-                .font(.title)
-                .fontWeight(.bold)
-
-            // Description
-            Text("Your Functional Threshold Power helps us calculate accurate training stress scores.")
-                .font(.body)
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal)
-
-            Spacer()
-
-            // FTP Input
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Cycling FTP (Watts)")
-                    .font(.headline)
-
-                HStack {
-                    TextField("e.g., 250", text: $ftp)
-                        .font(.title2)
-#if os(iOS)
-                        .keyboardType(.numberPad)
-#endif
-                        .textFieldStyle(RoundedBorderTextFieldStyle())
-
-                    Text("W")
-                        .font(.title3)
-                        .foregroundColor(.secondary)
-                }
-            }
-            .padding()
-            .background(Color.secondary.opacity(0.1))
-            .cornerRadius(12)
-            .padding(.horizontal)
-
-            // Help text
-            VStack(alignment: .leading, spacing: 10) {
-                Text("What is FTP?")
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-
-                Text("FTP is the maximum power you can sustain for one hour. If you don't know your FTP, you can:")
-                    .font(.caption)
+                // Description
+                Text("Your Functional Threshold Power helps us calculate accurate training stress scores.")
+                    .font(.body)
                     .foregroundColor(.secondary)
-
-                VStack(alignment: .leading, spacing: 8) {
-                    HelpItem(text: "Complete an FTP test")
-                    HelpItem(text: "Estimate from a 20-minute test")
-                    HelpItem(text: "Use a default value and update later")
-                }
-                .font(.caption)
-                .foregroundColor(.secondary)
-            }
-            .padding()
-            .background(Color.blue.opacity(0.1))
-            .cornerRadius(12)
-            .padding(.horizontal)
-
-            Spacer()
-
-            // Error message
-            if let error = error {
-                Text(error.localizedDescription)
-                    .font(.caption)
-                    .foregroundColor(.red)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal)
-            }
 
-            // Continue Button
-            Button(action: saveAndContinue) {
-                if isSaving {
-                    ProgressView()
-                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                } else {
-                    Text("Continue")
+                // FTP Input
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Cycling FTP (Watts)")
                         .font(.headline)
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                }
-            }
-            .background(isValidFTP ? Color.blue : Color.gray)
-            .cornerRadius(12)
-            .disabled(!isValidFTP || isSaving)
-            .padding(.horizontal)
 
-            // Skip Button
-            Button("Skip (Use Default)") {
-                ftp = "\(Constants.defaultFTP)"
-                saveAndContinue()
+                    HStack {
+                        TextField("e.g., 250", text: $ftp)
+                            .font(.title2)
+#if os(iOS)
+                            .keyboardType(.numberPad)
+#endif
+                            .textFieldStyle(RoundedBorderTextFieldStyle())
+
+                        Text("W")
+                            .font(.title3)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .padding()
+                .background(Color.secondary.opacity(0.1))
+                .cornerRadius(12)
+
+                // Help text
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("What is FTP?")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+
+                    Text("FTP is the maximum power you can sustain for one hour. If you don't know your FTP, you can:")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        HelpItem(text: "Complete an FTP test")
+                        HelpItem(text: "Estimate from a 20-minute test")
+                        HelpItem(text: "Use a default value and update later")
+                    }
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                }
+                .padding()
+                .background(Color.blue.opacity(0.1))
+                .cornerRadius(12)
+
+                // Spacer to allow scroll when keyboard is up
+                Spacer().frame(height: 120)
             }
-            .foregroundColor(.secondary)
-            .padding(.bottom, 30)
+            .padding(.horizontal, 24)
+            .padding(.top, 16)
+            .padding(.bottom, 40)
         }
-        .padding()
+        .scrollDismissesKeyboard(.interactively)
+        .safeAreaInset(edge: .bottom) {
+            VStack(spacing: 12) {
+                if let error = error {
+                    Text(error.localizedDescription)
+                        .font(.caption)
+                        .foregroundColor(.red)
+                        .multilineTextAlignment(.center)
+                }
+
+                Button(action: saveAndContinue) {
+                    if isSaving {
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                            .frame(maxWidth: .infinity)
+                            .padding()
+                    } else {
+                        Text("Continue")
+                            .font(.headline)
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding()
+                    }
+                }
+                .background(isValidFTP ? Color.blue : Color.gray)
+                .cornerRadius(12)
+                .disabled(!isValidFTP || isSaving)
+
+                Button("Skip (Use Default)") {
+                    ftp = "\(Constants.defaultFTP)"
+                    saveAndContinue()
+                }
+                .foregroundColor(.secondary)
+                .padding(.bottom, 4)
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, 12)
+            .padding(.bottom, 20)
+            .background(.ultraThinMaterial)
+        }
     }
 
     private var isValidFTP: Bool {
