@@ -12,7 +12,7 @@ struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
     @State private var hasCompletedOnboarding = false
     @State private var isLoading = true
-    @State private var engine: BodyBatteryEngine?
+    @State private var engine: (any BodyBatteryEngineProtocol)?
     @State private var dataStore: DataStore?
 
     var body: some View {

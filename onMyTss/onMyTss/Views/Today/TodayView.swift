@@ -13,7 +13,7 @@ struct TodayView: View {
     @Environment(\.modelContext) private var modelContext
     @State private var viewModel: TodayViewModel
 
-    init(engine: BodyBatteryEngine, dataStore: DataStore) {
+    init(engine: any BodyBatteryEngineProtocol, dataStore: DataStore) {
         _viewModel = State(initialValue: TodayViewModel(engine: engine, dataStore: dataStore))
     }
 
