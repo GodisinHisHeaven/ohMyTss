@@ -19,8 +19,8 @@ final class WorkoutAggregatorTests: XCTestCase {
         let store = DataStore(modelContainer: container)
 
         let aggregator = WorkoutAggregator(
-            healthKitManager: HealthKitManager(),
-            stravaAuthManager: StravaAuthManager(dataStore: store),
+            healthKitManager: MockHealthKitManager(),
+            stravaAuthManager: MockStravaAuthManager(),
             dataStore: store
         )
 
@@ -56,4 +56,18 @@ final class WorkoutAggregatorTests: XCTestCase {
         XCTAssertEqual(combined.first?.source, WorkoutSource.strava.rawValue)
         XCTAssertEqual(combined.first?.tss, 60)
     }
+}
+
+// MARK: - Test doubles
+
+@MainActor
+private final class MockHealthKitManager: HealthKitManaging {
+    func fetchWorkouts(from startDate: Date, to endDate: Date) async throws -> [HKWorkout] { [] }
+    func fetchPowerSamples(for workout: HKWorkout) async throws -> [HKQuantitySample] { [] }
+    func fetchHeartRateSamples(for workout: HKWorkout) async throws -> [HKQuantitySample] { [] }
+}
+
+@MainActor
+private final class MockStravaAuthManager: StravaAuthManaging {
+    func getValidAccessToken() async throws -> String { "token" }
 }
