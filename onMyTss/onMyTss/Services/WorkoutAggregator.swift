@@ -8,6 +8,20 @@
 import Foundation
 import HealthKit
 
+// MARK: - Protocols for dependency injection (test-friendly)
+
+@MainActor
+protocol HealthKitManaging: AnyObject {
+    func fetchWorkouts(from startDate: Date, to endDate: Date) async throws -> [HKWorkout]
+    func fetchPowerSamples(for workout: HKWorkout) async throws -> [HKQuantitySample]
+    func fetchHeartRateSamples(for workout: HKWorkout) async throws -> [HKQuantitySample]
+}
+
+@MainActor
+protocol StravaAuthManaging: AnyObject {
+    func getValidAccessToken() async throws -> String
+}
+
 /// TSS calculation method
 enum TSSMethod: String {
     case power
@@ -22,15 +36,15 @@ final class WorkoutAggregator {
 
     // MARK: - Dependencies
 
-    private let healthKitManager: HealthKitManager
-    private let stravaAuthManager: StravaAuthManager
+    private let healthKitManager: HealthKitManaging
+    private let stravaAuthManager: StravaAuthManaging
     private let dataStore: DataStore
 
     // MARK: - Initialization
 
     init(
-        healthKitManager: HealthKitManager,
-        stravaAuthManager: StravaAuthManager,
+        healthKitManager: HealthKitManaging,
+        stravaAuthManager: StravaAuthManaging,
         dataStore: DataStore
     ) {
         self.healthKitManager = healthKitManager
@@ -374,3 +388,8 @@ final class WorkoutAggregator {
         return (estimatedTSS, "duration")
     }
 }
+
+// MARK: - Concrete conformances
+
+extension HealthKitManager: HealthKitManaging {}
+extension StravaAuthManager: StravaAuthManaging {}
