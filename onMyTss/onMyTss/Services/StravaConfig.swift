@@ -3,28 +3,59 @@
 //  onMyTss
 //
 //  IMPORTANT: This file references your Strava API credentials via environment variables
-//  DO NOT commit real credentials to version control! This file is in .gitignore
+//  or Info.plist values injected from build settings. DO NOT commit real credentials to
+//  version control! This file is in .gitignore
 //
 
 import Foundation
 
 /// Strava API configuration
 /// Get your credentials from https://www.strava.com/settings/api
-/// Values are read from environment variables to avoid storing secrets in source.
+/// Values are read from environment variables first, then Info.plist (fed by build settings)
+/// to avoid hardcoding secrets in source.
 enum StravaConfig {
     private enum Keys {
         static let clientID = "STRAVA_CLIENT_ID"
         static let clientSecret = "STRAVA_CLIENT_SECRET"
     }
 
-    static var clientID: String? { envValue(for: Keys.clientID) }
-    static var clientSecret: String? { envValue(for: Keys.clientSecret) }
+    static var clientID: String? {
+        resolveValue(for: Keys.clientID,
+                     environment: ProcessInfo.processInfo.environment,
+                     infoDictionary: Bundle.main.infoDictionary ?? [:])
+    }
+    static var clientSecret: String? {
+        resolveValue(for: Keys.clientSecret,
+                     environment: ProcessInfo.processInfo.environment,
+                     infoDictionary: Bundle.main.infoDictionary ?? [:])
+    }
 
-    private static func envValue(for key: String) -> String? {
-        guard let value = ProcessInfo.processInfo.environment[key]?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !value.isEmpty else {
-            return nil
+    /// Resolve credentials from environment first, then Info.plist (set via build settings).
+    /// Returns nil for empty strings or unresolved build placeholders like `$(STRAVA_CLIENT_ID)`.
+    static func resolveValue(for key: String,
+                             environment: [String: String],
+                             infoDictionary: [String: Any]) -> String? {
+        if let envRaw = environment[key],
+           let env = envRaw.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty {
+            return env
         }
-        return value
+
+        if let infoRaw = infoDictionary[key] as? String,
+           let info = infoRaw.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty,
+           !info.isBuildPlaceholder {
+            return info
+        }
+
+        return nil
+    }
+}
+
+private extension String {
+    var nonEmpty: String? {
+        isEmpty ? nil : self
+    }
+
+    var isBuildPlaceholder: Bool {
+        hasPrefix("$(") && hasSuffix(")")
     }
 }
