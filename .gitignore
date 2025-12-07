@@ -83,3 +83,6 @@ iOSInjectionProject/
 
 # Local-only marketing page
 landing/
+
+# Local secrets (Strava credentials)
+onMyTss/Config/Secrets.xcconfig
