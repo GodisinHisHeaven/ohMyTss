@@ -4,8 +4,11 @@
 //
 //  SETUP INSTRUCTIONS:
 //  1. Copy this file to StravaConfig.swift
-//  2. Set environment variables STRAVA_CLIENT_ID and STRAVA_CLIENT_SECRET
-//     in your Xcode scheme or `.xcode.env` (not committed)
+//  2. Supply STRAVA_CLIENT_ID and STRAVA_CLIENT_SECRET either via:
+//     - Xcode scheme environment variables / `.xcode.env` for local runs
+//     - Build settings (preferred for releases): set STRAVA_CLIENT_ID / STRAVA_CLIENT_SECRET
+//       in a local xcconfig and set it as the target’s Base Configuration. These values
+//       flow into Info.plist keys STRAVA_CLIENT_ID / STRAVA_CLIENT_SECRET.
 //  3. Get your credentials from https://www.strava.com/settings/api
 //
 //  IMPORTANT: StravaConfig.swift is in .gitignore and will not be committed
@@ -15,21 +18,51 @@ import Foundation
 
 /// Strava API configuration
 /// Get your credentials from https://www.strava.com/settings/api
-/// Values are read from environment variables to avoid storing secrets in source.
+/// Values are read from environment variables first, then Info.plist (fed by build settings)
+/// to avoid hardcoding secrets in source.
 enum StravaConfig {
     private enum Keys {
         static let clientID = "STRAVA_CLIENT_ID"
         static let clientSecret = "STRAVA_CLIENT_SECRET"
     }
 
-    static var clientID: String? { envValue(for: Keys.clientID) }
-    static var clientSecret: String? { envValue(for: Keys.clientSecret) }
+    static var clientID: String? {
+        resolveValue(for: Keys.clientID,
+                     environment: ProcessInfo.processInfo.environment,
+                     infoDictionary: Bundle.main.infoDictionary ?? [:])
+    }
+    static var clientSecret: String? {
+        resolveValue(for: Keys.clientSecret,
+                     environment: ProcessInfo.processInfo.environment,
+                     infoDictionary: Bundle.main.infoDictionary ?? [:])
+    }
 
-    private static func envValue(for key: String) -> String? {
-        guard let value = ProcessInfo.processInfo.environment[key]?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !value.isEmpty else {
-            return nil
+    /// Resolve credentials from environment first, then Info.plist (set via build settings).
+    /// Returns nil for empty strings or unresolved build placeholders like `$(STRAVA_CLIENT_ID)`.
+    static func resolveValue(for key: String,
+                             environment: [String: String],
+                             infoDictionary: [String: Any]) -> String? {
+        if let envRaw = environment[key],
+           let env = envRaw.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty {
+            return env
         }
-        return value
+
+        if let infoRaw = infoDictionary[key] as? String,
+           let info = infoRaw.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty,
+           !info.isBuildPlaceholder {
+            return info
+        }
+
+        return nil
+    }
+}
+
+private extension String {
+    var nonEmpty: String? {
+        isEmpty ? nil : self
+    }
+
+    var isBuildPlaceholder: Bool {
+        hasPrefix("$(") && hasSuffix(")")
     }
 }

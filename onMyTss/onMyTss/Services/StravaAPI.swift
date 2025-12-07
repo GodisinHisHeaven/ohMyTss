@@ -65,7 +65,7 @@ final class StravaAPI {
             case .networkError(let error):
                 return "Network error: \(error.localizedDescription)"
             case .missingConfiguration:
-                return "Missing Strava credentials. Set STRAVA_CLIENT_ID and STRAVA_CLIENT_SECRET environment variables."
+                return "Missing Strava credentials. Set STRAVA_CLIENT_ID and STRAVA_CLIENT_SECRET in build settings (Info.plist) or scheme environment variables."
             }
         }
     }
