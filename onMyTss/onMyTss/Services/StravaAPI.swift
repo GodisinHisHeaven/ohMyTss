@@ -40,6 +40,7 @@ final class StravaAPI {
         case unauthorized
         case rateLimited
         case networkError(Error)
+        case notConfigured
 
         var errorDescription: String? {
             switch self {
@@ -57,14 +58,38 @@ final class StravaAPI {
                 return "Strava API rate limit exceeded - please try again later"
             case .networkError(let error):
                 return "Network error: \(error.localizedDescription)"
+            case .notConfigured:
+                return """
+                Strava API Not Configured
+
+                To connect Strava:
+                1. Create an app at https://www.strava.com/settings/api
+                2. Set Authorization Callback Domain to: onmytss.com
+                3. Copy your Client ID and Client Secret
+                4. Add them to StravaConfig.swift in Xcode
+                """
             }
         }
+    }
+
+    // MARK: - Configuration Validation
+
+    /// Check if Strava API is properly configured
+    static func isConfigured() -> Bool {
+        return clientID != "YOUR_CLIENT_ID" &&
+               clientSecret != "YOUR_CLIENT_SECRET" &&
+               !clientID.isEmpty &&
+               !clientSecret.isEmpty
     }
 
     // MARK: - OAuth
 
     /// Generate authorization URL for OAuth flow
     static func getAuthorizationURL() -> URL? {
+        guard isConfigured() else {
+            return nil
+        }
+
         var components = URLComponents(string: Endpoint.authorize)
         components?.queryItems = [
             URLQueryItem(name: "client_id", value: clientID),
@@ -78,6 +103,10 @@ final class StravaAPI {
 
     /// Exchange authorization code for access and refresh tokens
     static func exchangeToken(code: String) async throws -> TokenResponse {
+        guard isConfigured() else {
+            throw StravaAPIError.notConfigured
+        }
+
         guard let url = URL(string: Endpoint.token) else {
             throw StravaAPIError.invalidURL
         }
@@ -100,6 +129,10 @@ final class StravaAPI {
 
     /// Refresh access token using refresh token
     static func refreshToken(_ refreshToken: String) async throws -> TokenResponse {
+        guard isConfigured() else {
+            throw StravaAPIError.notConfigured
+        }
+
         guard let url = URL(string: Endpoint.token) else {
             throw StravaAPIError.invalidURL
         }

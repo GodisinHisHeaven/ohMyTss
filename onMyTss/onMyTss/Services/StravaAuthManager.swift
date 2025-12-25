@@ -37,6 +37,11 @@ final class StravaAuthManager: NSObject, ObservableObject {
 
     /// Initiate Strava OAuth flow
     func connectStrava() async throws {
+        // Check if Strava is properly configured
+        guard StravaAPI.isConfigured() else {
+            throw StravaAPI.StravaAPIError.notConfigured
+        }
+
         guard let authURL = StravaAPI.getAuthorizationURL() else {
             throw StravaAPI.StravaAPIError.invalidURL
         }
