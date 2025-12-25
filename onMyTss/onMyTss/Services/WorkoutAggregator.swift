@@ -44,13 +44,27 @@ final class WorkoutAggregator {
     /// Returns deduplicated workouts with Strava priority
     func fetchWorkouts(from startDate: Date, to endDate: Date) async throws -> [Workout] {
         // Fetch from both sources in parallel
+        // Note: Strava errors are silently caught to avoid breaking the entire sync
         async let healthKitWorkouts = fetchHealthKitWorkouts(from: startDate, to: endDate)
-        async let stravaWorkouts = fetchStravaWorkouts(from: startDate, to: endDate)
+        async let stravaWorkouts = fetchStravaWorkoutsSafely(from: startDate, to: endDate)
 
         let (hkWorkouts, stWorkouts) = try await (healthKitWorkouts, stravaWorkouts)
 
         // Combine and deduplicate
         return deduplicateWorkouts(healthKit: hkWorkouts, strava: stWorkouts)
+    }
+
+    /// Safely fetch Strava workouts without throwing errors
+    /// Returns empty array if Strava is not configured or fails
+    private func fetchStravaWorkoutsSafely(from startDate: Date, to endDate: Date) async -> [Workout] {
+        do {
+            return try await fetchStravaWorkouts(from: startDate, to: endDate)
+        } catch {
+            // Silently fail - Strava is optional
+            // Log error for debugging but don't propagate to UI
+            print("⚠️ Strava sync failed (this is OK if Strava is not configured): \(error.localizedDescription)")
+            return []
+        }
     }
 
     // MARK: - Private Fetch Methods
