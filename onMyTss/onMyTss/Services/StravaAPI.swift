@@ -70,6 +70,13 @@ final class StravaAPI {
         }
     }
 
+    // MARK: - Configuration Validation
+
+    /// Check if Strava API is properly configured
+    static func isConfigured() -> Bool {
+        return StravaConfig.clientID != nil && StravaConfig.clientSecret != nil
+    }
+
     // MARK: - OAuth
 
     /// Generate authorization URL for OAuth flow
