@@ -31,7 +31,10 @@ class DataStore {
     /// Batch save multiple day aggregates in a single transaction for better performance
     func saveDayAggregatesBatch(_ dayAggregates: [DayAggregate]) throws {
         for aggregate in dayAggregates {
-            modelContext.insert(aggregate)
+            // Avoid duplicating an existing day; if it exists, the fetched instance is already tracked
+            if try fetchDayAggregate(for: aggregate.date) == nil {
+                modelContext.insert(aggregate)
+            }
         }
         try modelContext.save()
     }
@@ -192,13 +195,52 @@ class DataStore {
     // MARK: - Workout Operations
 
     func saveWorkout(_ workout: Workout) throws {
-        modelContext.insert(workout)
+        if let existing = try fetchWorkout(byId: workout.id) {
+            // Update in place
+            existing.date = workout.date
+            existing.startTime = workout.startTime
+            existing.duration = workout.duration
+            existing.workoutType = workout.workoutType
+            existing.distance = workout.distance
+            existing.tss = workout.tss
+            existing.calculationMethod = workout.calculationMethod
+            existing.source = workout.source
+            existing.stravaId = workout.stravaId
+            existing.healthKitUUID = workout.healthKitUUID
+            existing.isSuppressed = workout.isSuppressed
+            existing.averagePower = workout.averagePower
+            existing.normalizedPower = workout.normalizedPower
+            existing.averageHeartRate = workout.averageHeartRate
+            existing.maxHeartRate = workout.maxHeartRate
+            existing.deviceName = workout.deviceName
+        } else {
+            modelContext.insert(workout)
+        }
         try modelContext.save()
     }
 
     func saveWorkouts(_ workouts: [Workout]) throws {
         for workout in workouts {
-            modelContext.insert(workout)
+            if let existing = try fetchWorkout(byId: workout.id) {
+                existing.date = workout.date
+                existing.startTime = workout.startTime
+                existing.duration = workout.duration
+                existing.workoutType = workout.workoutType
+                existing.distance = workout.distance
+                existing.tss = workout.tss
+                existing.calculationMethod = workout.calculationMethod
+                existing.source = workout.source
+                existing.stravaId = workout.stravaId
+                existing.healthKitUUID = workout.healthKitUUID
+                existing.isSuppressed = workout.isSuppressed
+                existing.averagePower = workout.averagePower
+                existing.normalizedPower = workout.normalizedPower
+                existing.averageHeartRate = workout.averageHeartRate
+                existing.maxHeartRate = workout.maxHeartRate
+                existing.deviceName = workout.deviceName
+            } else {
+                modelContext.insert(workout)
+            }
         }
         try modelContext.save()
     }

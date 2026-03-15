@@ -87,9 +87,8 @@ fastlane/test_output
 
 iOSInjectionProject/
 
-# Strava API credentials - IMPORTANT: Never commit these!
+# Strava API credentials - values now sourced from env vars
 Config.xcconfig
-**/StravaConfig.swift
 **/StravaAPI.swift.local
 .env
 .env.local
