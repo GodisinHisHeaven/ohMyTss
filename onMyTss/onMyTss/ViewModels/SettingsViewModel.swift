@@ -14,7 +14,7 @@ import SwiftData
 class SettingsViewModel {
     // Dependencies
     private let dataStore: DataStore
-    private let engine: BodyBatteryEngine
+    private let engine: any BodyBatteryEngineProtocol
     private let stravaAuthManager: StravaAuthManager
 
     // UI State
@@ -33,14 +33,14 @@ class SettingsViewModel {
     var isConnectingStrava: Bool = false
     var preferStravaFTP: Bool = false
 
-    init(dataStore: DataStore, engine: BodyBatteryEngine, stravaAuthManager: StravaAuthManager) {
+    init(dataStore: DataStore, engine: any BodyBatteryEngineProtocol, stravaAuthManager: StravaAuthManager) {
         self.dataStore = dataStore
         self.engine = engine
         self.stravaAuthManager = stravaAuthManager
     }
 
     // Convenience init for backward compatibility
-    convenience init(dataStore: DataStore, engine: BodyBatteryEngine) {
+    convenience init(dataStore: DataStore, engine: any BodyBatteryEngineProtocol) {
         let stravaAuthManager = StravaAuthManager(dataStore: dataStore)
         self.init(dataStore: dataStore, engine: engine, stravaAuthManager: stravaAuthManager)
     }

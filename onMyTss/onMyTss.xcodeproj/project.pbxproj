@@ -27,6 +27,7 @@
 		138634EB2EBEEBF200674956 /* onMyTss.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = onMyTss.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		138634F82EBEEBF500674956 /* onMyTssTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = onMyTssTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		138635022EBEEBF500674956 /* onMyTssUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = onMyTssUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		13A1C2002F00AAAA00AAAAAA /* Secrets.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = Secrets.xcconfig; path = Config/Secrets.xcconfig; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -75,6 +76,7 @@
 		138634E22EBEEBF200674956 = {
 			isa = PBXGroup;
 			children = (
+				13A1C2012F00AAAA00AAAAAA /* Config */,
 				138634ED2EBEEBF200674956 /* onMyTss */,
 				138634FB2EBEEBF500674956 /* onMyTssTests */,
 				138635052EBEEBF500674956 /* onMyTssUITests */,
@@ -91,6 +93,14 @@
 			);
 			name = Products;
 			sourceTree = "<group>";
+		};
+		13A1C2012F00AAAA00AAAAAA /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				13A1C2002F00AAAA00AAAAAA /* Secrets.xcconfig */,
+			);
+			path = Config;
+			sourceTree = SOURCE_ROOT;
 		};
 /* End PBXGroup section */
 
@@ -387,6 +397,7 @@
 		};
 		1386350D2EBEEBF500674956 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 13A1C2002F00AAAA00AAAAAA /* Secrets.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -397,7 +408,7 @@
 				DEVELOPMENT_TEAM = MMNKUTK8R8;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
-				GENERATE_INFOPLIST_FILE = YES;
+			GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleURLTypes = "{\n    CFBundleTypeRole = Editor;\n    CFBundleURLName = \"com.onmytss.strava-auth\";\n    CFBundleURLSchemes =     (\n        onmytss\n    );\n}";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
@@ -431,6 +442,7 @@
 		};
 		1386350E2EBEEBF500674956 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 13A1C2002F00AAAA00AAAAAA /* Secrets.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -441,7 +453,7 @@
 				DEVELOPMENT_TEAM = MMNKUTK8R8;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
-				GENERATE_INFOPLIST_FILE = YES;
+			GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleURLTypes = "{\n    CFBundleTypeRole = Editor;\n    CFBundleURLName = \"com.onmytss.strava-auth\";\n    CFBundleURLSchemes =     (\n        onmytss\n    );\n}";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;

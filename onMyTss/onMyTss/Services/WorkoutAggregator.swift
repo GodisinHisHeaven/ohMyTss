@@ -8,6 +8,20 @@
 import Foundation
 import HealthKit
 
+// MARK: - Protocols for dependency injection (test-friendly)
+
+@MainActor
+protocol HealthKitManaging: AnyObject {
+    func fetchWorkouts(from startDate: Date, to endDate: Date) async throws -> [HKWorkout]
+    func fetchPowerSamples(for workout: HKWorkout) async throws -> [HKQuantitySample]
+    func fetchHeartRateSamples(for workout: HKWorkout) async throws -> [HKQuantitySample]
+}
+
+@MainActor
+protocol StravaAuthManaging: AnyObject {
+    func getValidAccessToken() async throws -> String
+}
+
 /// TSS calculation method
 enum TSSMethod: String {
     case power
@@ -22,15 +36,15 @@ final class WorkoutAggregator {
 
     // MARK: - Dependencies
 
-    private let healthKitManager: HealthKitManager
-    private let stravaAuthManager: StravaAuthManager
+    private let healthKitManager: HealthKitManaging
+    private let stravaAuthManager: StravaAuthManaging
     private let dataStore: DataStore
 
     // MARK: - Initialization
 
     init(
-        healthKitManager: HealthKitManager,
-        stravaAuthManager: StravaAuthManager,
+        healthKitManager: HealthKitManaging,
+        stravaAuthManager: StravaAuthManaging,
         dataStore: DataStore
     ) {
         self.healthKitManager = healthKitManager
@@ -50,8 +64,20 @@ final class WorkoutAggregator {
 
         let (hkWorkouts, stWorkouts) = try await (healthKitWorkouts, stravaWorkouts)
 
-        // Combine and deduplicate
-        return deduplicateWorkouts(healthKit: hkWorkouts, strava: stWorkouts)
+        // Prioritize workouts with power data across sources; Strava already prioritized over HK in deduplication
+        let combined = deduplicateWorkouts(healthKit: hkWorkouts, strava: stWorkouts)
+        return combined.sorted { lhs, rhs in
+            // Prefer workouts that have power metrics (averagePower or normalizedPower)
+            let lhsHasPower = lhs.averagePower != nil || lhs.normalizedPower != nil
+            let rhsHasPower = rhs.averagePower != nil || rhs.normalizedPower != nil
+
+            if lhsHasPower == rhsHasPower {
+                // Preserve chronological ordering if both have (or both lack) power
+                return lhs.startTime < rhs.startTime
+            }
+
+            return lhsHasPower && !rhsHasPower
+        }
     }
 
     /// Safely fetch Strava workouts without throwing errors
@@ -196,7 +222,8 @@ final class WorkoutAggregator {
         var workouts: [Workout] = []
 
         for activity in allActivities {
-            guard let startTime = activity.startDateTime else {
+            // Skip malformed activities (e.g., missing id/start time) to avoid decode crashes further downstream
+            guard activity.id > 0, let startTime = activity.startDateTime else {
                 continue
             }
 
@@ -237,7 +264,7 @@ final class WorkoutAggregator {
 
     /// Deduplicate workouts with Strava priority
     /// Uses same criteria as HealthKit deduplication: time, duration, type
-    private func deduplicateWorkouts(healthKit: [Workout], strava: [Workout]) -> [Workout] {
+    func deduplicateWorkouts(healthKit: [Workout], strava: [Workout]) -> [Workout] {
         var result: [Workout] = []
 
         // Add all Strava workouts first (they have priority)
@@ -375,3 +402,8 @@ final class WorkoutAggregator {
         return (estimatedTSS, "duration")
     }
 }
+
+// MARK: - Concrete conformances
+
+extension HealthKitManager: HealthKitManaging {}
+extension StravaAuthManager: StravaAuthManaging {}

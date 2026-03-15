@@ -14,10 +14,16 @@ final class StravaAPI {
 
     // MARK: - Configuration
 
-    /// Strava OAuth credentials loaded from StravaConfig.swift
+    /// Strava OAuth credentials loaded from environment variables via StravaConfig
     /// See StravaConfig.swift.template for setup instructions
-    static var clientID: String = StravaConfig.clientID
-    static var clientSecret: String = StravaConfig.clientSecret
+    private static func loadCredentials() throws -> (clientID: String, clientSecret: String) {
+        guard let clientID = StravaConfig.clientID,
+              let clientSecret = StravaConfig.clientSecret else {
+            throw StravaAPIError.missingConfiguration
+        }
+
+        return (clientID, clientSecret)
+    }
     static var redirectURI: String = "onmytss://onmytss.com"
 
     // MARK: - Endpoints
@@ -40,7 +46,7 @@ final class StravaAPI {
         case unauthorized
         case rateLimited
         case networkError(Error)
-        case notConfigured
+        case missingConfiguration
 
         var errorDescription: String? {
             switch self {
@@ -58,16 +64,8 @@ final class StravaAPI {
                 return "Strava API rate limit exceeded - please try again later"
             case .networkError(let error):
                 return "Network error: \(error.localizedDescription)"
-            case .notConfigured:
-                return """
-                Strava API Not Configured
-
-                To connect Strava:
-                1. Create an app at https://www.strava.com/settings/api
-                2. Set Authorization Callback Domain to: onmytss.com
-                3. Copy your Client ID and Client Secret
-                4. Add them to StravaConfig.swift in Xcode
-                """
+            case .missingConfiguration:
+                return "Missing Strava credentials. Set STRAVA_CLIENT_ID and STRAVA_CLIENT_SECRET in build settings (Info.plist) or scheme environment variables."
             }
         }
     }
@@ -76,37 +74,31 @@ final class StravaAPI {
 
     /// Check if Strava API is properly configured
     static func isConfigured() -> Bool {
-        return clientID != "YOUR_CLIENT_ID" &&
-               clientSecret != "YOUR_CLIENT_SECRET" &&
-               !clientID.isEmpty &&
-               !clientSecret.isEmpty
+        return StravaConfig.clientID != nil && StravaConfig.clientSecret != nil
     }
 
     // MARK: - OAuth
 
     /// Generate authorization URL for OAuth flow
-    static func getAuthorizationURL() -> URL? {
-        guard isConfigured() else {
-            return nil
-        }
-
+    static func getAuthorizationURL() throws -> URL {
+        let credentials = try loadCredentials()
         var components = URLComponents(string: Endpoint.authorize)
         components?.queryItems = [
-            URLQueryItem(name: "client_id", value: clientID),
+            URLQueryItem(name: "client_id", value: credentials.clientID),
             URLQueryItem(name: "redirect_uri", value: redirectURI),
             URLQueryItem(name: "response_type", value: "code"),
             URLQueryItem(name: "scope", value: "read,activity:read_all"),
             URLQueryItem(name: "approval_prompt", value: "auto")
         ]
-        return components?.url
+        guard let url = components?.url else {
+            throw StravaAPIError.invalidURL
+        }
+        return url
     }
 
     /// Exchange authorization code for access and refresh tokens
     static func exchangeToken(code: String) async throws -> TokenResponse {
-        guard isConfigured() else {
-            throw StravaAPIError.notConfigured
-        }
-
+        let credentials = try loadCredentials()
         guard let url = URL(string: Endpoint.token) else {
             throw StravaAPIError.invalidURL
         }
@@ -116,8 +108,8 @@ final class StravaAPI {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         let body: [String: Any] = [
-            "client_id": clientID,
-            "client_secret": clientSecret,
+            "client_id": credentials.clientID,
+            "client_secret": credentials.clientSecret,
             "code": code,
             "grant_type": "authorization_code"
         ]
@@ -129,10 +121,7 @@ final class StravaAPI {
 
     /// Refresh access token using refresh token
     static func refreshToken(_ refreshToken: String) async throws -> TokenResponse {
-        guard isConfigured() else {
-            throw StravaAPIError.notConfigured
-        }
-
+        let credentials = try loadCredentials()
         guard let url = URL(string: Endpoint.token) else {
             throw StravaAPIError.invalidURL
         }
@@ -142,8 +131,8 @@ final class StravaAPI {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         let body: [String: Any] = [
-            "client_id": clientID,
-            "client_secret": clientSecret,
+            "client_id": credentials.clientID,
+            "client_secret": credentials.clientSecret,
             "refresh_token": refreshToken,
             "grant_type": "refresh_token"
         ]
@@ -265,7 +254,7 @@ struct TokenResponse: Codable {
     let expiresIn: Int
     let refreshToken: String
     let accessToken: String
-    let athlete: StravaAthlete
+    let athlete: StravaAthlete?
 
     var expirationDate: Date {
         Date(timeIntervalSince1970: TimeInterval(expiresAt))
@@ -289,28 +278,109 @@ struct StravaAthlete: Codable {
 }
 
 struct StravaActivity: Codable {
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case distance
+        case movingTime
+        case elapsedTime
+        case totalElevationGain
+        case type
+        case sportType
+        case startDate
+        case startDateLocal
+        case timezone
+        case averageSpeed
+        case maxSpeed
+        case averageCadence
+        case averageWatts
+        case weightedAverageWatts
+        case kilojoules
+        case deviceWatts
+        case hasHeartrate
+        case averageHeartrate
+        case maxHeartrate
+        case deviceName
+    }
+
     let id: Int
-    let name: String
-    let distance: Double
-    let movingTime: Int
-    let elapsedTime: Int
-    let totalElevationGain: Double
-    let type: String
-    let sportType: String
-    let startDate: String
-    let startDateLocal: String
-    let timezone: String
-    let averageSpeed: Double
-    let maxSpeed: Double
-    let averageCadence: Double?
-    let averageWatts: Double?
-    let weightedAverageWatts: Int? // This is Strava's Normalized Power equivalent
-    let kilojoules: Double?
-    let deviceWatts: Bool?
-    let hasHeartrate: Bool
-    let averageHeartrate: Double?
-    let maxHeartrate: Double?
-    let deviceName: String?
+    var name: String
+    var distance: Double
+    var movingTime: Int
+    var elapsedTime: Int
+    var totalElevationGain: Double
+    var type: String
+    var sportType: String
+    var startDate: String
+    var startDateLocal: String
+    var timezone: String
+    var averageSpeed: Double
+    var maxSpeed: Double
+    var averageCadence: Double?
+    var averageWatts: Double?
+    var weightedAverageWatts: Int? // This is Strava's Normalized Power equivalent
+    var kilojoules: Double?
+    var deviceWatts: Bool?
+    var hasHeartrate: Bool
+    var averageHeartrate: Double?
+    var maxHeartrate: Double?
+    var deviceName: String?
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        id = try container.decodeIfPresent(Int.self, forKey: .id) ?? -1
+        name = try container.decodeIfPresent(String.self, forKey: .name) ?? "Activity"
+        distance = try container.decodeIfPresent(Double.self, forKey: .distance) ?? 0
+        movingTime = try container.decodeIfPresent(Int.self, forKey: .movingTime) ?? 0
+        elapsedTime = try container.decodeIfPresent(Int.self, forKey: .elapsedTime) ?? movingTime
+        totalElevationGain = try container.decodeIfPresent(Double.self, forKey: .totalElevationGain) ?? 0
+
+        let decodedType = try container.decodeIfPresent(String.self, forKey: .type) ?? "Workout"
+        type = decodedType
+        sportType = try container.decodeIfPresent(String.self, forKey: .sportType) ?? decodedType
+
+        startDate = try container.decodeIfPresent(String.self, forKey: .startDate) ?? ""
+        startDateLocal = try container.decodeIfPresent(String.self, forKey: .startDateLocal) ?? startDate
+        timezone = try container.decodeIfPresent(String.self, forKey: .timezone) ?? "UTC"
+        averageSpeed = try container.decodeIfPresent(Double.self, forKey: .averageSpeed) ?? 0
+        maxSpeed = try container.decodeIfPresent(Double.self, forKey: .maxSpeed) ?? 0
+        averageCadence = try container.decodeIfPresent(Double.self, forKey: .averageCadence)
+        averageWatts = try container.decodeIfPresent(Double.self, forKey: .averageWatts)
+        weightedAverageWatts = try container.decodeIfPresent(Int.self, forKey: .weightedAverageWatts)
+        kilojoules = try container.decodeIfPresent(Double.self, forKey: .kilojoules)
+        deviceWatts = try container.decodeIfPresent(Bool.self, forKey: .deviceWatts)
+        hasHeartrate = try container.decodeIfPresent(Bool.self, forKey: .hasHeartrate) ?? false
+        averageHeartrate = try container.decodeIfPresent(Double.self, forKey: .averageHeartrate)
+        maxHeartrate = try container.decodeIfPresent(Double.self, forKey: .maxHeartrate)
+        deviceName = try container.decodeIfPresent(String.self, forKey: .deviceName)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encode(distance, forKey: .distance)
+        try container.encode(movingTime, forKey: .movingTime)
+        try container.encode(elapsedTime, forKey: .elapsedTime)
+        try container.encode(totalElevationGain, forKey: .totalElevationGain)
+        try container.encode(type, forKey: .type)
+        try container.encode(sportType, forKey: .sportType)
+        try container.encode(startDate, forKey: .startDate)
+        try container.encode(startDateLocal, forKey: .startDateLocal)
+        try container.encode(timezone, forKey: .timezone)
+        try container.encode(averageSpeed, forKey: .averageSpeed)
+        try container.encode(maxSpeed, forKey: .maxSpeed)
+        try container.encodeIfPresent(averageCadence, forKey: .averageCadence)
+        try container.encodeIfPresent(averageWatts, forKey: .averageWatts)
+        try container.encodeIfPresent(weightedAverageWatts, forKey: .weightedAverageWatts)
+        try container.encodeIfPresent(kilojoules, forKey: .kilojoules)
+        try container.encodeIfPresent(deviceWatts, forKey: .deviceWatts)
+        try container.encode(hasHeartrate, forKey: .hasHeartrate)
+        try container.encodeIfPresent(averageHeartrate, forKey: .averageHeartrate)
+        try container.encodeIfPresent(maxHeartrate, forKey: .maxHeartrate)
+        try container.encodeIfPresent(deviceName, forKey: .deviceName)
+    }
 
     /// Parse start date from ISO 8601 string
     var startDateTime: Date? {
