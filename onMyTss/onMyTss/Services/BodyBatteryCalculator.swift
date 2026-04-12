@@ -119,7 +119,9 @@ struct BodyBatteryCalculator {
         let sumXY = zip(x, y).map(*).reduce(0, +)
         let sumX2 = x.map { $0 * $0 }.reduce(0, +)
 
-        let slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX)
+        let denominator = n * sumX2 - sumX * sumX
+        guard denominator != 0 else { return .stable }
+        let slope = (n * sumXY - sumX * sumY) / denominator
 
         // Interpret slope
         if slope > 2.0 {

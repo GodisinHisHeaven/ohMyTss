@@ -133,9 +133,8 @@ final class WorkoutAggregator {
                 )
                 tssResult = (tss, .hr)
             } else {
-                // Fall back to duration estimate
-                let durationHours = hkWorkout.duration / 3600.0
-                let estimatedTSS = durationHours * 60
+                // Fall back to duration estimate using sport-specific intensity factors
+                let estimatedTSS = TSSCalculator.estimateTSSFromDuration(workout: hkWorkout)
                 tssResult = (estimatedTSS, .duration)
             }
 

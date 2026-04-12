@@ -351,9 +351,6 @@ class BodyBatteryEngine {
                 rampRate = LoadCalculator.calculateCTLRampRate(currentCTL: metrics.ctl, ctlOneWeekAgo: ctlOneWeekAgo)
             }
 
-            // Get workout count for this day
-            let workoutCount = dailyTSSMap[date] != nil ? 1 : 0 // Simplified for MVP
-
             // Get workouts for this day
             let dayWorkouts = workoutsByDay[date] ?? []
             let actualWorkoutCount = dayWorkouts.count
