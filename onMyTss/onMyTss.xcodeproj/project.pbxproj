@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		13A1C2032F00AAAA00AAAAAC /* AppInfo.plist in Resources */ = {isa = PBXBuildFile; fileRef = 13A1C2022F00AAAA00AAAAAB /* AppInfo.plist */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		138634F92EBEEBF500674956 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -28,6 +32,7 @@
 		138634F82EBEEBF500674956 /* onMyTssTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = onMyTssTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		138635022EBEEBF500674956 /* onMyTssUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = onMyTssUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		13A1C2002F00AAAA00AAAAAA /* Secrets.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = Secrets.xcconfig; path = Config/Secrets.xcconfig; sourceTree = SOURCE_ROOT; };
+		13A1C2022F00AAAA00AAAAAB /* AppInfo.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; name = AppInfo.plist; path = Config/AppInfo.plist; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -98,6 +103,7 @@
 			isa = PBXGroup;
 			children = (
 				13A1C2002F00AAAA00AAAAAA /* Secrets.xcconfig */,
+				13A1C2022F00AAAA00AAAAAB /* AppInfo.plist */,
 			);
 			path = Config;
 			sourceTree = SOURCE_ROOT;
@@ -222,6 +228,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				13A1C2032F00AAAA00AAAAAC /* AppInfo.plist in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -408,7 +415,8 @@
 				DEVELOPMENT_TEAM = MMNKUTK8R8;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
-			GENERATE_INFOPLIST_FILE = YES;
+			GENERATE_INFOPLIST_FILE = NO;
+			INFOPLIST_FILE = Config/AppInfo.plist;
 				INFOPLIST_KEY_CFBundleURLTypes = "{\n    CFBundleTypeRole = Editor;\n    CFBundleURLName = \"com.onmytss.strava-auth\";\n    CFBundleURLSchemes =     (\n        onmytss\n    );\n}";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
@@ -453,7 +461,8 @@
 				DEVELOPMENT_TEAM = MMNKUTK8R8;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
-			GENERATE_INFOPLIST_FILE = YES;
+			GENERATE_INFOPLIST_FILE = NO;
+			INFOPLIST_FILE = Config/AppInfo.plist;
 				INFOPLIST_KEY_CFBundleURLTypes = "{\n    CFBundleTypeRole = Editor;\n    CFBundleURLName = \"com.onmytss.strava-auth\";\n    CFBundleURLSchemes =     (\n        onmytss\n    );\n}";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;

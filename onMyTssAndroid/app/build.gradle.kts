@@ -10,7 +10,7 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.example.onmytss"
+        applicationId = "io.github.godisinhhisheaven.onmytss"
         minSdk = 26
         targetSdk = 34
         versionCode = 1
@@ -22,9 +22,23 @@ android {
         }
     }
 
+    signingConfigs {
+        create("release") {
+            val storeFilePath: String? = System.getenv("RELEASE_STORE_FILE")
+            storeFilePath?.let {
+                storeFile = file(it)
+                storePassword = System.getenv("RELEASE_STORE_PASSWORD")
+                keyAlias = System.getenv("RELEASE_KEY_ALIAS")
+                keyPassword = System.getenv("RELEASE_KEY_PASSWORD")
+            }
+        }
+    }
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.findByName("release")?.takeIf {
+                it.storeFile != null
+            } ?: signingConfigs.getByName("debug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

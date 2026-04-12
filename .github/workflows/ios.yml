@@ -1,0 +1,39 @@
+name: iOS Build & Test
+
+on:
+  push:
+    branches: [main, James]
+    paths:
+      - 'onMyTss/**'
+      - '.github/workflows/ios.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'onMyTss/**'
+      - '.github/workflows/ios.yml'
+
+jobs:
+  build-and-test:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_16.app/Contents/Developer
+
+      - name: Build
+        run: |
+          xcodebuild clean build \
+            -scheme onMyTss \
+            -project onMyTss/onMyTss.xcodeproj \
+            -destination "platform=iOS Simulator,name=iPhone 15,OS=latest" \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Test
+        run: |
+          xcodebuild test \
+            -scheme onMyTss \
+            -project onMyTss/onMyTss.xcodeproj \
+            -destination "platform=iOS Simulator,name=iPhone 15,OS=latest" \
+            CODE_SIGNING_ALLOWED=NO
