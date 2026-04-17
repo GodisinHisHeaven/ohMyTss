@@ -24,18 +24,26 @@ jobs:
         with:
           xcode-version: '16'
 
+      - name: List available simulators
+        run: xcrun simctl list devices available
+
       - name: Build
         run: |
           xcodebuild clean build \
             -scheme onMyTss \
             -project onMyTss/onMyTss.xcodeproj \
-            -destination "platform=iOS Simulator,name=iPhone 16" \
+            -destination "generic/platform=iOS Simulator" \
             CODE_SIGNING_ALLOWED=NO
 
       - name: Test
         run: |
+          DEVICE_ID=$(xcrun simctl list devices available -j | \
+            python3 -c "import json,sys; d=json.load(sys.stdin)['devices']; \
+            print(next(dev['udid'] for rt,devs in d.items() if 'iOS' in rt \
+            for dev in devs if 'iPhone' in dev['name']))")
+          echo "Using simulator: $DEVICE_ID"
           xcodebuild test \
             -scheme onMyTss \
             -project onMyTss/onMyTss.xcodeproj \
-            -destination "platform=iOS Simulator,name=iPhone 16" \
+            -destination "platform=iOS Simulator,id=$DEVICE_ID" \
             CODE_SIGNING_ALLOWED=NO
