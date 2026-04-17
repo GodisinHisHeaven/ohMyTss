@@ -24,6 +24,14 @@ jobs:
         with:
           xcode-version: '16'
 
+      - name: Create stub Secrets.xcconfig
+        run: |
+          cat > onMyTss/Config/Secrets.xcconfig <<'EOF'
+          // Stub for CI builds — real values injected at runtime from env
+          STRAVA_CLIENT_ID =
+          STRAVA_CLIENT_SECRET =
+          EOF
+
       - name: List available simulators
         run: xcrun simctl list devices available
 
