@@ -26,17 +26,15 @@ struct BodyBatteryCalculator {
         let score: Double
 
         if tsb <= Constants.tsbForMinScore {
-            // Very fatigued - score is 0
             score = 0
         } else if tsb >= Constants.tsbForMaxScore {
-            // Very fresh - score is 100
             score = 100
+        } else if tsb < 0 {
+            // Piecewise-linear: TSB in [minTSB, 0] maps to [0, 50], pinning neutral TSB=0 at 50
+            score = ((tsb - Constants.tsbForMinScore) / -Constants.tsbForMinScore) * 50
         } else {
-            // Linear mapping from TSB to 0-100 scale
-            // Formula: score = ((TSB - minTSB) / (maxTSB - minTSB)) × 100
-            let tsbRange = Constants.tsbForMaxScore - Constants.tsbForMinScore
-            let normalizedTSB = tsb - Constants.tsbForMinScore
-            score = (normalizedTSB / tsbRange) * 100
+            // Piecewise-linear: TSB in [0, maxTSB] maps to [50, 100]
+            score = 50 + (tsb / Constants.tsbForMaxScore) * 50
         }
 
         // Clamp to 0-100 and round to integer
