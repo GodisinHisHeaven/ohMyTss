@@ -1,0 +1,52 @@
+name: iOS Build & Test
+
+on:
+  push:
+    branches: [main, James]
+    paths:
+      - 'onMyTss/**'
+      - '.github/workflows/ios.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'onMyTss/**'
+      - '.github/workflows/ios.yml'
+
+jobs:
+  build-and-test:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '16'
+
+      - name: Create stub Secrets.xcconfig
+        run: |
+          cat > onMyTss/Config/Secrets.xcconfig <<'EOF'
+          // Stub for CI builds — real values injected at runtime from env
+          STRAVA_CLIENT_ID =
+          STRAVA_CLIENT_SECRET =
+          EOF
+
+      - name: List available simulators
+        run: xcrun simctl list devices available
+
+      - name: Build
+        run: |
+          xcodebuild clean build \
+            -scheme onMyTss \
+            -project onMyTss/onMyTss.xcodeproj \
+            -destination "generic/platform=iOS Simulator" \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Test
+        run: |
+          xcodebuild test \
+            -scheme onMyTss \
+            -project onMyTss/onMyTss.xcodeproj \
+            -destination "platform=iOS Simulator,name=iPhone 16,OS=18.6" \
+            CODE_SIGNING_ALLOWED=NO

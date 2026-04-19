@@ -58,8 +58,9 @@ final class WorkoutAggregator {
     /// Returns deduplicated workouts with Strava priority
     func fetchWorkouts(from startDate: Date, to endDate: Date) async throws -> [Workout] {
         // Fetch from both sources in parallel
+        // Note: Strava errors are silently caught to avoid breaking the entire sync
         async let healthKitWorkouts = fetchHealthKitWorkouts(from: startDate, to: endDate)
-        async let stravaWorkouts = fetchStravaWorkouts(from: startDate, to: endDate)
+        async let stravaWorkouts = fetchStravaWorkoutsSafely(from: startDate, to: endDate)
 
         let (hkWorkouts, stWorkouts) = try await (healthKitWorkouts, stravaWorkouts)
 
@@ -76,6 +77,19 @@ final class WorkoutAggregator {
             }
 
             return lhsHasPower && !rhsHasPower
+        }
+    }
+
+    /// Safely fetch Strava workouts without throwing errors
+    /// Returns empty array if Strava is not configured or fails
+    private func fetchStravaWorkoutsSafely(from startDate: Date, to endDate: Date) async -> [Workout] {
+        do {
+            return try await fetchStravaWorkouts(from: startDate, to: endDate)
+        } catch {
+            // Silently fail - Strava is optional
+            // Log error for debugging but don't propagate to UI
+            print("⚠️ Strava sync failed (this is OK if Strava is not configured): \(error.localizedDescription)")
+            return []
         }
     }
 
@@ -119,9 +133,8 @@ final class WorkoutAggregator {
                 )
                 tssResult = (tss, .hr)
             } else {
-                // Fall back to duration estimate
-                let durationHours = hkWorkout.duration / 3600.0
-                let estimatedTSS = durationHours * 60
+                // Fall back to duration estimate using sport-specific intensity factors
+                let estimatedTSS = TSSCalculator.estimateTSSFromDuration(workout: hkWorkout)
                 tssResult = (estimatedTSS, .duration)
             }
 
