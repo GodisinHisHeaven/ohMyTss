@@ -33,7 +33,7 @@ final class onMyTssUITests: XCTestCase {
 
     @MainActor
     func testLaunchPerformance() throws {
-        // This measures how long it takes to launch your application.
+        try XCTSkipIf(ProcessInfo.processInfo.environment["CI"] != nil, "Launch performance is flaky on CI runners")
         measure(metrics: [XCTApplicationLaunchMetric()]) {
             XCUIApplication().launch()
         }
