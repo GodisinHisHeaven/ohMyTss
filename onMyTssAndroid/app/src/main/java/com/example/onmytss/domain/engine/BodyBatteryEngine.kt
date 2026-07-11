@@ -11,7 +11,6 @@ import com.example.onmytss.domain.calculator.GuidanceEngine
 import com.example.onmytss.domain.calculator.LoadCalculator
 import com.example.onmytss.domain.calculator.PhysiologyModifier
 import com.example.onmytss.domain.calculator.SleepAnalyzer
-import com.example.onmytss.domain.calculator.TSSCalculator
 import com.example.onmytss.domain.model.DayAggregate
 import com.example.onmytss.domain.calculator.SleepSample
 import com.example.onmytss.domain.model.Workout
@@ -41,9 +40,12 @@ class BodyBatteryEngine @Inject constructor(
     suspend fun recomputeAll(days: Int = Constants.MAX_HISTORICAL_DAYS) = withContext(Dispatchers.Default) {
         appStateRepository.updateComputationInProgress(true)
         try {
-            val thresholds = userThresholdsRepository.getOrCreate()
+            // All day keys are LOCAL midnights: they must match both
+            // groupWorkoutsByDay() and the lookups in getTodayAggregate(),
+            // which compare dates with exact equality.
+            val dates = (days - 1 downTo 0).map { i -> localMidnightDaysAgo(i) }
+            val start = Instant.ofEpochMilli(dates.first().time)
             val end = Instant.now()
-            val start = end.minus(days.toLong(), ChronoUnit.DAYS)
 
             // Fetch workouts
             val workouts = workoutAggregator.fetchWorkouts(start, end)
@@ -52,16 +54,11 @@ class BodyBatteryEngine @Inject constructor(
             // Group workouts by day
             val dailyWorkouts = groupWorkoutsByDay(workouts)
 
-            // Calculate daily TSS
-            val dates = (0 until days).map { i ->
-                Date.from(end.minus(i.toLong(), ChronoUnit.DAYS).truncatedTo(ChronoUnit.DAYS))
-            }.reversed()
-
             val tssByDay = dates.associateWith { date ->
-                dailyWorkouts[truncateToDay(date)]?.sumOf { it.tss } ?: 0.0
+                dailyWorkouts[date]?.sumOf { it.tss } ?: 0.0
             }
 
-            // Fetch physiology and sleep in parallel
+            // Fetch physiology and sleep, grouped by local day
             val hrvByDay = mutableMapOf<Date, List<Double>>()
             val rhrByDay = mutableMapOf<Date, List<Double>>()
             val sleepByDay = mutableMapOf<Date, List<SleepSample>>()
@@ -69,18 +66,29 @@ class BodyBatteryEngine @Inject constructor(
             if (healthConnectManager.isAvailable()) {
                 dates.chunked(7).forEach { weekDates ->
                     val weekStart = Instant.ofEpochMilli(weekDates.first().time)
-                    val weekEnd = Instant.ofEpochMilli(weekDates.last().time).plus(1, ChronoUnit.DAYS)
+                    val weekEnd = Instant.ofEpochMilli(nextLocalMidnight(weekDates.last()).time)
+                    // Sleep ending on the first day of the chunk usually starts
+                    // the previous evening, so widen the sleep read window.
+                    val sleepReadStart = weekStart.minus(1, ChronoUnit.DAYS)
 
-                    val hrv = healthConnectManager.readHRVSamples(weekStart, weekEnd)
-                    val hr = healthConnectManager.readHeartRateSamples(weekStart, weekEnd)
-                    val sleep = healthConnectManager.readSleepSamples(weekStart, weekEnd)
+                    val hrv = runCatching { healthConnectManager.readHRVSamples(weekStart, weekEnd) }
+                        .getOrDefault(emptyList())
+                    val rhr = runCatching { healthConnectManager.readRestingHeartRateSamples(weekStart, weekEnd) }
+                        .getOrDefault(emptyList())
+                    val sleep = runCatching { healthConnectManager.readSleepSamples(sleepReadStart, weekEnd) }
+                        .getOrDefault(emptyList())
 
                     weekDates.forEach { date ->
                         val dayStart = date.time
-                        val dayEnd = dayStart + 24 * 60 * 60 * 1000
-                        hrvByDay[date] = hrv.filter { false } // placeholder: Health Connect doesn't tag samples by day directly in bulk read
-                        rhrByDay[date] = hr.filter { false }
-                        sleepByDay[date] = sleep.filter { it.startDate.time in dayStart until dayEnd }
+                        val dayEnd = nextLocalMidnight(date).time
+                        hrvByDay[date] = hrv
+                            .filter { it.time.toEpochMilli() in dayStart until dayEnd }
+                            .map { it.value }
+                        rhrByDay[date] = rhr
+                            .filter { it.time.toEpochMilli() in dayStart until dayEnd }
+                            .map { it.value }
+                        // Sleep belongs to the day it ends (the morning), matching iOS
+                        sleepByDay[date] = sleep.filter { it.endDate.time in dayStart until dayEnd }
                     }
                 }
             }
@@ -89,7 +97,7 @@ class BodyBatteryEngine @Inject constructor(
             val tssValues = dates.map { tssByDay[it] ?: 0.0 }
             val timeSeries = LoadCalculator.calculateTimeSeries(tssValues)
 
-            // Compute 14-day baselines for HRV/RHR
+            // Compute window-wide HRV/RHR baselines (median of all samples)
             val allHRV = hrvByDay.values.flatten()
             val allRHR = rhrByDay.values.flatten()
             val baselineHRV = if (allHRV.size >= 3) PhysiologyModifier.calculateBaselineHRV(allHRV) else null
@@ -98,7 +106,7 @@ class BodyBatteryEngine @Inject constructor(
             // Build DayAggregates
             val aggregates = dates.mapIndexed { index, date ->
                 val (ctl, atl, tsb) = timeSeries[index]
-                val dayWorkouts = dailyWorkouts[truncateToDay(date)] ?: emptyList()
+                val dayWorkouts = dailyWorkouts[date] ?: emptyList()
                 val dayTSS = tssByDay[date] ?: 0.0
 
                 val rampRate = if (index >= 7) {
@@ -137,9 +145,11 @@ class BodyBatteryEngine @Inject constructor(
                     hrvModifier = hrvModifier,
                     rhrModifier = rhrModifier,
                     illnessLikelihood = illnessLikelihood,
-                    sleepDuration = sleepQuality?.totalDuration,
+                    // SleepAnalyzer reports seconds; the DayAggregate contract
+                    // (shared with iOS) stores hours.
+                    sleepDuration = sleepQuality?.totalDuration?.div(3600.0),
                     sleepQualityScore = sleepQuality?.qualityScore,
-                    deepSleepDuration = sleepQuality?.deepSleepDuration
+                    deepSleepDuration = sleepQuality?.deepSleepDuration?.div(3600.0)
                 )
             }
 
@@ -157,7 +167,7 @@ class BodyBatteryEngine @Inject constructor(
 
     suspend fun getRecentScores(days: Int = 7): List<Int> {
         val end = Date()
-        val start = Date(System.currentTimeMillis() - days * 24 * 60 * 60 * 1000)
+        val start = localMidnightDaysAgo(days - 1)
         return dayAggregateRepository.getRange(start, end).map { it.bodyBatteryScore }
     }
 
@@ -192,5 +202,19 @@ class BodyBatteryEngine @Inject constructor(
         cal.set(java.util.Calendar.SECOND, 0)
         cal.set(java.util.Calendar.MILLISECOND, 0)
         return cal.time
+    }
+
+    /** Local midnight of the day [daysAgo] days before today (0 = today). */
+    private fun localMidnightDaysAgo(daysAgo: Int): Date {
+        val cal = java.util.Calendar.getInstance().apply { time = truncateToDay(Date()) }
+        cal.add(java.util.Calendar.DAY_OF_YEAR, -daysAgo)
+        return cal.time
+    }
+
+    /** Local midnight of the day after [date] (DST-safe, unlike +24h). */
+    private fun nextLocalMidnight(date: Date): Date {
+        val cal = java.util.Calendar.getInstance().apply { time = date }
+        cal.add(java.util.Calendar.DAY_OF_YEAR, 1)
+        return truncateToDay(cal.time)
     }
 }

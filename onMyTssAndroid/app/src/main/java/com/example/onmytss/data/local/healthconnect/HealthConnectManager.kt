@@ -5,6 +5,7 @@ import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.records.ExerciseSessionRecord
 import androidx.health.connect.client.records.HeartRateRecord
 import androidx.health.connect.client.records.HeartRateVariabilityRmssdRecord
+import androidx.health.connect.client.records.RestingHeartRateRecord
 import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
@@ -17,6 +18,15 @@ import java.time.Instant
 import java.util.Date
 import javax.inject.Inject
 import javax.inject.Singleton
+
+/**
+ * A single measurement with the instant it was recorded, so callers can
+ * group samples by (local) day.
+ */
+data class TimedSample(
+    val time: Instant,
+    val value: Double
+)
 
 @Singleton
 class HealthConnectManager @Inject constructor(
@@ -64,13 +74,22 @@ class HealthConnectManager @Inject constructor(
         }
     }
 
-    suspend fun readHRVSamples(start: Instant, end: Instant): List<Double> {
+    suspend fun readHRVSamples(start: Instant, end: Instant): List<TimedSample> {
         val request = ReadRecordsRequest(
             recordType = HeartRateVariabilityRmssdRecord::class,
             timeRangeFilter = TimeRangeFilter.between(start, end)
         )
         val response = client.readRecords(request)
-        return response.records.map { it.heartRateVariabilityMillis }
+        return response.records.map { TimedSample(it.time, it.heartRateVariabilityMillis) }
+    }
+
+    suspend fun readRestingHeartRateSamples(start: Instant, end: Instant): List<TimedSample> {
+        val request = ReadRecordsRequest(
+            recordType = RestingHeartRateRecord::class,
+            timeRangeFilter = TimeRangeFilter.between(start, end)
+        )
+        val response = client.readRecords(request)
+        return response.records.map { TimedSample(it.time, it.beatsPerMinute.toDouble()) }
     }
 
     suspend fun readSleepSamples(start: Instant, end: Instant): List<SleepSample> {

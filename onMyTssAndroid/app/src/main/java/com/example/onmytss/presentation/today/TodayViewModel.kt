@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.onmytss.domain.calculator.BodyBatteryCalculator
 import com.example.onmytss.domain.calculator.LoadCalculator
+import com.example.onmytss.domain.calculator.PhysiologyModifier
 import com.example.onmytss.domain.engine.BodyBatteryEngine
 import com.example.onmytss.domain.model.DayAggregate
 import com.example.onmytss.domain.model.TSSRecommendation
@@ -62,14 +63,18 @@ data class TodayUiState(
             val h = aggregate?.hrvModifier
             val r = aggregate?.rhrModifier
             if (h == null && r == null) return null
-            val combined = (h ?: 0.0) + (r ?: 0.0)
+            // Same weighting the score itself uses (0.7 HRV / 0.3 RHR)
+            val combined = PhysiologyModifier.calculateCombinedModifier(h, r)
             return formatModifier(combined)
         }
 
     val recoveryStatus: String? get() = when {
         !hasPhysiologyData -> null
         else -> {
-            val m = (aggregate?.hrvModifier ?: 0.0) + (aggregate?.rhrModifier ?: 0.0)
+            val m = PhysiologyModifier.calculateCombinedModifier(
+                aggregate?.hrvModifier,
+                aggregate?.rhrModifier
+            )
             when {
                 m > 5 -> "Excellent Recovery"
                 m > 0 -> "Good Recovery"
@@ -144,12 +149,17 @@ class TodayViewModel @Inject constructor(
         loadData()
     }
 
-    fun loadData() {
+    fun loadData(forceRecompute: Boolean = false) {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }
             try {
-                bodyBatteryEngine.recomputeAll()
-                val aggregate = bodyBatteryEngine.getTodayAggregate()
+                // recomputeAll re-syncs the full 90-day window; only pay that
+                // cost when there's nothing for today yet or on explicit refresh.
+                var aggregate = bodyBatteryEngine.getTodayAggregate()
+                if (forceRecompute || aggregate == null) {
+                    bodyBatteryEngine.recomputeAll()
+                    aggregate = bodyBatteryEngine.getTodayAggregate()
+                }
                 val trend = bodyBatteryEngine.getTodayTrend()
                 val recommendation = bodyBatteryEngine.getTodayTSSRecommendation()
                 val weekScores = loadRecentDayScores(7)
@@ -168,7 +178,7 @@ class TodayViewModel @Inject constructor(
         }
     }
 
-    suspend fun refresh() = loadData()
+    suspend fun refresh() = loadData(forceRecompute = true)
 
     private suspend fun loadRecentDayScores(days: Int): List<DayScore> {
         val cal = Calendar.getInstance().apply {
