@@ -86,10 +86,13 @@ final class WorkoutAggregator {
         do {
             return try await fetchStravaWorkouts(from: startDate, to: endDate)
         } catch {
-            // Silently fail - Strava is optional
-            // Log error for debugging but don't propagate to UI
+            // Strava is optional, so don't propagate to UI. But downstream code
+            // overwrites each day's totalTSS with whatever this fetch returns, so
+            // returning [] on a transient failure would wipe Strava TSS from the
+            // whole window. Fall back to the workouts we already have on disk.
             print("⚠️ Strava sync failed (this is OK if Strava is not configured): \(error.localizedDescription)")
-            return []
+            let cached = (try? dataStore.fetchWorkouts(from: startDate, to: endDate)) ?? []
+            return cached.filter { $0.source == WorkoutSource.strava.rawValue }
         }
     }
 
@@ -102,10 +105,9 @@ final class WorkoutAggregator {
         // Get user thresholds for TSS calculation
         let thresholds = try dataStore.fetchUserThresholds()
 
-        // Need FTP to calculate TSS
-        guard let ftp = thresholds.cyclingFTP, ftp > 0 else {
-            return []
-        }
+        // FTP is only needed for power-based TSS; HR- and duration-based
+        // workouts (running, swimming, ...) must still come through without it.
+        let ftp = thresholds.cyclingFTP.flatMap { $0 > 0 ? $0 : nil }
 
         var workouts: [Workout] = []
 
@@ -117,7 +119,7 @@ final class WorkoutAggregator {
             // Calculate TSS (power-based preferred, fall back to HR-based)
             let tssResult: (tss: Double, method: TSSMethod)
 
-            if !powerSamples.isEmpty {
+            if !powerSamples.isEmpty, let ftp {
                 let tss = TSSCalculator.calculateTSS(
                     powerSamples: powerSamples,
                     ftp: ftp,
@@ -207,14 +209,14 @@ final class WorkoutAggregator {
         // Get user thresholds
         let thresholds = try dataStore.fetchUserThresholds()
 
-        // Determine which FTP to use
-        let ftp: Int
+        // Determine which FTP to use (only required for power-based TSS)
+        let ftp: Int?
         if thresholds.preferStravaFTP, let stravaFTP = thresholds.stravaFTP, stravaFTP > 0 {
             ftp = stravaFTP
         } else if let cyclingFTP = thresholds.cyclingFTP, cyclingFTP > 0 {
             ftp = cyclingFTP
         } else {
-            return [] // No valid FTP
+            ftp = nil
         }
 
         // Convert to Workout models
@@ -286,10 +288,12 @@ final class WorkoutAggregator {
     }
 
     /// Check if two workouts are duplicates
-    /// Same criteria as HealthKit deduplication:
+    /// Criteria:
     /// - Same workout type
     /// - Start times within 60 seconds
-    /// - Durations within 5 seconds
+    /// - Comparable durations. Strava reports moving time (pauses excluded)
+    ///   while HealthKit reports wall-clock duration, so the same ride can
+    ///   differ by many minutes; a tight tolerance would double-count TSS.
     private func areDuplicates(workout1: Workout, workout2: Workout) -> Bool {
         // Check workout type match
         guard normalizeWorkoutType(workout1.workoutType) == normalizeWorkoutType(workout2.workoutType) else {
@@ -302,9 +306,10 @@ final class WorkoutAggregator {
             return false
         }
 
-        // Check duration (within 5 seconds)
+        // Durations within 30% of the longer workout (at least 60s of slack)
         let durationDiff = abs(workout1.duration - workout2.duration)
-        guard durationDiff < 5 else {
+        let tolerance = Swift.max(60, Swift.max(workout1.duration, workout2.duration) * 0.3)
+        guard durationDiff <= tolerance else {
             return false
         }
 
@@ -369,21 +374,24 @@ final class WorkoutAggregator {
     }
 
     /// Calculate TSS from Strava activity data
-    private func calculateTSSFromStrava(activity: StravaActivity, userFTP: Int, userMaxHR: Int) -> (value: Double, method: String) {
+    private func calculateTSSFromStrava(activity: StravaActivity, userFTP: Int?, userMaxHR: Int) -> (value: Double, method: String) {
         // Prefer power-based if available
         if activity.hasPowerData,
-           let np = activity.weightedAverageWatts {
+           let np = activity.weightedAverageWatts,
+           let userFTP, userFTP > 0 {
             // Use Strava's weighted average watts (their NP equivalent)
             let intensityFactor = Double(np) / Double(userFTP)
             let durationHours = Double(activity.movingTime) / 3600.0
             let tss = durationHours * Double(np) * intensityFactor / Double(userFTP) * 100
 
-            return (tss, "power")
+            return (max(0, tss), "power")
         }
 
         // Fall back to HR-based if available
         if activity.hasHeartrate, let avgHR = activity.averageHeartrate {
-            let hrRatio = (avgHR - 60) / (Double(userMaxHR) - 60)
+            // Clamp to [0, 1] like the HealthKit HR path: recovery rides with
+            // avgHR below resting would otherwise produce a negative TSS.
+            let hrRatio = ((avgHR - 60) / (Double(userMaxHR) - 60)).clamped(to: 0...1)
             let durationMinutes = Double(activity.movingTime) / 60.0
 
             // TRIMP calculation
@@ -391,7 +399,7 @@ final class WorkoutAggregator {
             let oneHourFTPTRIMP = 60.0 * 0.85 * exp(1.92 * 0.85)
             let hrTSS = (exerciseTRIMP / oneHourFTPTRIMP) * 100.0
 
-            return (hrTSS, "hr")
+            return (max(0, hrTSS), "hr")
         }
 
         // Fall back to duration estimate

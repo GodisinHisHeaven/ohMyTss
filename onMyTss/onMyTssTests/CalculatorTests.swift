@@ -118,6 +118,24 @@ final class LoadCalculatorTests: XCTestCase {
         XCTAssertGreaterThan(series.last!.ctl, series.first!.ctl)
     }
 
+    func testTimeSeriesContinuesFromInitialSeed() {
+        // Incremental updates must extend the existing series, not restart at 0
+        let series = LoadCalculator.calculateTimeSeries(tssValues: [100], initialCTL: 80, initialATL: 60)
+        XCTAssertEqual(series.count, 1)
+        // 80 + (1/42)*(100-80) = 80.48
+        XCTAssertEqual(series[0].ctl, 80.48, accuracy: 0.01)
+        // 60 + (1/7)*(100-60) = 65.71
+        XCTAssertEqual(series[0].atl, 65.71, accuracy: 0.01)
+        XCTAssertEqual(series[0].tsb, series[0].ctl - series[0].atl, accuracy: 0.01)
+    }
+
+    func testTimeSeriesDefaultsToZeroSeed() {
+        let seeded = LoadCalculator.calculateTimeSeries(tssValues: [50, 70], initialCTL: 0, initialATL: 0)
+        let unseeded = LoadCalculator.calculateTimeSeries(tssValues: [50, 70])
+        XCTAssertEqual(seeded.map { $0.ctl }, unseeded.map { $0.ctl })
+        XCTAssertEqual(seeded.map { $0.atl }, unseeded.map { $0.atl })
+    }
+
     func testRampRateStatus() {
         XCTAssertEqual(LoadCalculator.getRampRateStatus(rampRate: -1), .detraining)
         XCTAssertEqual(LoadCalculator.getRampRateStatus(rampRate: 2), .safe)

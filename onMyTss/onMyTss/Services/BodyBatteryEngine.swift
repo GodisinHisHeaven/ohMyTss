@@ -118,7 +118,11 @@ class BodyBatteryEngine {
             let workouts = try await workoutAggregator.fetchWorkouts(from: previousSyncDate, to: Date())
 
             guard !workouts.isEmpty else {
-                // No new workouts
+                // No new workouts; still record the sync so the next incremental
+                // fetch doesn't re-scan the same window.
+                try dataStore.updateHealthKitSyncDate(Date(), anchor: nil)
+                lastSyncDate = Date()
+                lastError = nil
                 return
             }
 
@@ -301,8 +305,22 @@ class BodyBatteryEngine {
             dailyTSSMap[date] ?? 0
         }
 
+        // Seed CTL/ATL from the day before the window so incremental updates
+        // continue the existing series instead of restarting from zero.
+        var initialCTL: Double = 0
+        var initialATL: Double = 0
+        if let firstDate = allDates.first,
+           let priorAggregate = try dataStore.fetchDayAggregate(for: firstDate.addingDays(-1)) {
+            initialCTL = priorAggregate.ctl
+            initialATL = priorAggregate.atl
+        }
+
         // Calculate time series
-        let timeSeries = LoadCalculator.calculateTimeSeries(tssValues: tssValues)
+        let timeSeries = LoadCalculator.calculateTimeSeries(
+            tssValues: tssValues,
+            initialCTL: initialCTL,
+            initialATL: initialATL
+        )
 
         // Fetch and process data in parallel for better performance
         async let physiologyMap = processPhysiologyData(from: startDate, to: endDate)

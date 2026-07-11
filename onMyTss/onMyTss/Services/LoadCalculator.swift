@@ -47,12 +47,21 @@ struct LoadCalculator {
 
     /// Calculate CTL, ATL, and TSB for a series of TSS values
     /// Returns array of (CTL, ATL, TSB) tuples for each day
-    static func calculateTimeSeries(tssValues: [Double]) -> [(ctl: Double, atl: Double, tsb: Double)] {
+    /// - Parameters:
+    ///   - initialCTL/initialATL: load values for the day *before* the first TSS value.
+    ///     Pass the previously computed values when extending an existing series
+    ///     (incremental sync); leaving them at 0 is only valid when initializing
+    ///     from the full historical window.
+    static func calculateTimeSeries(
+        tssValues: [Double],
+        initialCTL: Double = 0,
+        initialATL: Double = 0
+    ) -> [(ctl: Double, atl: Double, tsb: Double)] {
         guard !tssValues.isEmpty else { return [] }
 
         var results: [(ctl: Double, atl: Double, tsb: Double)] = []
-        var currentCTL: Double = 0
-        var currentATL: Double = 0
+        var currentCTL: Double = initialCTL
+        var currentATL: Double = initialATL
 
         for tss in tssValues {
             // Update CTL and ATL with today's TSS
