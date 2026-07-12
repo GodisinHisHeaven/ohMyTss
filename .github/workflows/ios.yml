@@ -19,10 +19,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      # Don't pin an exact Xcode: runner images rotate old versions out,
+      # which has broken this job before (Xcode 16 no longer exists on
+      # macos-latest as of 2026-07).
       - name: Select Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: '16'
+          xcode-version: latest-stable
 
       - name: Create stub Secrets.xcconfig
         run: |
@@ -43,10 +46,21 @@ jobs:
             -destination "generic/platform=iOS Simulator" \
             CODE_SIGNING_ALLOWED=NO
 
+      # Pick whatever iPhone simulator the image ships instead of pinning a
+      # model/OS that disappears on the next image rotation.
       - name: Test
         run: |
+          DEVICE=$(xcrun simctl list devices available \
+            | grep -E '^ +iPhone' \
+            | head -1 \
+            | sed -E 's/^ *(.+) \([0-9A-F-]+\) \(.*/\1/')
+          if [ -z "$DEVICE" ]; then
+            echo "::error::No iPhone simulator available on this runner image"
+            exit 1
+          fi
+          echo "Testing on simulator: $DEVICE"
           xcodebuild test \
             -scheme onMyTss \
             -project onMyTss/onMyTss.xcodeproj \
-            -destination "platform=iOS Simulator,name=iPhone 16,OS=18.6" \
+            -destination "platform=iOS Simulator,name=$DEVICE" \
             CODE_SIGNING_ALLOWED=NO
