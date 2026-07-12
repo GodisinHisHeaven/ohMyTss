@@ -65,9 +65,16 @@ final class StravaAPI {
             case .networkError(let error):
                 return "Network error: \(error.localizedDescription)"
             case .missingConfiguration:
-                return "Missing Strava credentials. Set STRAVA_CLIENT_ID and STRAVA_CLIENT_SECRET_PLACEHOLDERin build settings (Info.plist) or scheme environment variables."
+                return "Missing Strava credentials. Set STRAVA_CLIENT_ID and STRAVA_CLIENT_SECRET in build settings (Info.plist) or scheme environment variables."
             }
         }
+    }
+
+    // MARK: - Configuration Validation
+
+    /// Check if Strava API is properly configured
+    static func isConfigured() -> Bool {
+        return StravaConfig.clientID != nil && StravaConfig.clientSecret != nil
     }
 
     // MARK: - OAuth

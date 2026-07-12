@@ -120,20 +120,32 @@
 <body>
     <div class="container">
         <h1>Privacy Policy for onMyTss</h1>
-        <p class="last-updated"><strong>Last Updated:</strong> November 8, 2025</p>
+        <p class="last-updated"><strong>Last Updated:</strong> April 12, 2026</p>
 
         <h2>Introduction</h2>
-        <p>onMyTss ("we," "our," or "the app") is committed to protecting your privacy. This Privacy Policy explains how we collect, use, and safeguard your health and fitness data when you use our iOS application.</p>
+        <p>onMyTss ("we," "our," or "the app") is committed to protecting your privacy. This Privacy Policy explains how we collect, use, and safeguard your health and fitness data when you use our iOS and Android applications.</p>
 
         <h2>Information We Collect</h2>
 
-        <h3>HealthKit Data</h3>
-        <p>onMyTss requests access to the following types of health and fitness data from Apple HealthKit:</p>
+        <h3>Health Data (iOS — Apple HealthKit)</h3>
+        <p>On iOS, onMyTss requests access to the following types of health and fitness data from Apple HealthKit:</p>
         <ul>
             <li><strong>Workout Data</strong>: Exercise sessions including type, duration, distance, and calories</li>
             <li><strong>Heart Rate Data</strong>: Heart rate measurements during workouts</li>
             <li><strong>Heart Rate Variability (HRV)</strong>: HRV measurements for recovery analysis</li>
             <li><strong>Cycling Power Data</strong>: Power output measurements from cycling workouts (when available)</li>
+            <li><strong>Sleep Data</strong>: Sleep sessions and stages for recovery analysis</li>
+            <li><strong>Resting Heart Rate</strong>: Baseline heart rate for physiological modifiers</li>
+        </ul>
+
+        <h3>Health Data (Android — Health Connect)</h3>
+        <p>On Android, onMyTss requests access to the following types of health and fitness data through Health Connect:</p>
+        <ul>
+            <li><strong>Exercise Sessions</strong>: Workout type, duration, and associated metrics</li>
+            <li><strong>Heart Rate</strong>: Heart rate samples during exercise and at rest</li>
+            <li><strong>Heart Rate Variability (HRV)</strong>: HRV measurements for recovery analysis</li>
+            <li><strong>Sleep Sessions</strong>: Sleep duration and stages for recovery analysis</li>
+            <li><strong>Resting Heart Rate</strong>: Baseline heart rate for physiological modifiers</li>
         </ul>
 
         <h3>Data We Do NOT Collect</h3>
@@ -159,10 +171,10 @@
 
         <h3>Local Storage Only</h3>
         <ul>
-            <li><strong>All data is stored locally on your device</strong> using Apple's SwiftData framework</li>
+            <li><strong>All data is stored locally on your device</strong> using Apple's SwiftData framework (iOS) or Android's Room database (Android)</li>
             <li><strong>No data is transmitted to external servers</strong> or cloud services</li>
             <li><strong>No data is shared with third parties</strong> under any circumstances</li>
-            <li>Data is protected by iOS sandboxing and encryption mechanisms</li>
+            <li>Data is protected by iOS sandboxing and Android's app sandbox and encryption mechanisms</li>
         </ul>
 
         <h3>No Account Required</h3>
@@ -233,7 +245,7 @@
         <div class="summary">
             <h2>Summary</h2>
             <p><strong>In Plain English:</strong></p>
-            <p>onMyTss reads your workout data from Apple Health to calculate how ready you are to train. All calculations happen on your device. We don't send your data anywhere, don't share it with anyone, and don't use it for advertising. You can delete all calculated data anytime, and your original Health data stays safe in Apple Health.</p>
+            <p>onMyTss reads your workout data from Apple HealthKit (iOS) or Health Connect (Android) to calculate how ready you are to train. All calculations happen on your device. We don't send your data anywhere, don't share it with anyone, and don't use it for advertising. You can delete all calculated data anytime, and your original Health data stays safe in Apple Health or Health Connect.</p>
         </div>
 
         <div class="footer">

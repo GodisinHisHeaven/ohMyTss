@@ -142,6 +142,52 @@ struct TodayView: View {
                 .padding(.horizontal)
             }
 
+            // Sleep Section
+            if viewModel.hasSleepData {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "moon.fill")
+                            .font(.title3)
+                            .foregroundStyle(.indigo)
+
+                        if let sleepDescription = viewModel.sleepQualityDescription {
+                            Text(sleepDescription)
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(.primary)
+                        }
+
+                        Spacer()
+                    }
+
+                    HStack(spacing: 12) {
+                        if let duration = viewModel.sleepDurationFormatted {
+                            SleepMetricCard(
+                                icon: "bed.double.fill",
+                                title: "Sleep",
+                                value: duration
+                            )
+                        }
+
+                        if let deep = viewModel.deepSleepFormatted {
+                            SleepMetricCard(
+                                icon: "moon.zzz.fill",
+                                title: "Deep",
+                                value: deep
+                            )
+                        }
+
+                        if let quality = viewModel.sleepQualityFormatted {
+                            SleepMetricCard(
+                                icon: "star.fill",
+                                title: "Quality",
+                                value: quality
+                            )
+                        }
+                    }
+                }
+                .padding(.horizontal)
+            }
+
             // TSS Guidance Card
             if let recommendation = viewModel.tssRecommendation {
                 TSSGuidanceCard(
@@ -389,6 +435,38 @@ struct PhysiologyMetricCard: View {
     }
 }
 
+// MARK: - Sleep Metric Card
+
+struct SleepMetricCard: View {
+    let icon: String
+    let title: String
+    let value: String
+
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.caption)
+                    .foregroundStyle(.indigo)
+
+                Text(title)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Text(value)
+                .font(.title3.weight(.bold))
+                .foregroundStyle(.primary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(uiColor: .secondarySystemBackground))
+        )
+    }
+}
+
 // MARK: - Previews
 
 #Preview("With Data") {
@@ -411,7 +489,10 @@ struct PhysiologyMetricCard: View {
         avgHRV: 45.0,
         avgRHR: 52.0,
         hrvModifier: 8.0,
-        rhrModifier: 5.0
+        rhrModifier: 5.0,
+        sleepDuration: 7.5,
+        sleepQualityScore: 82,
+        deepSleepDuration: 1.5
     )
 
     try! dataStore.saveDayAggregate(aggregate)
