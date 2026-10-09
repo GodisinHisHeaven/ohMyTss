@@ -24,13 +24,11 @@ final class StravaAPI {
 
         return (clientID, clientSecret)
     }
-    static var redirectURI: String = "onmytss://onmytss.com"
 
     // MARK: - Endpoints
 
     private enum Endpoint {
         static let baseURL = "https://www.strava.com/api/v3"
-        static let authorize = "https://www.strava.com/oauth/authorize"
         static let token = "https://www.strava.com/oauth/token"
         static let athlete = "\(baseURL)/athlete"
         static let activities = "\(baseURL)/athlete/activities"
@@ -65,7 +63,7 @@ final class StravaAPI {
             case .networkError(let error):
                 return "Network error: \(error.localizedDescription)"
             case .missingConfiguration:
-                return "Missing Strava credentials. Set STRAVA_CLIENT_ID and STRAVA_CLIENT_SECRET_PLACEHOLDERin build settings (Info.plist) or scheme environment variables."
+                return "Strava is not configured in this app version. Please install an updated build or contact support."
             }
         }
     }
@@ -73,20 +71,9 @@ final class StravaAPI {
     // MARK: - OAuth
 
     /// Generate authorization URL for OAuth flow
-    static func getAuthorizationURL() throws -> URL {
+    static func getAuthorizationURL(state: String) throws -> URL {
         let credentials = try loadCredentials()
-        var components = URLComponents(string: Endpoint.authorize)
-        components?.queryItems = [
-            URLQueryItem(name: "client_id", value: credentials.clientID),
-            URLQueryItem(name: "redirect_uri", value: redirectURI),
-            URLQueryItem(name: "response_type", value: "code"),
-            URLQueryItem(name: "scope", value: "read,activity:read_all"),
-            URLQueryItem(name: "approval_prompt", value: "auto")
-        ]
-        guard let url = components?.url else {
-            throw StravaAPIError.invalidURL
-        }
-        return url
+        return try StravaOAuth.authorizationURL(clientID: credentials.clientID, state: state)
     }
 
     /// Exchange authorization code for access and refresh tokens

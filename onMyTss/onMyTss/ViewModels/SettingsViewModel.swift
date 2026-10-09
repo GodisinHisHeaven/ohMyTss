@@ -15,7 +15,7 @@ class SettingsViewModel {
     // Dependencies
     private let dataStore: DataStore
     private let engine: any BodyBatteryEngineProtocol
-    private let stravaAuthManager: StravaAuthManager
+    private let stravaAuthManager: any StravaConnectionManaging
 
     // UI State
     var isLoading: Bool = false
@@ -33,7 +33,7 @@ class SettingsViewModel {
     var isConnectingStrava: Bool = false
     var preferStravaFTP: Bool = false
 
-    init(dataStore: DataStore, engine: any BodyBatteryEngineProtocol, stravaAuthManager: StravaAuthManager) {
+    init(dataStore: DataStore, engine: any BodyBatteryEngineProtocol, stravaAuthManager: any StravaConnectionManaging) {
         self.dataStore = dataStore
         self.engine = engine
         self.stravaAuthManager = stravaAuthManager
@@ -176,15 +176,18 @@ class SettingsViewModel {
             stravaAuth = try dataStore.fetchStravaAuth()
 
             // Update Strava FTP from athlete profile if available
-            if let stravaFTP = stravaAuth?.stravaFTP {
-                thresholds?.stravaFTP = stravaFTP
-                try dataStore.saveUserThresholds(thresholds!)
+            if let stravaFTP = stravaAuth?.stravaFTP, let thresholds {
+                thresholds.stravaFTP = stravaFTP
+                try dataStore.saveUserThresholds(thresholds)
             }
 
-            // Trigger data sync to fetch Strava activities
-            try await engine.recomputeAll()
-
             successMessage = "Connected to Strava successfully"
+
+            do {
+                try await engine.recomputeAll()
+            } catch {
+                errorMessage = "Strava connected, but workout sync failed: \(error.localizedDescription)"
+            }
 
             // Clear success message after 3 seconds
             Task {

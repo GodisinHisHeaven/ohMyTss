@@ -20,11 +20,20 @@ struct KeychainHelper {
 
     // MARK: - Errors
 
-    enum KeychainError: Error {
+    enum KeychainError: LocalizedError {
         case duplicateItem
         case itemNotFound
         case unexpectedStatus(OSStatus)
         case invalidData
+
+        var errorDescription: String? {
+            switch self {
+            case .itemNotFound, .invalidData:
+                return "Your saved Strava credentials are unavailable. Please reconnect Strava."
+            case .duplicateItem, .unexpectedStatus:
+                return "Unable to access saved Strava credentials. Unlock your device and try again."
+            }
+        }
     }
 
     // MARK: - Save
@@ -35,19 +44,21 @@ struct KeychainHelper {
             throw KeychainError.invalidData
         }
 
-        // Delete any existing value first
-        try? delete(key)
-
-        // Prepare query
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrAccount as String: key.rawValue,
+            kSecAttrAccount as String: key.rawValue
+        ]
+        let attributes: [String: Any] = [
             kSecValueData as String: data,
             kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock
         ]
 
-        // Add to keychain
-        let status = SecItemAdd(query as CFDictionary, nil)
+        // Update in place so a failed write cannot delete the previous token.
+        var status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+        if status == errSecItemNotFound {
+            let item = query.merging(attributes) { _, new in new }
+            status = SecItemAdd(item as CFDictionary, nil)
+        }
 
         guard status == errSecSuccess else {
             if status == errSecDuplicateItem {
@@ -130,7 +141,7 @@ struct KeychainHelper {
 
     /// Delete all Strava tokens (for disconnecting)
     static func deleteStravaTokens() throws {
-        try? delete(.stravaAccessToken)
-        try? delete(.stravaRefreshToken)
+        try delete(.stravaAccessToken)
+        try delete(.stravaRefreshToken)
     }
 }
