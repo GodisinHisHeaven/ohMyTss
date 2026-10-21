@@ -3,8 +3,8 @@
 //  onMyTss
 //
 //  IMPORTANT: This file references your Strava API credentials via environment variables
-//  or Info.plist values injected from build settings. DO NOT commit real credentials to
-//  version control! This file is in .gitignore
+//  or Info.plist values injected from build settings. It contains no secrets itself and
+//  is tracked in git — never hardcode real credentials here.
 //
 
 import Foundation
