@@ -67,6 +67,16 @@ final class Workout {
     /// Device name that recorded the workout
     var deviceName: String?
 
+    // Additive v2 fields: optional/default values allow lightweight legacy-store migration.
+    var featuresData: Data?
+    var userTags: [String] = []
+    var isDeleted: Bool = false
+    var deletionOrigin: String?
+    var linkedSessionID: String?
+    var sessionGroupID: String?
+    var legacyTSS: Double?
+    var legacyCalculationMethod: String?
+
     // MARK: - Relationships
 
     /// Parent day aggregate
@@ -118,4 +128,5 @@ final class Workout {
 enum WorkoutSource: String, Codable {
     case strava
     case healthKit
+    case manual
 }

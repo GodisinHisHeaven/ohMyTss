@@ -1,0 +1,3 @@
+Command: swiftc -frontend -parse onMyTss/**/*.swift docs/v2/fixtures/*.swift
+Scope: syntax only; not Apple framework typechecking, build, macro expansion, or runtime validation.
+Exit: 0

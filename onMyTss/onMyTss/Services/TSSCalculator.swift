@@ -25,58 +25,37 @@ struct TSSCalculator {
             return 0
         }
 
-        // Extract power values in watts
-        let powerValues = powerSamples.map { sample -> Double in
-            sample.quantity.doubleValue(for: HKUnit.watt())
-        }
-
-        guard !powerValues.isEmpty else { return 0 }
-
-        // Calculate Normalized Power (NP)
-        let normalizedPower = calculateNormalizedPower(from: powerValues)
-
-        // Calculate Intensity Factor (IF)
-        let intensityFactor = normalizedPower / Double(ftp)
-
-        // Calculate TSS
-        // TSS = (seconds × NP × IF) / (FTP × 3600) × 100
-        let tss = (duration * normalizedPower * intensityFactor) / (Double(ftp) * 3600) * 100
-
-        return max(0, tss.rounded(toPlaces: 1))
+        let intervals = timedIntervals(powerSamples, unit: .watt(), duration: duration, validRange: 0...2500)
+        guard let normalizedPower = SignalProcessing.normalizedPower(intervals) else { return 0 }
+        let observedDuration = SignalProcessing.coveredSeconds(intervals)
+        return (observedDuration / 3600 * pow(normalizedPower / Double(ftp), 2) * 100).rounded(toPlaces: 1)
     }
 
-    /// Calculate Normalized Power (NP) from power samples
-    /// NP = fourth root of the average of the fourth power of all power values
-    /// This algorithm uses a 30-second rolling average before raising to 4th power
+    /// Timestamp API: the window is 30 elapsed seconds, independent of count.
+    static func calculateNormalizedPower(from samples: [TimedValue], window: TimeRange, pauses: [TimeRange] = []) -> Double? {
+        let intervals = SignalProcessing.intervals(samples: samples, window: window, pauses: pauses, validRange: 0...2500)
+        return SignalProcessing.normalizedPower(intervals)
+    }
+
+    /// Legacy convenience for callers explicitly supplying an evenly sampled
+    /// one-Hertz signal. Importers must use timestamped samples above.
+    @available(*, deprecated, message: "Use timestamped samples; this API assumes explicit 1 Hz input")
     static func calculateNormalizedPower(from powerValues: [Double]) -> Double {
-        guard !powerValues.isEmpty else { return 0 }
-
-        // Step 1: Calculate 30-second rolling average
-        // For simplicity, we'll use all values if we don't have timing info
-        // In a production app, you'd want to align this with actual sample timestamps
-        let rollingAveragePowers: [Double]
-
-        if powerValues.count < 30 {
-            // If less than 30 samples, use simple average
-            rollingAveragePowers = [powerValues.average()]
-        } else {
-            // Calculate rolling 30-second averages
-            rollingAveragePowers = stride(from: 0, to: powerValues.count - 29, by: 1).map { i in
-                let window = Array(powerValues[i..<min(i + 30, powerValues.count)])
-                return window.average()
-            }
+        let start = Date(timeIntervalSince1970: 0)
+        let samples = powerValues.enumerated().map { index, value in
+            TimedValue(start: start.addingTimeInterval(Double(index)), end: start.addingTimeInterval(Double(index + 1)), value: value)
         }
+        return calculateNormalizedPower(from: samples, window: TimeRange(start: start, end: start.addingTimeInterval(Double(powerValues.count)))) ?? 0
+    }
 
-        // Step 2: Raise each value to the 4th power
-        let fourthPowers = rollingAveragePowers.map { pow($0, Constants.normalizedPowerVariabilityIndex) }
-
-        // Step 3: Average the 4th powers
-        let averageFourthPower = fourthPowers.average()
-
-        // Step 4: Take the 4th root
-        let normalizedPower = pow(averageFourthPower, 1.0 / Constants.normalizedPowerVariabilityIndex)
-
-        return normalizedPower.rounded(toPlaces: 1)
+    private static func timedIntervals(_ samples: [HKQuantitySample], unit: HKUnit, duration: TimeInterval, validRange: ClosedRange<Double>) -> [TimedValue] {
+        // Parent samples with count > 1 are aggregates, not time series. The
+        // production importer expands them using HKQuantitySeriesSampleQuery.
+        guard let start = samples.map(\.startDate).min(), duration.isFinite, duration > 0 else { return [] }
+        let values = samples.filter { $0.count == 1 }.map {
+            TimedValue(start: $0.startDate, end: $0.endDate, value: $0.quantity.doubleValue(for: unit))
+        }
+        return SignalProcessing.intervals(samples: values, window: TimeRange(start: start, end: start.addingTimeInterval(duration)), validRange: validRange)
     }
 
     // MARK: - Heart Rate-Based TSS (Multi-Sport)
@@ -96,43 +75,23 @@ struct TSSCalculator {
             return 0
         }
 
-        // Extract heart rate values in BPM
-        let hrValues = heartRateSamples.map { sample -> Double in
-            sample.quantity.doubleValue(for: HKUnit.count().unitDivided(by: .minute()))
+        let intervals = timedIntervals(heartRateSamples, unit: .count().unitDivided(by: .minute()), duration: duration, validRange: 30...240)
+        // This remains the legacy HR-TSS heuristic with explicitly assumed
+        // thresholds. It is separate from v2 Cardio Load and is never added to it.
+        return legacyHeartRateTSS(intervals: intervals, maxHeartRate: maxHeartRate ?? 185,
+                                  restingHeartRate: restingHeartRate ?? 60).rounded(toPlaces: 1)
+    }
+
+    static func legacyHeartRateTSS(intervals: [TimedValue], maxHeartRate: Int, restingHeartRate: Int) -> Double {
+        let reserve = Double(maxHeartRate - restingHeartRate)
+        guard reserve > 0 else { return 0 }
+        let trimp = intervals.reduce(0.0) { sum, interval in
+            let ratio = min(1, max(0, (interval.value - Double(restingHeartRate)) / reserve))
+            return sum + interval.duration / 60 * ratio * exp(1.92 * ratio)
         }
-
-        guard !hrValues.isEmpty else { return 0 }
-
-        let avgHR = hrValues.average()
-
-        // If max HR and resting HR are not available, use age-based estimation
-        let maxHR = maxHeartRate ?? estimateMaxHeartRate()
-        let restingHR = Double(restingHeartRate ?? 60)
-
-        // Calculate heart rate reserve ratio (0.0 to 1.0)
-        let hrReserve = Double(maxHR) - restingHR
-        guard hrReserve > 0 else { return 0 }
-
-        let hrRatio = min(max((avgHR - restingHR) / hrReserve, 0.0), 1.0)
-
-        // Calculate exercise TRIMP using Bannister equation
-        // TRIMP = duration_minutes × %HRR × exp(k × %HRR)
-        // where k = 1.92 for males (we use male factor as default)
-        let durationMinutes = duration / 60.0
-        let exerciseTRIMP = durationMinutes * hrRatio * exp(1.92 * hrRatio)
-
-        // Calculate 1-hour FTP TRIMP for normalization
-        // We estimate threshold HR at 85% of HR reserve (typical for well-trained athletes)
-        // This gives us: hrAtFTP = restingHR + (0.85 × hrReserve)
-        let hrRatioAtFTP = 0.85 // Threshold is typically at 85% of HR reserve
-        let oneHourFTPTRIMP = 60.0 * hrRatioAtFTP * exp(1.92 * hrRatioAtFTP)
-
-        // Normalize exercise TRIMP to TSS scale
-        // hrTSS = (exerciseTRIMP / oneHourFTPTRIMP) × 100
-        // This ensures that 1 hour at threshold = 100 TSS
-        let hrTSS = (exerciseTRIMP / oneHourFTPTRIMP) * 100.0
-
-        return max(0, hrTSS.rounded(toPlaces: 1))
+        let reference = 60 * 0.85 * exp(1.92 * 0.85)
+        let result = trimp / reference * 100
+        return result.isFinite ? max(0, result) : 0
     }
 
     /// Calculate TSS from heart rate with workout type context

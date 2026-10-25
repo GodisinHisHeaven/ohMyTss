@@ -23,7 +23,7 @@ struct ContentView: View {
                     ProgressView()
                         .scaleEffect(1.5)
 
-                    Text("Loading Body Battery...")
+                    Text("Loading Training History...")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
@@ -35,12 +35,7 @@ struct ContentView: View {
                 OnboardingContainerView {
                     hasCompletedOnboarding = true
 
-                    // After onboarding, trigger initial data sync
-                    Task {
-                        if let engine = engine {
-                            try? await engine.recomputeAll()
-                        }
-                    }
+                    // Today exposes explicit Sync; manual recording is immediately available offline.
                 }
             }
         }
@@ -62,17 +57,16 @@ struct ContentView: View {
         do {
             let thresholds = try store.fetchUserThresholds()
             hasCompletedOnboarding = thresholds.hasCompletedOnboarding
-
-            // If onboarding is completed, perform automatic data refresh
-            if hasCompletedOnboarding {
-                // Try incremental update first (faster)
-                do {
-                    try await bodyBatteryEngine.incrementalUpdate()
-                } catch {
-                    // If incremental fails, it's not critical - user can manually refresh
-                    print("Incremental update failed: \(error.localizedDescription)")
-                }
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("--v2-ui-tests") {
+                // App also selects an in-memory container for this exact test-only flag.
+                thresholds.hasCompletedOnboarding = true
+                hasCompletedOnboarding = true
             }
+            #endif
+
+            // Local history opens without waiting for network or HealthKit. Today offers explicit sync.
+            if hasCompletedOnboarding { try store.refreshV2Estimates() }
         } catch {
             // If error fetching, assume not completed
             hasCompletedOnboarding = false

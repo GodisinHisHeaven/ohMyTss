@@ -1,0 +1,1 @@
+BLOCKED: this migration check requires macOS 14+ and Apple SwiftData.

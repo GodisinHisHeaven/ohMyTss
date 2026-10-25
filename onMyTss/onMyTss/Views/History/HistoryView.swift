@@ -28,7 +28,7 @@ struct HistoryView: View {
                     contentView
                 }
             }
-            .navigationTitle("History")
+            .navigationTitle("Legacy TSS History")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
@@ -95,7 +95,7 @@ struct HistoryView: View {
     private var summarySection: some View {
         HStack(spacing: 12) {
             SummaryCard(
-                title: "Avg Score",
+                title: "Legacy Score",
                 value: "\(viewModel.averageScore)",
                 icon: "battery.75"
             )

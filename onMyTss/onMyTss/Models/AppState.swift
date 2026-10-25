@@ -16,6 +16,8 @@ final class AppState {
     var lastHealthKitSyncDate: Date?
     var healthKitAnchor: Data? // HKQueryAnchor for anchored queries
 
+    var lastSyncMessage: String?
+
     // Computation state
     var lastComputationDate: Date?
     var isComputationInProgress: Bool

@@ -10,6 +10,9 @@ import SwiftData
 
 /// Settings screen for managing user preferences and app configuration
 struct SettingsView: View {
+    @Environment(\.modelContext) private var modelContext
+    @State private var cardioHR = ""
+    @State private var cardioMessage: String?
     @State private var viewModel: SettingsViewModel
     @State private var showingResetConfirmation = false
     @State private var showingFTPEditor = false
@@ -21,6 +24,36 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    TextField("Confirmed maximum heart rate (bpm)", text: $cardioHR)
+                        .keyboardType(.numberPad)
+                    Button("Save Cardio Settings") {
+                        do {
+                            let store = DataStore(modelContext: modelContext)
+                            let thresholds = try store.fetchUserThresholds()
+                            let text = cardioHR.trimmingCharacters(in: .whitespaces)
+                            if text.isEmpty { thresholds.cardioMaxHeartRate = nil }
+                            else if let value = Int(text), (100...230).contains(value) {
+                                thresholds.cardioMaxHeartRate = value
+                            } else {
+                                cardioMessage = "Enter 100–230 bpm, or leave blank for unknown."
+                                return
+                            }
+                            try store.saveUserThresholds(thresholds)
+                            try V2Store(context: modelContext).refreshEstimates()
+                            cardioMessage = "Saved. New estimate snapshots created; previous versions retained."
+                        } catch { cardioMessage = error.localizedDescription }
+                    }
+                    if let cardioMessage { Text(cardioMessage).font(.caption) }
+                } header: { Text("Cardio Load") } footer: {
+                    Text("Optional. Use a maximum heart rate you know; no age or FTP default is assumed. Leave blank for unknown. Changing this creates new estimates from saved inputs, retaining earlier snapshots.")
+                }
+                .task {
+                    if let value = try? DataStore(modelContext: modelContext).fetchUserThresholds().cardioMaxHeartRate {
+                        cardioHR = String(value)
+                    }
+                }
+
                 // Cycling Settings
                 Section("Cycling") {
                     HStack {
@@ -121,6 +154,14 @@ struct SettingsView: View {
 
                 // Data Management
                 Section("Data") {
+                    Button("Review Apple Health Access") {
+                        Task {
+                            do {
+                                try await HealthKitManager().requestAuthorization()
+                                cardioMessage = "Health access requested. Sync to read available records; read denial can appear as no data."
+                            } catch { cardioMessage = "Health access unavailable. Manual records remain usable." }
+                        }
+                    }
                     Button {
                         Task {
                             await viewModel.syncData()

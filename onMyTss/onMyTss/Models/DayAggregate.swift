@@ -17,6 +17,7 @@ final class DayAggregate {
     var tsb: Double // Training Stress Balance (CTL - ATL)
     var bodyBatteryScore: Int // 0-100 scale
     var rampRate: Double? // CTL week-over-week change
+    var hasWorkoutDetails: Bool = false
     var workoutCount: Int
     var maxTSSWorkout: Double?
 
@@ -35,7 +36,7 @@ final class DayAggregate {
     // MARK: - Relationships
 
     /// Individual workouts for this day
-    @Relationship(deleteRule: .cascade, inverse: \Workout.dayAggregate)
+    @Relationship(deleteRule: .nullify, inverse: \Workout.dayAggregate)
     var workouts: [Workout] = []
 
     init(

@@ -6,6 +6,9 @@
 //
 
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /// Low-level Strava API client using async/await
 /// Handles OAuth and activity fetching with modern Swift concurrency
@@ -190,6 +193,25 @@ final class StravaAPI {
         return try await performRequest(request)
     }
 
+    /// Verify one previously imported activity. A 404 is scoped to the current
+    /// authorization: the source is unavailable, not proof of physical deletion.
+    /// All permission, rate-limit, transport and decoding failures throw so the
+    /// caller retains local data. The injected session supports HTTP behavior tests.
+    static func getActivity(accessToken: String, activityID: Int, session: URLSession? = nil) async throws -> StravaActivity? {
+        guard activityID > 0, let url = URL(string: "\(Endpoint.baseURL)/activities/\(activityID)") else {
+            throw StravaAPIError.invalidURL
+        }
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        do {
+            let activity: StravaActivity = try await performRequest(request, using: session)
+            guard activity.id == activityID, activity.startDateTime != nil else { throw StravaAPIError.invalidResponse }
+            return activity
+        } catch StravaAPIError.httpError(404) {
+            return nil
+        }
+    }
+
     // MARK: - Request Execution
 
     /// Configured URLSession with timeouts to prevent indefinite hangs
@@ -201,9 +223,9 @@ final class StravaAPI {
     }()
 
     /// Generic request performer with error handling
-    private static func performRequest<T: Decodable>(_ request: URLRequest) async throws -> T {
+    private static func performRequest<T: Decodable>(_ request: URLRequest, using injectedSession: URLSession? = nil) async throws -> T {
         do {
-            let (data, response) = try await session.data(for: request)
+            let (data, response) = try await (injectedSession ?? session).data(for: request)
 
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw StravaAPIError.invalidResponse

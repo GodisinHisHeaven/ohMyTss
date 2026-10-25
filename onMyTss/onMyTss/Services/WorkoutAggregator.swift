@@ -15,11 +15,47 @@ protocol HealthKitManaging: AnyObject {
     func fetchWorkouts(from startDate: Date, to endDate: Date) async throws -> [HKWorkout]
     func fetchPowerSamples(for workout: HKWorkout) async throws -> [HKQuantitySample]
     func fetchHeartRateSamples(for workout: HKWorkout) async throws -> [HKQuantitySample]
+    func fetchWorkoutFeatures(for workout: HKWorkout) async throws -> WorkoutFeatures
+}
+
+// Existing adapters can still conform, while the production manager overrides
+// this method with quantity-series expansion and provenance-aware queries.
+extension HealthKitManaging {
+    func fetchWorkoutFeatures(for workout: HKWorkout) async throws -> WorkoutFeatures {
+        var features = WorkoutFeatures()
+        features.end = workout.endDate
+        let power = try await fetchPowerSamples(for: workout)
+        let heartRate = try await fetchHeartRateSamples(for: workout)
+        features.power = power.filter { $0.count == 1 }.map {
+            TimedValue(start: $0.startDate, end: $0.endDate, value: $0.quantity.doubleValue(for: .watt()))
+        }
+        features.heartRate = heartRate.filter { $0.count == 1 }.map {
+            TimedValue(start: $0.startDate, end: $0.endDate, value: $0.quantity.doubleValue(for: .count().unitDivided(by: .minute())))
+        }
+        features.provenance = ["Adapter quantities; merged series require a quantity-series capable source"]
+        return features
+    }
 }
 
 @MainActor
 protocol StravaAuthManaging: AnyObject {
     func getValidAccessToken() async throws -> String
+}
+
+@MainActor
+protocol StravaActivityFetching {
+    func activities(accessToken: String, after: Date, before: Date, page: Int, perPage: Int) async throws -> [StravaActivity]
+    func activity(accessToken: String, id: Int) async throws -> StravaActivity?
+}
+
+@MainActor
+struct StravaActivityClient: StravaActivityFetching {
+    func activities(accessToken: String, after: Date, before: Date, page: Int, perPage: Int) async throws -> [StravaActivity] {
+        try await StravaAPI.getActivities(accessToken: accessToken, after: after, before: before, page: page, perPage: perPage)
+    }
+    func activity(accessToken: String, id: Int) async throws -> StravaActivity? {
+        try await StravaAPI.getActivity(accessToken: accessToken, activityID: id)
+    }
 }
 
 /// TSS calculation method
@@ -39,17 +75,26 @@ final class WorkoutAggregator {
     private let healthKitManager: HealthKitManaging
     private let stravaAuthManager: StravaAuthManaging
     private let dataStore: DataStore
+    private let stravaClient: any StravaActivityFetching
+
+    /// All source records, including suppressed aliases, for durable provenance.
+    private(set) var latestImportedWorkouts: [Workout] = []
+    private(set) var successfulSources: Set<String> = []
+    private(set) var warnings: [String] = []
+    private(set) var latestDeletedStravaIDs: [String] = []
 
     // MARK: - Initialization
 
     init(
         healthKitManager: HealthKitManaging,
         stravaAuthManager: StravaAuthManaging,
-        dataStore: DataStore
+        dataStore: DataStore,
+        stravaClient: (any StravaActivityFetching)? = nil
     ) {
         self.healthKitManager = healthKitManager
         self.stravaAuthManager = stravaAuthManager
         self.dataStore = dataStore
+        self.stravaClient = stravaClient ?? StravaActivityClient()
     }
 
     // MARK: - Fetch Workouts
@@ -57,98 +102,87 @@ final class WorkoutAggregator {
     /// Fetch all workouts from both sources (Strava + HealthKit)
     /// Returns deduplicated workouts with Strava priority
     func fetchWorkouts(from startDate: Date, to endDate: Date) async throws -> [Workout] {
-        // Fetch from both sources in parallel
-        async let healthKitWorkouts = fetchHealthKitWorkouts(from: startDate, to: endDate)
-        async let stravaWorkouts = fetchStravaWorkouts(from: startDate, to: endDate)
-
-        let (hkWorkouts, stWorkouts) = try await (healthKitWorkouts, stravaWorkouts)
-
-        // Prioritize workouts with power data across sources; Strava already prioritized over HK in deduplication
-        let combined = deduplicateWorkouts(healthKit: hkWorkouts, strava: stWorkouts)
-        return combined.sorted { lhs, rhs in
-            // Prefer workouts that have power metrics (averagePower or normalizedPower)
-            let lhsHasPower = lhs.averagePower != nil || lhs.normalizedPower != nil
-            let rhsHasPower = rhs.averagePower != nil || rhs.normalizedPower != nil
-
-            if lhsHasPower == rhsHasPower {
-                // Preserve chronological ordering if both have (or both lack) power
-                return lhs.startTime < rhs.startTime
-            }
-
-            return lhsHasPower && !rhsHasPower
+        latestImportedWorkouts = []
+        latestDeletedStravaIDs = []
+        successfulSources = []
+        warnings = []
+        var hkWorkouts: [Workout] = []
+        var stravaWorkouts: [Workout] = []
+        var sourceErrors: [Error] = []
+        do {
+            hkWorkouts = try await fetchHealthKitWorkouts(from: startDate, to: endDate)
+            successfulSources.insert(WorkoutSource.healthKit.rawValue)
+        } catch {
+            sourceErrors.append(error)
+            warnings.append("HealthKit is unavailable or unreadable. Saved history is retained; retry sync.")
         }
+        let stravaConnected = try dataStore.fetchStravaAuth()?.isConnected == true
+        if stravaConnected {
+            do {
+                stravaWorkouts = try await fetchStravaWorkouts(from: startDate, to: endDate)
+                successfulSources.insert(WorkoutSource.strava.rawValue)
+            } catch {
+                sourceErrors.append(error)
+                warnings.append("Strava could not sync. Saved history is retained; check your connection and retry.")
+            }
+        }
+        if successfulSources.isEmpty, let error = sourceErrors.first { throw error }
+        let active = deduplicateWorkouts(healthKit: hkWorkouts, strava: stravaWorkouts)
+        latestImportedWorkouts = hkWorkouts + stravaWorkouts
+        return active.sorted { $0.startTime < $1.startTime }
     }
 
-    // MARK: - Private Fetch Methods
-
-    /// Fetch workouts from HealthKit and convert to Workout models
     private func fetchHealthKitWorkouts(from startDate: Date, to endDate: Date) async throws -> [Workout] {
-        let hkWorkouts = try await healthKitManager.fetchWorkouts(from: startDate, to: endDate)
+        let source = try await healthKitManager.fetchWorkouts(from: startDate, to: endDate)
+        return try await convertHealthKitWorkouts(source)
+    }
 
-        // Get user thresholds for TSS calculation
+    /// Also accepts additions from an anchored query, including corrections to
+    /// activities older than the normal refresh window.
+    func convertHealthKitWorkouts(_ source: [HKWorkout]) async throws -> [Workout] {
         let thresholds = try dataStore.fetchUserThresholds()
-
-        // Need FTP to calculate TSS
-        guard let ftp = thresholds.cyclingFTP, ftp > 0 else {
-            return []
-        }
-
         var workouts: [Workout] = []
-
-        for hkWorkout in hkWorkouts {
-            // Fetch power and heart rate samples
-            let powerSamples = try await healthKitManager.fetchPowerSamples(for: hkWorkout)
-            let heartRateSamples = try await healthKitManager.fetchHeartRateSamples(for: hkWorkout)
-
-            // Calculate TSS (power-based preferred, fall back to HR-based)
-            let tssResult: (tss: Double, method: TSSMethod)
-
-            if !powerSamples.isEmpty {
-                let tss = TSSCalculator.calculateTSS(
-                    powerSamples: powerSamples,
-                    ftp: ftp,
-                    duration: hkWorkout.duration
-                )
-                tssResult = (tss, .power)
-            } else if !heartRateSamples.isEmpty {
-                let tss = TSSCalculator.calculateTSSFromHeartRate(
-                    heartRateSamples: heartRateSamples,
-                    duration: hkWorkout.duration,
-                    maxHeartRate: thresholds.maxHeartRate,
-                    restingHeartRate: nil
-                )
-                tssResult = (tss, .hr)
-            } else {
-                // Fall back to duration estimate
-                let durationHours = hkWorkout.duration / 3600.0
-                let estimatedTSS = durationHours * 60
-                tssResult = (estimatedTSS, .duration)
+        for hkWorkout in source {
+            var features: WorkoutFeatures
+            do { features = try await healthKitManager.fetchWorkoutFeatures(for: hkWorkout) }
+            catch {
+                features = WorkoutFeatures()
+                features.failedChannels = ["heartRate", "power", "cadence", "speed", "terrain"]
+                features.provenance = ["Sensor query failed; retry sync"]
             }
-
-            // Convert to Workout model
+            features.end = hkWorkout.endDate
+            let window = TimeRange(start: hkWorkout.startDate, end: hkWorkout.endDate)
+            let power = SignalProcessing.intervals(samples: features.power, window: window, pauses: features.pauses, validRange: 0...2500)
+            let heartRate = SignalProcessing.intervals(samples: features.heartRate, window: window, pauses: features.pauses, validRange: 30...240)
+            let np = SignalProcessing.normalizedPower(power)
+            let tss: Double
+            let method: String
+            if hkWorkout.workoutActivityType == .cycling, let ftp = thresholds.cyclingFTP, ftp > 0, let np = np {
+                // Partial coverage contributes only its observed duration. It is
+                // never extrapolated through pauses or missing sensor intervals.
+                tss = SignalProcessing.coveredSeconds(power) / 3600 * pow(np / Double(ftp), 2) * 100
+                method = "power-time-v2"
+            } else if !heartRate.isEmpty, let maxHR = thresholds.maxHeartRate, maxHR > 60 {
+                tss = TSSCalculator.legacyHeartRateTSS(intervals: heartRate, maxHeartRate: maxHR, restingHeartRate: 60)
+                method = "hr-time-v2 (resting HR assumed 60)"
+            } else {
+                tss = max(0, hkWorkout.duration) / 3600 * 60
+                method = "duration estimate"
+            }
             let workout = Workout(
-                id: hkWorkout.uuid.uuidString,
-                date: hkWorkout.startDate.startOfDay,
-                startTime: hkWorkout.startDate,
-                duration: hkWorkout.duration,
+                id: hkWorkout.uuid.uuidString, date: hkWorkout.startDate.startOfDay,
+                startTime: hkWorkout.startDate, duration: hkWorkout.duration,
                 workoutType: workoutTypeName(for: hkWorkout.workoutActivityType),
                 distance: hkWorkout.totalDistance?.doubleValue(for: .meter()),
-                tss: tssResult.tss,
-                calculationMethod: tssResult.method.rawValue,
-                source: .healthKit,
-                stravaId: nil,
+                tss: tss.isFinite ? tss : 0, calculationMethod: method, source: .healthKit,
                 healthKitUUID: hkWorkout.uuid.uuidString,
-                isSuppressed: false,
-                averagePower: extractPower(from: powerSamples),
-                normalizedPower: nil, // HealthKit doesn't store NP
-                averageHeartRate: averageHeartRate(from: heartRateSamples),
-                maxHeartRate: maxHeartRate(from: heartRateSamples),
+                averagePower: SignalProcessing.weightedMean(power), normalizedPower: np,
+                averageHeartRate: SignalProcessing.weightedMean(heartRate), maxHeartRate: heartRate.map(\.value).max(),
                 deviceName: hkWorkout.device?.name
             )
-
+            workout.features = features
             workouts.append(workout)
         }
-
         return workouts
     }
 
@@ -170,7 +204,7 @@ final class WorkoutAggregator {
 
         // Paginate through activities
         while true {
-            let activities = try await StravaAPI.getActivities(
+            let activities = try await stravaClient.activities(
                 accessToken: accessToken,
                 after: startDate,
                 before: endDate,
@@ -191,18 +225,47 @@ final class WorkoutAggregator {
             page += 1
         }
 
+        // Only a completed, paginated listing may nominate missing sources for
+        // verification. Day-grouped local fetches are narrowed to the exact API
+        // epoch boundaries so adjacent-day or boundary activities are not removed.
+        var unavailableSourceIDs: [String] = []
+        let returnedIDs = Set(allActivities.map(\.id))
+        let after = Date(timeIntervalSince1970: Double(Int(startDate.timeIntervalSince1970)))
+        let before = Date(timeIntervalSince1970: Double(Int(endDate.timeIntervalSince1970)))
+        let known = try dataStore.fetchWorkouts(from: startDate, to: endDate, includeSupressed: true).filter {
+            $0.source == WorkoutSource.strava.rawValue && !$0.isDeleted &&
+            $0.startTime > after && $0.startTime < before &&
+            $0.stravaId.map { !returnedIDs.contains($0) } == true
+        }
+        for source in known {
+            guard let id = source.stravaId else { continue }
+            do {
+                if let corrected = try await stravaClient.activity(accessToken: accessToken, id: id) {
+                    // A corrected start date can move an existing activity out
+                    // of the queried window. Updating it clears the old day's TSS.
+                    allActivities.append(corrected)
+                } else {
+                    unavailableSourceIDs.append(source.id)
+                }
+            } catch {
+                warnings.append("A missing Strava activity could not be verified. Its saved source and your records are retained; retry sync.")
+                // Avoid repeated requests after a rate-limit, connection or
+                // authorization failure. Unchecked sources remain untouched.
+                break
+            }
+        }
+        if !unavailableSourceIDs.isEmpty {
+            warnings.append("Strava returned not found for previously imported sources. Their load contributions are removed; personal logs are retained. This may reflect source deletion or changed visibility.")
+        }
+
         // Get user thresholds
         let thresholds = try dataStore.fetchUserThresholds()
 
-        // Determine which FTP to use
-        let ftp: Int
-        if thresholds.preferStravaFTP, let stravaFTP = thresholds.stravaFTP, stravaFTP > 0 {
-            ftp = stravaFTP
-        } else if let cyclingFTP = thresholds.cyclingFTP, cyclingFTP > 0 {
-            ftp = cyclingFTP
-        } else {
-            return [] // No valid FTP
-        }
+        // Thresholds apply only to their sport. Unknown cycling FTP does not
+        // prevent other activities (or cycling history itself) from importing.
+        let ftp: Int?
+        if thresholds.preferStravaFTP, let value = thresholds.stravaFTP, value > 0 { ftp = value }
+        else { ftp = thresholds.cyclingFTP.flatMap { $0 > 0 ? $0 : nil } }
 
         // Convert to Workout models
         var workouts: [Workout] = []
@@ -217,14 +280,14 @@ final class WorkoutAggregator {
             let tss = calculateTSSFromStrava(
                 activity: activity,
                 userFTP: ftp,
-                userMaxHR: thresholds.maxHeartRate ?? 190
+                userMaxHR: thresholds.maxHeartRate
             )
 
             let workout = Workout(
                 id: "\(activity.id)", // Strava ID as string
                 date: startTime.startOfDay,
                 startTime: startTime,
-                duration: TimeInterval(activity.movingTime),
+                duration: TimeInterval(max(0, activity.movingTime)),
                 workoutType: activity.sportType,
                 distance: activity.distance,
                 tss: tss.value,
@@ -240,9 +303,16 @@ final class WorkoutAggregator {
                 deviceName: activity.deviceName
             )
 
+            var features = WorkoutFeatures()
+            features.end = startTime.addingTimeInterval(Double(max(activity.elapsedTime, activity.movingTime)))
+            features.provenance = ["Strava activity summary; no timestamped HR, power or cadence stream. Cardio Load is unknown until supported samples are available."]
+            // Strava summaries cannot supply co-timed power/cadence or a grade
+            // distribution. Do not create fake constant time series from means.
+            workout.features = features
             workouts.append(workout)
         }
 
+        latestDeletedStravaIDs = unavailableSourceIDs
         return workouts
     }
 
@@ -252,23 +322,14 @@ final class WorkoutAggregator {
     /// Uses same criteria as HealthKit deduplication: time, duration, type
     func deduplicateWorkouts(healthKit: [Workout], strava: [Workout]) -> [Workout] {
         var result: [Workout] = []
-
-        // Add all Strava workouts first (they have priority)
-        result.append(contentsOf: strava)
-
-        // Add HealthKit workouts only if not duplicates
-        for hkWorkout in healthKit {
-            let isDuplicate = strava.contains { stravaWorkout in
-                areDuplicates(workout1: hkWorkout, workout2: stravaWorkout)
-            }
-
-            if !isDuplicate {
-                result.append(hkWorkout)
-            }
-            // Note: Suppressed duplicates are not included in results
-            // They're filtered out to avoid confusion in UI
+        // Reset incoming snapshots; persistence also reconciles against prior
+        // imports and keeps manual associations separate from this heuristic.
+        for workout in strava + healthKit { workout.isSuppressed = false }
+        for workout in strava + healthKit {
+            if result.contains(where: { areDuplicates(workout1: workout, workout2: $0) }) {
+                workout.isSuppressed = true
+            } else { result.append(workout) }
         }
-
         return result
     }
 
@@ -309,6 +370,8 @@ final class WorkoutAggregator {
             return "running"
         } else if lowercased.contains("swim") {
             return "swimming"
+        } else if lowercased.contains("strength") || lowercased.contains("weighttraining") {
+            return "strength"
         } else if lowercased.contains("walk") {
             return "walking"
         }
@@ -329,63 +392,46 @@ final class WorkoutAggregator {
             return "Swimming"
         case .walking:
             return "Walking"
+        case .traditionalStrengthTraining, .functionalStrengthTraining:
+            return "Strength"
         default:
             return "Other"
         }
     }
 
-    /// Extract average power from power samples
-    private func extractPower(from powerSamples: [HKQuantitySample]) -> Double? {
-        guard !powerSamples.isEmpty else { return nil }
-
-        let sum = powerSamples.reduce(0.0) { $0 + $1.quantity.doubleValue(for: .watt()) }
-        return sum / Double(powerSamples.count)
-    }
-
-    /// Calculate average heart rate from samples
-    private func averageHeartRate(from samples: [HKQuantitySample]) -> Double? {
-        guard !samples.isEmpty else { return nil }
-
-        let sum = samples.reduce(0.0) { $0 + $1.quantity.doubleValue(for: .count().unitDivided(by: .minute())) }
-        return sum / Double(samples.count)
-    }
-
-    /// Calculate max heart rate from samples
-    private func maxHeartRate(from samples: [HKQuantitySample]) -> Double? {
-        return samples.map { $0.quantity.doubleValue(for: .count().unitDivided(by: .minute())) }.max()
-    }
-
     /// Calculate TSS from Strava activity data
-    private func calculateTSSFromStrava(activity: StravaActivity, userFTP: Int, userMaxHR: Int) -> (value: Double, method: String) {
+    private func calculateTSSFromStrava(activity: StravaActivity, userFTP: Int?, userMaxHR: Int?) -> (value: Double, method: String) {
         // Prefer power-based if available
-        if activity.hasPowerData,
-           let np = activity.weightedAverageWatts {
+        if normalizeWorkoutType(activity.sportType) == "cycling", activity.hasPowerData,
+           let np = activity.weightedAverageWatts, np >= 0,
+           let userFTP = userFTP, userFTP > 0 {
             // Use Strava's weighted average watts (their NP equivalent)
             let intensityFactor = Double(np) / Double(userFTP)
-            let durationHours = Double(activity.movingTime) / 3600.0
+            let durationHours = Double(max(0, activity.movingTime)) / 3600.0
             let tss = durationHours * Double(np) * intensityFactor / Double(userFTP) * 100
 
             return (tss, "power")
         }
 
         // Fall back to HR-based if available
-        if activity.hasHeartrate, let avgHR = activity.averageHeartrate {
-            let hrRatio = (avgHR - 60) / (Double(userMaxHR) - 60)
-            let durationMinutes = Double(activity.movingTime) / 60.0
+        if activity.hasHeartrate, let avgHR = activity.averageHeartrate, avgHR.isFinite,
+           let userMaxHR = userMaxHR, userMaxHR > 60 {
+            let hrRatio = min(1, max(0, (avgHR - 60) / (Double(userMaxHR) - 60)))
+            let durationMinutes = Double(max(0, activity.movingTime)) / 60.0
 
             // TRIMP calculation
             let exerciseTRIMP = durationMinutes * hrRatio * exp(1.92 * hrRatio)
             let oneHourFTPTRIMP = 60.0 * 0.85 * exp(1.92 * 0.85)
             let hrTSS = (exerciseTRIMP / oneHourFTPTRIMP) * 100.0
 
-            return (hrTSS, "hr")
+            return (hrTSS, "hr summary estimate")
         }
 
         // Fall back to duration estimate
-        let durationHours = Double(activity.movingTime) / 3600.0
+        let durationHours = Double(max(0, activity.movingTime)) / 3600.0
         let estimatedTSS = durationHours * 60 // Very rough estimate
 
-        return (estimatedTSS, "duration")
+        return (max(0, estimatedTSS), "duration estimate")
     }
 }
 

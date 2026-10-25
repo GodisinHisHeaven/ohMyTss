@@ -7,6 +7,7 @@
 
 import Foundation
 import HealthKit
+import CoreLocation
 
 @MainActor
 @Observable
@@ -39,6 +40,8 @@ class HealthKitManager {
             HKObjectType.quantityType(forIdentifier: .activeEnergyBurned)!,
             HKObjectType.quantityType(forIdentifier: .cyclingPower)!,
             HKObjectType.quantityType(forIdentifier: .cyclingCadence)!,
+            HKObjectType.quantityType(forIdentifier: .runningSpeed)!,
+            HKSeriesType.workoutRoute(),
             HKObjectType.categoryType(forIdentifier: .sleepAnalysis)!
         ]
 
@@ -62,6 +65,7 @@ class HealthKitManager {
 
     /// Fetch workouts within a date range
     func fetchWorkouts(from startDate: Date, to endDate: Date) async throws -> [HKWorkout] {
+        guard isHealthKitAvailable else { throw HealthKitError.notAvailable }
         let workoutType = HKObjectType.workoutType()
         let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
 
@@ -79,120 +83,266 @@ class HealthKitManager {
 
                 let workouts = samples as? [HKWorkout] ?? []
 
-                // Deduplicate workouts synced from multiple devices
-                let deduplicatedWorkouts = self.deduplicateWorkouts(workouts)
-
-                continuation.resume(returning: deduplicatedWorkouts)
+                // Keep every source UUID. Canonicalization belongs to persistence.
+                continuation.resume(returning: workouts)
             }
 
             healthStore.execute(query)
         }
     }
 
-    /// Fetch workouts using an anchored query (for incremental syncs)
+    /// Explicit HealthKit tombstones are the only authority for deletion. An empty
+    /// query can also mean unreadable data; it must never erase local history.
+    func fetchWorkoutChanges(anchor: HKQueryAnchor?) async throws -> (workouts: [HKWorkout], deletedIDs: [String], newAnchor: HKQueryAnchor) {
+        guard isHealthKitAvailable else { throw HealthKitError.notAvailable }
+        return try await withCheckedThrowingContinuation { continuation in
+            let query = HKAnchoredObjectQuery(type: .workoutType(), predicate: nil, anchor: anchor, limit: HKObjectQueryNoLimit) {
+                _, samples, deleted, newAnchor, error in
+                if let error = error { continuation.resume(throwing: error); return }
+                guard let newAnchor = newAnchor else { continuation.resume(throwing: HealthKitError.noData); return }
+                continuation.resume(returning: (samples as? [HKWorkout] ?? [], deleted?.map { $0.uuid.uuidString } ?? [], newAnchor))
+            }
+            healthStore.execute(query)
+        }
+    }
+
+    /// Compatibility API. New synchronization consumes fetchWorkoutChanges so
+    /// deletions are applied before committing the returned anchor.
     func fetchWorkouts(anchor: HKQueryAnchor?) async throws -> (workouts: [HKWorkout], newAnchor: HKQueryAnchor) {
-        let workoutType = HKObjectType.workoutType()
-
-        return try await withCheckedThrowingContinuation { continuation in
-            let query = HKAnchoredObjectQuery(
-                type: workoutType,
-                predicate: nil,
-                anchor: anchor,
-                limit: HKObjectQueryNoLimit
-            ) { _, addedSamples, deletedSamples, newAnchor, error in
-                if let error = error {
-                    continuation.resume(throwing: error)
-                    return
-                }
-
-                let workouts = addedSamples as? [HKWorkout] ?? []
-
-                // Deduplicate workouts synced from multiple devices
-                let deduplicatedWorkouts = self.deduplicateWorkouts(workouts)
-
-                continuation.resume(returning: (deduplicatedWorkouts, newAnchor ?? HKQueryAnchor(fromValue: 0)))
-            }
-
-            healthStore.execute(query)
-        }
+        let changes = try await fetchWorkoutChanges(anchor: anchor)
+        return (changes.workouts, changes.newAnchor)
     }
 
-    // MARK: - Fetch Workout Samples
+    // MARK: - Workout-associated quantities
 
-    /// Fetch power samples for a specific workout
     func fetchPowerSamples(for workout: HKWorkout) async throws -> [HKQuantitySample] {
-        guard let powerType = HKQuantityType.quantityType(forIdentifier: .cyclingPower) else {
-            throw HealthKitError.invalidType
-        }
-
-        let predicate = HKQuery.predicateForSamples(withStart: workout.startDate, end: workout.endDate, options: .strictStartDate)
-
-        return try await withCheckedThrowingContinuation { continuation in
-            let query = HKSampleQuery(
-                sampleType: powerType,
-                predicate: predicate,
-                limit: HKObjectQueryNoLimit,
-                sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)]
-            ) { _, samples, error in
-                if let error = error {
-                    continuation.resume(throwing: error)
-                    return
-                }
-
-                let powerSamples = samples as? [HKQuantitySample] ?? []
-                continuation.resume(returning: powerSamples)
-            }
-
-            healthStore.execute(query)
-        }
+        try await associatedSamples(.cyclingPower, workout: workout)
     }
 
-    /// Fetch heart rate samples for a specific workout
     func fetchHeartRateSamples(for workout: HKWorkout) async throws -> [HKQuantitySample] {
-        guard let heartRateType = HKQuantityType.quantityType(forIdentifier: .heartRate) else {
-            throw HealthKitError.invalidType
-        }
+        try await associatedSamples(.heartRate, workout: workout)
+    }
 
-        let predicate = HKQuery.predicateForSamples(withStart: workout.startDate, end: workout.endDate, options: .strictStartDate)
+    private func associatedSamples(_ identifier: HKQuantityTypeIdentifier, workout: HKWorkout) async throws -> [HKQuantitySample] {
+        guard let type = HKQuantityType.quantityType(forIdentifier: identifier) else { throw HealthKitError.invalidType }
+        let associated = try await quantitySamples(type, predicate: HKQuery.predicateForObjects(from: workout))
+        if !associated.isEmpty { return associated }
+        return try await quantitySamples(type, predicate: fallbackPredicate(workout))
+    }
 
-        return try await withCheckedThrowingContinuation { continuation in
-            let query = HKSampleQuery(
-                sampleType: heartRateType,
-                predicate: predicate,
-                limit: HKObjectQueryNoLimit,
-                sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)]
-            ) { _, samples, error in
-                if let error = error {
-                    continuation.resume(throwing: error)
-                    return
-                }
-
-                let heartRateSamples = samples as? [HKQuantitySample] ?? []
-                continuation.resume(returning: heartRateSamples)
+    private func quantitySamples(_ type: HKQuantityType, predicate: NSPredicate) async throws -> [HKQuantitySample] {
+        try await withCheckedThrowingContinuation { continuation in
+            let query = HKSampleQuery(sampleType: type, predicate: predicate, limit: HKObjectQueryNoLimit,
+                                      sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)]) { _, samples, error in
+                if let error = error { continuation.resume(throwing: error); return }
+                continuation.resume(returning: samples as? [HKQuantitySample] ?? [])
             }
-
             healthStore.execute(query)
         }
     }
 
-    /// Fetch statistics for a workout (average heart rate, total energy, etc.)
-    func fetchWorkoutStatistics(for workout: HKWorkout, quantityType: HKQuantityType) async throws -> HKStatistics? {
-        let predicate = HKQuery.predicateForSamples(withStart: workout.startDate, end: workout.endDate, options: .strictStartDate)
+    private func fallbackPredicate(_ workout: HKWorkout) -> NSPredicate {
+        NSCompoundPredicate(andPredicateWithSubpredicates: [
+            HKQuery.predicateForSamples(withStart: workout.startDate, end: workout.endDate, options: []),
+            HKQuery.predicateForObjects(from: workout.sourceRevision.source)
+        ])
+    }
 
-        return try await withCheckedThrowingContinuation { continuation in
-            let query = HKStatisticsQuery(
-                quantityType: quantityType,
-                quantitySamplePredicate: predicate,
-                options: [.discreteAverage, .discreteMin, .discreteMax]
-            ) { _, statistics, error in
+    /// Query individual measurements, including measurements inside merged
+    /// HKQuantitySample series. A parent sample's aggregate is never treated as
+    /// a continuous reading across its full date range.
+    private func series(_ identifier: HKQuantityTypeIdentifier, unit: HKUnit, workout: HKWorkout) async throws -> (values: [TimedValue], provenance: String) {
+        guard let type = HKQuantityType.quantityType(forIdentifier: identifier) else { throw HealthKitError.invalidType }
+        let associated = try await quantitySeries(type, unit: unit, predicate: HKQuery.predicateForObjects(from: workout))
+        if !associated.isEmpty { return (associated, "\(identifier.rawValue): workout-associated quantity series") }
+        let fallback = try await quantitySeries(type, unit: unit, predicate: fallbackPredicate(workout))
+        return (fallback, fallback.isEmpty
+                ? "\(identifier.rawValue): no readable samples; absence is not zero"
+                : "\(identifier.rawValue): source-restricted time fallback; association uncertain")
+    }
+
+    private func quantitySeries(_ type: HKQuantityType, unit: HKUnit, predicate: NSPredicate) async throws -> [TimedValue] {
+        try await withCheckedThrowingContinuation { continuation in
+            let buffer = HealthQueryBuffer<TimedValue>()
+            let query = HKQuantitySeriesSampleQuery(quantityType: type, predicate: predicate) { _, quantity, interval, _, done, error in
                 if let error = error {
-                    continuation.resume(throwing: error)
+                    if buffer.finish() != nil { continuation.resume(throwing: error) }
                     return
                 }
+                if let quantity = quantity, let interval = interval {
+                    buffer.append([TimedValue(start: interval.start, end: interval.end, value: quantity.doubleValue(for: unit))])
+                }
+                if done, let values = buffer.finish() { continuation.resume(returning: values) }
+            }
+            healthStore.execute(query)
+        }
+    }
 
+    func fetchWorkoutFeatures(for workout: HKWorkout) async throws -> WorkoutFeatures {
+        var features = WorkoutFeatures()
+        features.provenance = ["HealthKit source: \(workout.sourceRevision.source.bundleIdentifier); workout: \(workout.uuid.uuidString)"]
+        features.pauses = Self.pauseIntervals(workout)
+        features.end = workout.endDate
+        // Sensor failures stay local to a channel: a failed power read must not
+        // discard a run, a swim, or a successfully read heart-rate stream.
+        let channels: [(HKQuantityTypeIdentifier, HKUnit)] = [
+            (.heartRate, .count().unitDivided(by: .minute())),
+            (.cyclingPower, .watt()), (.cyclingCadence, .count().unitDivided(by: .minute())),
+            (.runningSpeed, .meter().unitDivided(by: .second()))
+        ]
+        for (identifier, unit) in channels {
+            let channel: String
+            switch identifier {
+            case .heartRate: channel = "heartRate"
+            case .cyclingPower: channel = "power"
+            case .cyclingCadence: channel = "cadence"
+            default: channel = "speed"
+            }
+            if (identifier == .cyclingPower || identifier == .cyclingCadence), workout.workoutActivityType != .cycling { continue }
+            if identifier == .runningSpeed, workout.workoutActivityType != .running { continue }
+            do {
+                let result = try await series(identifier, unit: unit, workout: workout)
+                switch identifier {
+                case .heartRate: features.heartRate = result.values
+                case .cyclingPower: features.power = result.values
+                case .cyclingCadence: features.cadence = result.values
+                case .runningSpeed: features.speed = result.values
+                default: break
+                }
+                features.provenance.append(result.provenance)
+                if result.values.isEmpty { features.unavailableChannels.append(channel) }
+            } catch {
+                features.failedChannels.append(channel)
+                features.provenance.append("\(identifier.rawValue): sensor query failed; retry sync")
+            }
+        }
+        if workout.workoutActivityType == .running {
+            do {
+                let locations = try await routeLocations(workout)
+                let terrain = Self.terrainFeatures(locations)
+                features.elevation = terrain.elevation
+                features.grade = terrain.grade
+                if locations.isEmpty { features.unavailableChannels.append("terrain") }
+                features.provenance.append(locations.isEmpty ? "No readable route; slope unknown" : "Workout-associated route; accuracy filter, median5 altitude and 15 m grade baseline")
+            } catch {
+                features.failedChannels.append("terrain")
+                features.provenance.append("Route query failed; slope unknown")
+            }
+        }
+        if workout.workoutActivityType == .swimming {
+            features.swimSegments = Self.swimSegments(workout)
+            features.provenance.append(features.swimSegments.isEmpty ? "Swim stroke and equipment unknown" : "Swim stroke metadata; equipment unknown")
+        }
+        return features
+    }
+
+    private func routeLocations(_ workout: HKWorkout) async throws -> [CLLocation] {
+        let routes: [HKWorkoutRoute] = try await withCheckedThrowingContinuation { continuation in
+            let query = HKSampleQuery(sampleType: HKSeriesType.workoutRoute(), predicate: HKQuery.predicateForObjects(from: workout),
+                                      limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, error in
+                if let error = error { continuation.resume(throwing: error); return }
+                continuation.resume(returning: samples as? [HKWorkoutRoute] ?? [])
+            }
+            healthStore.execute(query)
+        }
+        var locations: [CLLocation] = []
+        for route in routes {
+            let batch: [CLLocation] = try await withCheckedThrowingContinuation { continuation in
+                let buffer = HealthQueryBuffer<CLLocation>()
+                let query = HKWorkoutRouteQuery(route: route) { _, values, done, error in
+                    if let error = error {
+                        if buffer.finish() != nil { continuation.resume(throwing: error) }
+                        return
+                    }
+                    buffer.append(values ?? [])
+                    if done, let result = buffer.finish() { continuation.resume(returning: result) }
+                }
+                healthStore.execute(query)
+            }
+            locations.append(contentsOf: batch)
+        }
+        return locations
+    }
+
+    /// Keep only altitude and grade, never retain location coordinates. Slope
+    /// requires a valid accuracy estimate, a >=15 m baseline and <=30 s support.
+    private static func terrainFeatures(_ locations: [CLLocation]) -> (elevation: [TimedValue], grade: [TimedValue]) {
+        let points = locations.filter {
+            $0.horizontalAccuracy >= 0 && $0.horizontalAccuracy <= 20 &&
+            $0.verticalAccuracy >= 0 && $0.verticalAccuracy <= 10 && $0.altitude.isFinite
+        }.sorted { $0.timestamp < $1.timestamp }
+        guard points.count >= 5 else { return ([], []) }
+        let heights = points.indices.map { i -> Double in
+            let start = max(0, i - 2), end = min(points.count - 1, i + 2)
+            let values = points[start...end].map(\.altitude).sorted()
+            return values[values.count / 2]
+        }
+        let elevation = points.map { TimedValue(start: $0.timestamp, end: $0.timestamp, value: $0.altitude) }
+        var grade: [TimedValue] = []
+        var anchor = 0
+        for index in 1..<points.count {
+            let seconds = points[index].timestamp.timeIntervalSince(points[anchor].timestamp)
+            if seconds <= 0 { continue }
+            if seconds > 30 { anchor = index; continue }
+            let distance = points[index].distance(from: points[anchor])
+            guard distance >= 15 else { continue }
+            let slope = (heights[index] - heights[anchor]) / distance
+            if distance / seconds <= 15, abs(slope) <= 0.5 {
+                grade.append(TimedValue(start: points[anchor].timestamp, end: points[index].timestamp, value: slope))
+            }
+            anchor = index
+        }
+        return (elevation, grade)
+    }
+
+    private static func pauseIntervals(_ workout: HKWorkout) -> [TimeRange] {
+        var result: [TimeRange] = []
+        var pausedAt: Date?
+        for event in (workout.workoutEvents ?? []).sorted(by: { $0.dateInterval.start < $1.dateInterval.start }) {
+            switch event.type {
+            case .pause, .motionPaused:
+                if pausedAt == nil { pausedAt = event.dateInterval.start }
+            case .resume, .motionResumed:
+                if let start = pausedAt { result.append(TimeRange(start: start, end: event.dateInterval.start)) }
+                pausedAt = nil
+            default: break
+            }
+        }
+        if let start = pausedAt { result.append(TimeRange(start: start, end: workout.endDate)) }
+        return result
+    }
+
+    private static func swimSegments(_ workout: HKWorkout) -> [SwimSegment] {
+        func stroke(_ metadata: [String: Any]?) -> String? {
+            guard let value = metadata?[HKMetadataKeySwimmingStrokeStyle] as? NSNumber else { return nil }
+            switch HKSwimmingStrokeStyle(rawValue: value.intValue) ?? .unknown {
+            case .freestyle: return "freestyle"
+            case .backstroke: return "backstroke"
+            case .breaststroke: return "breaststroke"
+            case .butterfly: return "butterfly"
+            case .mixed: return "mixed"
+            case .kickboard: return "kickboard"
+            default: return "unknown"
+            }
+        }
+        let segments = (workout.workoutEvents ?? []).compactMap { event -> SwimSegment? in
+            guard (event.type == .lap || event.type == .segment), event.dateInterval.duration > 0,
+                  let name = stroke(event.metadata) else { return nil }
+            return SwimSegment(start: event.dateInterval.start, end: event.dateInterval.end, stroke: name)
+        }
+        if !segments.isEmpty { return segments }
+        if let name = stroke(workout.metadata) { return [SwimSegment(start: workout.startDate, end: workout.endDate, stroke: name)] }
+        return []
+    }
+
+    func fetchWorkoutStatistics(for workout: HKWorkout, quantityType: HKQuantityType) async throws -> HKStatistics? {
+        try await withCheckedThrowingContinuation { continuation in
+            let query = HKStatisticsQuery(quantityType: quantityType,
+                quantitySamplePredicate: HKQuery.predicateForObjects(from: workout),
+                options: [.discreteAverage, .discreteMin, .discreteMax]) { _, statistics, error in
+                if let error = error { continuation.resume(throwing: error); return }
                 continuation.resume(returning: statistics)
             }
-
             healthStore.execute(query)
         }
     }
@@ -207,9 +357,6 @@ class HealthKitManager {
 
         let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
 
-#if DEBUG
-        print("[HK] fetchHRVSamples from \(startDate) to \(endDate)")
-#endif
 
         return try await withCheckedThrowingContinuation { continuation in
             let query = HKSampleQuery(
@@ -219,17 +366,11 @@ class HealthKitManager {
                 sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)]
             ) { _, samples, error in
                 if let error = error {
-#if DEBUG
-                    print("[HK] fetchHRVSamples error: \(error)")
-#endif
                     continuation.resume(throwing: error)
                     return
                 }
 
                 let hrvSamples = samples as? [HKQuantitySample] ?? []
-#if DEBUG
-                print("[HK] fetchHRVSamples count: \(hrvSamples.count)")
-#endif
                 continuation.resume(returning: hrvSamples)
             }
 
@@ -245,9 +386,6 @@ class HealthKitManager {
 
         let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
 
-#if DEBUG
-        print("[HK] fetchRestingHeartRateSamples from \(startDate) to \(endDate)")
-#endif
 
         return try await withCheckedThrowingContinuation { continuation in
             let query = HKSampleQuery(
@@ -257,17 +395,11 @@ class HealthKitManager {
                 sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)]
             ) { _, samples, error in
                 if let error = error {
-#if DEBUG
-                    print("[HK] fetchRestingHeartRateSamples error: \(error)")
-#endif
                     continuation.resume(throwing: error)
                     return
                 }
 
                 let rhrSamples = samples as? [HKQuantitySample] ?? []
-#if DEBUG
-                print("[HK] fetchRestingHeartRateSamples count: \(rhrSamples.count)")
-#endif
                 continuation.resume(returning: rhrSamples)
             }
 
@@ -317,45 +449,7 @@ class HealthKitManager {
         try? NSKeyedUnarchiver.unarchivedObject(ofClass: HKQueryAnchor.self, from: data)
     }
 
-    /// Deduplicate workouts that may have been synced from multiple devices
-    /// Workouts are considered duplicates if they have the same start time, duration, and type
-    private nonisolated func deduplicateWorkouts(_ workouts: [HKWorkout]) -> [HKWorkout] {
-        var uniqueWorkouts: [HKWorkout] = []
 
-        // Sort workouts by start date to process chronologically
-        let sortedWorkouts = workouts.sorted { $0.startDate < $1.startDate }
-
-        for workout in sortedWorkouts {
-            // Check if this workout is a duplicate of any already-added workout
-            let isDuplicate = uniqueWorkouts.contains { existingWorkout in
-                // Same workout type
-                guard workout.workoutActivityType == existingWorkout.workoutActivityType else {
-                    return false
-                }
-
-                // Start times within 60 seconds of each other (handles sync timing differences)
-                let timeDiff = abs(workout.startDate.timeIntervalSince(existingWorkout.startDate))
-                guard timeDiff < 60 else {
-                    return false
-                }
-
-                // Durations within 5 seconds of each other (handles minor rounding differences)
-                let durationDiff = abs(workout.duration - existingWorkout.duration)
-                guard durationDiff < 5 else {
-                    return false
-                }
-
-                // If we get here, it's a duplicate
-                return true
-            }
-
-            if !isDuplicate {
-                uniqueWorkouts.append(workout)
-            }
-        }
-
-        return uniqueWorkouts
-    }
 }
 
 // MARK: - HealthKit Errors
@@ -377,5 +471,27 @@ enum HealthKitError: LocalizedError {
         case .noData:
             return "No data available."
         }
+    }
+}
+
+/// HealthKit series callbacks may arrive on a background queue. Finish once,
+/// even when an error and a terminal callback race.
+private final class HealthQueryBuffer<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    nonisolated(unsafe) private var values: [Value] = []
+    nonisolated(unsafe) private var finished = false
+
+    nonisolated init() {}
+
+    nonisolated func append(_ batch: [Value]) {
+        lock.lock(); defer { lock.unlock() }
+        if !finished { values.append(contentsOf: batch) }
+    }
+
+    nonisolated func finish() -> [Value]? {
+        lock.lock(); defer { lock.unlock() }
+        guard !finished else { return nil }
+        finished = true
+        return values
     }
 }

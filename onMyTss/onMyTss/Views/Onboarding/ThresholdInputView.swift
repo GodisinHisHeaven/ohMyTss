@@ -31,12 +31,12 @@ struct ThresholdInputView: View {
                     .padding(.top, 12)
 
                 // Title
-                Text("Set Your FTP")
+                Text("Cycling Threshold (Optional)")
                     .font(.title)
                     .fontWeight(.bold)
 
                 // Description
-                Text("Your Functional Threshold Power helps us calculate accurate training stress scores.")
+                Text("Your cycling FTP is used only for cycling power TSS. Other sports and local feedback work without it.")
                     .font(.body)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
@@ -77,7 +77,7 @@ struct ThresholdInputView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         HelpItem(text: "Complete an FTP test")
                         HelpItem(text: "Estimate from a 20-minute test")
-                        HelpItem(text: "Use a default value and update later")
+                        HelpItem(text: "Leave it unknown and update later")
                     }
                     .font(.caption)
                     .foregroundColor(.secondary)
@@ -121,9 +121,11 @@ struct ThresholdInputView: View {
                 .cornerRadius(12)
                 .disabled(!isValidFTP || isSaving)
 
-                Button("Skip (Use Default)") {
-                    ftp = "\(Constants.defaultFTP)"
-                    saveAndContinue()
+                Button("Skip (FTP Unknown)") {
+                    do {
+                        try dataStore.markOnboardingComplete()
+                        onComplete()
+                    } catch { self.error = error }
                 }
                 .foregroundColor(.secondary)
                 .padding(.bottom, 4)

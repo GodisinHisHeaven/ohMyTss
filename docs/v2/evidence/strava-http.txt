@@ -1,0 +1,1 @@
+PASS: production Strava detail API; 9 synthetic HTTP/offline/decoding cases
