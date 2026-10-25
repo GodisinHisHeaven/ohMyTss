@@ -3,8 +3,8 @@
 ## 当前检查点
 - 分支：`codex/v2-mvp`；基线 `fdab778b6b51181bd76c3627b765da8af5ed6eef`。
 - 初始 checkout：新克隆 main，干净，无用户未提交更改；根 AGENTS.md 已读，无子目录规则或旧实施计划。
-- 当前：本轮代码切片与独立审查修复已集成；准备本地提交与 draft PR。**代码已实现 ≠ iOS 已构建或可发布**。
-- 2026-10-25 可执行回归：30 个共享生产 Swift 领域测试、9 个生产 Strava API 合成 HTTP 情景、4 个原配置测试通过（43 个工程检查）。最后验证针对当前 diff；提交与远端入口在本文件末尾更新。
+- 当前：本轮代码切片与独立审查修复已集成；已提交并推送 draft PR #18。**代码已实现 ≠ iOS 已构建或可发布**。
+- 2026-10-25 可执行回归：30 个共享生产 Swift 领域测试、9 个生产 Strava API 合成 HTTP 情景、4 个原配置测试通过（43 个工程检查）。最近验证的代码提交为 `cf900d1b59f713fe582359203929dc4ca7ca1e5e`（与通过回归/语法检查的生产代码一致）；后续提交只更新交付入口。
 - Debian 13 / Swift 6.0.3（本次下载并真实执行）；无 Xcode、xcrun、iOS SDK/模拟器。app 原 target 18.6、测试原 target 26.1、bundle/签名/entitlements 保持不变。
 
 ## 验收状态
@@ -58,3 +58,9 @@
 3. 实机/模拟器走首次、权限空、离线、导入、体感、力量、关联、归档和VoiceOver路径，记录10–20秒目标实际耗时。然后更新本入口，再决定是否解除draft；本任务不发布或合并。
 
 现有Xcode Cloud main工作流附带TestFlight后操作，未经调用；没有安全可调用的现成非发布macOS CI。没有购买资源、改权限或签名来绕过阻塞。
+
+## 交付入口
+- Draft PR：[GodisinHisHeaven/ohMyTss #18](https://github.com/GodisinHisHeaven/ohMyTss/pull/18)
+- 工作分支：`codex/v2-mvp`，已推送 `origin/codex/v2-mvp`。
+- 实现/验证提交：`cf900d1b59f713fe582359203929dc4ca7ca1e5e`（Implement traceable v2 training load MVP）。
+- 本状态入口的后续提交仅记录远端链接，未改变已验证算法。PR 保持 draft；未合并、未发布。
