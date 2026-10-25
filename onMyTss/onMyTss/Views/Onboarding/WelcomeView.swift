@@ -25,7 +25,7 @@ struct WelcomeView: View {
                 .padding(.bottom, 20)
 
             // Title
-            Text("Body Battery")
+            Text(AppIdentity.name)
                 .font(.largeTitle)
                 .fontWeight(.bold)
 

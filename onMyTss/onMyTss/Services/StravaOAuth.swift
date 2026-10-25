@@ -1,8 +1,8 @@
 import Foundation
 
 enum StravaOAuth {
-    static let callbackScheme = "onmytss"
-    static let redirectURI = "onmytss://onmytss.com"
+    static let callbackScheme = "ohmytss"
+    static let redirectURI = "\(callbackScheme)://\(AppIdentity.serviceHost)/strava/callback"
 
     enum AuthorizationError: LocalizedError {
         case invalidCallback

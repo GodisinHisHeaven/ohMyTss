@@ -14,6 +14,7 @@ struct KeychainHelper {
     // MARK: - Keys
 
     enum Key: String {
+        // Persisted identifiers are retained across the ohMyTss branding change.
         case stravaAccessToken = "com.onmytss.strava.accessToken"
         case stravaRefreshToken = "com.onmytss.strava.refreshToken"
     }
