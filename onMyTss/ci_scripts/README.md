@@ -9,6 +9,11 @@ sends it to the existing **close door** internal testing group.
 
 ## Strava configuration
 
+The shared Strava application is named `ohMyTss`, client ID `167899`. Its
+callback domain is `coach-ota.fly.dev`; the iOS redirect URI is
+`ohmytss://coach-ota.fly.dev/strava/callback`. The backend uses HTTPS on the
+same host. Do not configure `onmytss.com` as the callback domain.
+
 Keep `STRAVA_CLIENT_ID` and `STRAVA_CLIENT_SECRET` configured as secret shared
 environment variables in Xcode Cloud. The executable `ci_post_clone.sh`, next
 to the Xcode project, validates them and creates the ignored

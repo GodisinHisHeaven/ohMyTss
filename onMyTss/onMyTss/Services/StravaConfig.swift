@@ -4,7 +4,7 @@
 //
 //  IMPORTANT: This file references your Strava API credentials via environment variables
 //  or Info.plist values injected from build settings. DO NOT commit real credentials to
-//  version control! This file is in .gitignore
+//  version control! Values belong in the ignored Config/Secrets.xcconfig file.
 //
 
 import Foundation

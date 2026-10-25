@@ -1,7 +1,10 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- App code lives in `onMyTss/onMyTss` with feature folders: `Models` (SwiftData entities and DTOs), `Services` (HealthKit, Strava, BodyBattery computation engines), `Utilities` (helpers), `ViewModels`, and `Views` (subfolders for Today, History, Settings, Onboarding, Shared components). Assets are in `Assets.xcassets`. Strava credentials use `Services/StravaConfig.swift.template` (copy to `StravaConfig.swift`, keep secrets local).
+- Product spelling is `ohMyTss`; use `ohmytss` in new machine identifiers. Preserve the existing `onMyTss` Xcode project/scheme, App Store bundle ID, and Keychain keys for compatibility.
+- `backend` is the private `ohmytss-backend` submodule, formerly CoachOTA. Its repository owns deployment, cron, secrets, and migrations; do not copy its source into this public repository or duplicate cron. Read `backend/AGENTS.md` before backend edits.
+- Only morning status SMS and consent replies are active in the backend. Keep chat, plans, other alerts, and signup paused. Preserve data, local morning windows, opt-in, and idempotency.
+- App code lives in `onMyTss/onMyTss` with feature folders: `Models` (SwiftData entities and DTOs), `Services` (HealthKit, Strava, BodyBattery computation engines), `Utilities` (helpers), `ViewModels`, and `Views` (subfolders for Today, History, Settings, Onboarding, Shared components). Assets are in `Assets.xcassets`. Put local Strava credentials in the ignored `onMyTss/Config/Secrets.xcconfig`; `StravaConfig.swift` is the tracked loader.
 - Tests sit in `onMyTss/onMyTssTests` (unit/logic) and `onMyTss/onMyTssUITests` (launch/flow). The Xcode project is `onMyTss/onMyTss.xcodeproj`.
 
 ## Build, Test, and Development Commands
@@ -25,5 +28,6 @@
 - PRs should include: what changed and why, testing done (simulator device/OS, commands), any screenshots for UI tweaks, and links to issues/notes. Call out configuration steps (e.g., Strava keys) or migration needs.
 
 ## Security & Configuration Tips
-- Never commit `StravaConfig.swift` or real credentials; keep them in local untracked files. Confirm `.gitignore` is honored before pushing.
+- `StravaConfig.swift` is a tracked loader; never put credentials in it. Keep values in the ignored `onMyTss/Config/Secrets.xcconfig` or Xcode Cloud environment variables.
+- Both Strava components use callback domain `coach-ota.fly.dev`; iOS uses `ohmytss://coach-ota.fly.dev/strava/callback`. See README for the complete identity contract.
 - Treat HealthKit data carefully; avoid logging sensitive values and sanitize debug prints before release builds.
