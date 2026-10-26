@@ -36,7 +36,7 @@ struct V2ActivityDetailView: View {
     }
 
     var body: some View {
-        List {
+        SwissList {
             if workout.isSuppressed || workout.isTombstoned {
                 Section("Archived or linked activity") {
                     Text("This record no longer contributes separately.")
@@ -230,7 +230,7 @@ private struct LinkSessionView: View {
 
     var body: some View {
         NavigationStack {
-            List {
+            SwissList {
                 Text("Select the imported record for this same session. Dates and durations help you check the match.")
                     .font(.caption).foregroundStyle(.secondary)
                 let candidates = workouts.filter { $0.source != "manual" && !$0.isSuppressed && !$0.isTombstoned }

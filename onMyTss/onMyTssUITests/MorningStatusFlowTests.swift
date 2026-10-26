@@ -2,7 +2,81 @@ import XCTest
 
 final class MorningStatusFlowTests: XCTestCase {
     @MainActor
-    func testMorningAccountStaysNativeThroughPrivacySettingsAndSignOut() {
+    func testMorningPhoneEntryAndPrivacyWithoutSendingSMS() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--v2-ui-tests", "--morning-status-ui-fixture"]
+        app.launch()
+        XCTAssertTrue(app.tabBars.buttons["Settings"].waitForExistence(timeout: 10))
+        app.tabBars.buttons["Settings"].tap()
+        let entry = app.buttons["settings.morningStatus"]
+        reach(entry, app: app)
+        entry.tap()
+        let phone = app.textFields["morning.phone"]
+        XCTAssertTrue(phone.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.textFields["morning.email"].exists)
+        XCTAssertEqual(app.secureTextFields.count, 0)
+        let send = app.buttons["morning.sendCode"]
+        XCTAssertFalse(send.isEnabled)
+        phone.tap()
+        phone.typeText("20255")
+        XCTAssertFalse(send.isEnabled)
+        phone.typeText("50100")
+        XCTAssertTrue(send.isEnabled)
+        app.buttons["Done"].tap()
+        XCTAssertFalse(app.keyboards.firstMatch.exists)
+        attach(app, "Morning status phone entry — no SMS requested")
+        let privacy = app.buttons["morning.privacy"]
+        reach(privacy, app: app)
+        privacy.tap()
+        XCTAssertTrue(app.navigationBars["Data and Privacy"].waitForExistence(timeout: 3))
+        XCTAssertEqual(app.state, .runningForeground)
+    }
+
+    // The no-network fixture exists only in Debug. Never send a real SMS if
+    // someone runs all UI tests against a normal Release app.
+    #if DEBUG
+    @MainActor
+    func testNewPhoneUserEnablesSummaryWithoutAccountForm() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--v2-ui-tests", "--v2-rpe-demo", "--morning-status-ui-fixture", "--morning-new-user-fixture", "-AppleInterfaceStyle", "Light"]
+        app.launch()
+        XCTAssertTrue(app.tabBars.buttons["Settings"].waitForExistence(timeout: 10))
+        app.tabBars.buttons["Settings"].tap()
+        let entry = app.buttons["settings.morningStatus"]
+        reach(entry, app: app)
+        entry.tap()
+        let phone = app.textFields["morning.phone"]
+        XCTAssertTrue(phone.waitForExistence(timeout: 5))
+        phone.tap(); phone.typeText("2025550100")
+        app.buttons["morning.sendCode"].tap()
+        let code = app.textFields["morning.code"]
+        XCTAssertTrue(code.waitForExistence(timeout: 5))
+        code.tap(); code.typeText("123456")
+        app.buttons["morning.verify"].tap()
+        let enable = app.buttons["morning.enable"]
+        XCTAssertTrue(enable.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["morning.subscription"].label.contains("Not subscribed"))
+        XCTAssertFalse(app.buttons["morning.syncSummary"].exists)
+        enable.tap()
+        attach(app, "Morning texts — explicit summary consent")
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(enable.exists)
+        enable.tap()
+        app.buttons.matching(NSPredicate(format: "label == %@ AND identifier != %@", "Enable Morning Texts", "morning.enable")).firstMatch.tap()
+        let sync = app.buttons["morning.syncSummary"]
+        reach(sync, app: app)
+        XCTAssertTrue(sync.isEnabled)
+        sync.tap()
+        XCTAssertEqual(app.secureTextFields.count, 0)
+        XCTAssertTrue(app.staticTexts["Readiness"].exists)
+        attach(app, "Morning texts — new user app summary")
+        XCTAssertEqual(app.state, .runningForeground)
+    }
+
+    @MainActor
+    func testMorningPhoneStaysNativeThroughPrivacySettingsAndDisconnect() {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchArguments = ["--v2-ui-tests", "--morning-status-ui-fixture"]
@@ -13,17 +87,31 @@ final class MorningStatusFlowTests: XCTestCase {
         reach(entry, app: app)
         entry.tap()
         XCTAssertTrue(app.navigationBars["Morning Status"].waitForExistence(timeout: 5))
-        let email = app.textFields["morning.email"]
-        email.tap()
-        email.typeText("athlete@example.invalid")
-        let password = app.secureTextFields["morning.password"]
-        password.tap()
-        password.typeText("fixture-password")
-        app.buttons["morning.signIn"].tap()
-        let name = app.staticTexts["morning.name"]
-        XCTAssertTrue(name.waitForExistence(timeout: 5))
-        XCTAssertTrue(name.label.contains("Sample Athlete"))
-        attach(app, "Native morning status with synthetic account")
+        XCTAssertFalse(app.textFields["morning.email"].exists)
+        XCTAssertEqual(app.secureTextFields.count, 0)
+        attach(app, "Morning status phone entry without an account form")
+        let phone = app.textFields["morning.phone"]
+        phone.tap()
+        phone.typeText("2025550100")
+        app.buttons["morning.sendCode"].tap()
+        let code = app.textFields["morning.code"]
+        XCTAssertTrue(code.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["morning.resend"].isEnabled)
+        attach(app, "Morning status one-time verification code")
+        code.tap()
+        code.typeText("000000")
+        app.buttons["morning.verify"].tap()
+        let error = app.staticTexts["The code is incorrect or expired. Check it or request a new code."]
+        XCTAssertTrue(error.waitForExistence(timeout: 5))
+        XCTAssertTrue(error.isHittable)
+        XCTAssertFalse(app.keyboards.firstMatch.exists)
+        code.tap()
+        code.typeText("123456")
+        app.buttons["morning.verify"].tap()
+        let connected = app.staticTexts["morning.connectedPhone"]
+        XCTAssertTrue(connected.waitForExistence(timeout: 5))
+        XCTAssertTrue(connected.label.contains("0100"))
+        attach(app, "Native morning status with verified synthetic phone")
 
         let timezone = app.buttons["morning.timezone"]
         reach(timezone, app: app)
@@ -62,9 +150,11 @@ final class MorningStatusFlowTests: XCTestCase {
         let signOut = app.buttons["morning.signOut"]
         reach(signOut, app: app)
         signOut.tap()
-        XCTAssertTrue(app.textFields["morning.email"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.textFields["morning.phone"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.textFields["morning.code"].exists)
         XCTAssertEqual(app.state, .runningForeground)
     }
+    #endif
 
     @MainActor
     private func reach(_ element: XCUIElement, app: XCUIApplication, towardTop: Bool = false) {

@@ -47,7 +47,7 @@ struct WeekTrendView: View {
                 }
                 .frame(maxWidth: .infinity)
                 .frame(height: 100)
-                .background(Color(uiColor: .secondarySystemBackground))
+                .background(SwissStyle.surface)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
             } else {
                 // Sparkline chart
@@ -90,11 +90,7 @@ struct WeekTrendView: View {
             }
         }
         .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color(uiColor: .systemBackground))
-                .shadow(color: .black.opacity(0.1), radius: 10, x: 0, y: 5)
-        )
+        .swissPanel()
     }
 
     // MARK: - Helper Functions
@@ -123,9 +119,9 @@ struct WeekTrendView: View {
 
     private func changeColor(_ change: Int) -> Color {
         if change > 0 {
-            return .green
+            return SwissStyle.positive
         } else if change < 0 {
-            return .red
+            return SwissStyle.critical
         } else {
             return .gray
         }
@@ -181,15 +177,15 @@ struct BarView: View {
 
         switch readinessLevel {
         case .veryLow:
-            return Color(hex: "#E53E3E")
+            return SwissStyle.critical
         case .low:
-            return Color(hex: "#DD6B20")
+            return SwissStyle.caution
         case .medium:
-            return Color(hex: "#D69E2E")
+            return SwissStyle.caution
         case .good:
-            return Color(hex: "#38A169")
+            return SwissStyle.positive
         case .excellent:
-            return Color(hex: "#3182CE")
+            return SwissStyle.accent
         }
     }
 }

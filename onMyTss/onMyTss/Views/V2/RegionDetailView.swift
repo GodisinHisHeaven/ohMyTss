@@ -24,7 +24,7 @@ struct RegionDetailView: View {
     }
 
     var body: some View {
-        List {
+        SwissList {
             Section("Estimated burden · last 7 days") {
                 Text("These are activity-specific proxies, not measured muscle force or damage. No left/right difference is inferred.")
                     .font(.caption).foregroundStyle(.secondary)

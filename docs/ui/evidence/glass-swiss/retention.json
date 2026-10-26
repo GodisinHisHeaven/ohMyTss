@@ -1,0 +1,27 @@
+{
+  "integrity": "ok",
+  "ZWORKOUT": {
+    "before": 1008,
+    "after": 1008,
+    "missing": 0,
+    "changed": 0
+  },
+  "ZLOADESTIMATERECORD": {
+    "before": 1000,
+    "after": 2008,
+    "missing": 0,
+    "changed": 0
+  },
+  "ZSTRENGTHSETRECORD": {
+    "before": 1,
+    "after": 1,
+    "missing": 0,
+    "changed": 0
+  },
+  "ZMUSCLERPERECORD": {
+    "before": 7,
+    "after": 7,
+    "missing": 0,
+    "changed": 1
+  }
+}

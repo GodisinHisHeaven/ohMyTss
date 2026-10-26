@@ -6,6 +6,7 @@ struct BodyMapView: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.swissReducedEffects) private var reducedEffects
     @State private var back = false
     @State private var selectedZone: String?
 
@@ -23,7 +24,7 @@ struct BodyMapView: View {
                 .frame(height: 350)
                 .background {
                     RoundedRectangle(cornerRadius: 24)
-                        .fill(Color(uiColor: .tertiarySystemGroupedBackground))
+                        .fill(SwissStyle.canvas)
                         .overlay {
                             RoundedRectangle(cornerRadius: 24)
                                 .strokeBorder(Color.primary.opacity(0.04), lineWidth: 1)
@@ -66,7 +67,7 @@ struct BodyMapView: View {
     }
 
     private var neutral: Color {
-        colorScheme == .dark ? Color(red: 0.36, green: 0.46, blue: 0.49) : Color(red: 0.68, green: 0.77, blue: 0.79)
+        colorScheme == .dark ? Color(white: 0.39) : Color(white: 0.76)
     }
 
     @ViewBuilder private var legend: some View {
@@ -87,11 +88,8 @@ struct BodyMapView: View {
             let size = CGSize(width: BodyMapArtwork.size.width * scale, height: BodyMapArtwork.size.height * scale)
             let origin = CGPoint(x: (geometry.size.width - size.width) / 2, y: 8)
             ZStack(alignment: .topLeading) {
-                RadialGradient(colors: [Color.teal.opacity(0.05), .clear],
-                               center: .center, startRadius: 20, endRadius: 190)
-                    .allowsHitTesting(false)
                 Text(back ? "BACK" : "FRONT")
-                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .font(.system(size: 10, weight: .semibold, design: .default))
                     .tracking(1.6).foregroundStyle(.tertiary)
                     .padding(16)
                     .accessibilityHidden(true)
@@ -129,7 +127,7 @@ struct BodyMapView: View {
 
     private func sideBadge(_ label: String) -> some View {
         Text(label)
-            .font(.system(size: 10, weight: .medium, design: .rounded))
+            .font(.system(size: 10, weight: .medium, design: .default))
             .foregroundStyle(.secondary)
             .frame(width: 23, height: 23)
             .background(Circle().strokeBorder(Color.secondary.opacity(0.18), lineWidth: 1))
@@ -141,7 +139,7 @@ struct BodyMapView: View {
         let reading = summary.reading(zone.region, side: zone.side)
         let tint = reading?.grade.color ?? neutral
         let outline = reading == nil
-            ? (colorScheme == .dark ? Color(red: 0.52, green: 0.65, blue: 0.68) : Color(red: 0.43, green: 0.56, blue: 0.59))
+            ? (colorScheme == .dark ? Color(white: 0.60) : Color(white: 0.50))
             : tint
         let selected = selectedZone == zone.id
         let shape = BodyMapPath(path: zone.outline, sourceBounds: zone.bounds)
@@ -152,7 +150,7 @@ struct BodyMapView: View {
             onSelect(zone.region, zone.side)
         } label: {
             shape
-                .fill(LinearGradient(colors: [tint.opacity(0.68), tint.opacity(0.95)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                .fill(tint.opacity(reading == nil ? 0.60 : 0.76))
                 .overlay {
                     shape.stroke(selected ? Color.primary.opacity(0.85) : outline,
                                  style: StrokeStyle(lineWidth: selected ? 2 : 1, lineJoin: .round))
@@ -165,7 +163,7 @@ struct BodyMapView: View {
                 .overlay(alignment: .topLeading) {
                     if let reading {
                         Text("\(reading.rpe)")
-                            .font(.system(size: 10, weight: .bold, design: .rounded))
+                            .font(.system(size: 10, weight: .bold, design: .default))
                             .foregroundStyle(Color.primary)
                             .frame(width: 19, height: 19)
                             .background(Color(uiColor: .systemBackground).opacity(0.94), in: Circle())
@@ -177,7 +175,7 @@ struct BodyMapView: View {
                 .contentShape(shape)
         }
         .frame(width: width, height: height)
-        .buttonStyle(BodyMapPressStyle(reduceMotion: reduceMotion))
+        .buttonStyle(BodyMapPressStyle(reduceMotion: reduceMotion || reducedEffects))
         .accessibilityLabel("\(zone.region.label), \(zone.side.label.lowercased())")
         .accessibilityValue(readingLabel(reading))
         .accessibilityHint("Adjust this muscle's RPE.")

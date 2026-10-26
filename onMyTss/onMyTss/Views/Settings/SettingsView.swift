@@ -10,6 +10,7 @@ import SwiftData
 
 /// Settings screen for managing user preferences and app configuration
 struct SettingsView: View {
+    private let dataStore: DataStore
     @Environment(\.modelContext) private var modelContext
     @State private var cardioHR = ""
     @State private var cardioMessage: String?
@@ -19,12 +20,13 @@ struct SettingsView: View {
     @State private var showingFTPEditor = false
 
     init(dataStore: DataStore, engine: any BodyBatteryEngineProtocol) {
+        self.dataStore = dataStore
         _viewModel = State(initialValue: SettingsViewModel(dataStore: dataStore, engine: engine))
     }
 
     var body: some View {
         NavigationStack {
-            Form {
+            SwissForm {
                 Section {
                     TextField("Confirmed maximum heart rate (bpm)", text: $cardioHR)
                         .keyboardType(.numberPad)
@@ -34,6 +36,7 @@ struct SettingsView: View {
                         Task { await saveCardioSettings() }
                     }
                     .disabled(savingCardio)
+                    .swissAction()
                     .accessibilityIdentifier("settings.saveCardio")
                     if let cardioMessage { Text(cardioMessage).font(.caption) }
                 } header: { Text("Cardio Load") } footer: {
@@ -73,7 +76,7 @@ struct SettingsView: View {
                             Label(viewModel.stravaAthleteDisplay, systemImage: "person.fill")
                             Spacer()
                             Image(systemName: "checkmark.circle.fill")
-                                .foregroundStyle(.green)
+                                .foregroundStyle(SwissStyle.positive)
                         }
 
                         if let stravaFTP = viewModel.stravaFTPDisplay {
@@ -178,7 +181,7 @@ struct SettingsView: View {
 
                 Section {
                     NavigationLink {
-                        MorningStatusView()
+                        MorningStatusView(dataStore: dataStore)
                     } label: {
                         Label("Morning Status", systemImage: "message")
                     }
@@ -186,7 +189,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Morning Status SMS")
                 } footer: {
-                    Text("Manage your existing morning status account here. View today's status, set the delivery time zone and turn off texts without leaving the app.")
+                    Text("Connect with your phone number to view morning status, set the delivery time zone and manage your texts here.")
                 }
 
                 // App Information
@@ -274,7 +277,7 @@ struct SettingsView: View {
         VStack {
             HStack {
                 Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
+                    .foregroundStyle(SwissStyle.positive)
 
                 Text(message)
                     .font(.subheadline)
@@ -283,9 +286,7 @@ struct SettingsView: View {
                 Spacer()
             }
             .padding()
-            .background(Color(uiColor: .secondarySystemBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-            .shadow(color: .black.opacity(0.1), radius: 10, y: 5)
+            .swissGlass()
             .padding()
 
             Spacer()
@@ -297,7 +298,7 @@ struct SettingsView: View {
         VStack {
             HStack {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(SwissStyle.caution)
 
                 Text(message)
                     .font(.subheadline)
@@ -311,9 +312,7 @@ struct SettingsView: View {
                 .font(.subheadline.weight(.medium))
             }
             .padding()
-            .background(Color(uiColor: .secondarySystemBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-            .shadow(color: .black.opacity(0.1), radius: 10, y: 5)
+            .swissGlass()
             .padding()
 
             Spacer()
@@ -331,7 +330,7 @@ struct FTPEditorSheet: View {
 
     var body: some View {
         NavigationStack {
-            Form {
+            SwissForm {
                 Section {
                     TextField("FTP (Watts)", text: $viewModel.ftpInput)
                         .keyboardType(.numberPad)

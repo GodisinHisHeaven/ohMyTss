@@ -20,85 +20,45 @@ struct HealthPermissionView: View {
     }
 
     var body: some View {
-        VStack(spacing: 30) {
-            Spacer()
-
-            // Icon
-            Image(systemName: "heart.text.square.fill")
-                .font(.system(size: 70))
-                .foregroundColor(.red)
-                .padding(.bottom, 10)
-
-            // Title
-            Text("Health Data Access")
-                .font(.title)
-                .fontWeight(.bold)
-
-            // Description
-            Text("Body Battery needs access to your workout data to calculate your daily readiness score.")
-                .font(.body)
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal)
-
-            Spacer()
-
-            // What we access
-            VStack(alignment: .leading, spacing: 15) {
-                Text("We'll access:")
-                    .font(.headline)
-                    .padding(.bottom, 5)
-
-                HealthDataRow(icon: "figure.run", text: "Workouts")
-                HealthDataRow(icon: "bolt.fill", text: "Cycling Power")
-                HealthDataRow(icon: "heart.fill", text: "Heart Rate")
-                HealthDataRow(icon: "waveform.path.ecg", text: "Heart Rate Variability")
-            }
-            .padding()
-            .background(Color.secondary.opacity(0.1))
-            .cornerRadius(12)
-            .padding(.horizontal)
-
-            // Privacy note
-            Text("Your data never leaves your device and is not shared with anyone.")
-                .font(.caption)
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal)
-
-            Spacer()
-
-            // Error message
-            if let error = error {
-                Text(error.localizedDescription)
-                    .font(.caption)
-                    .foregroundColor(.red)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal)
-            }
-
-            // Continue Button
-            Button(action: requestPermission) {
-                if isRequesting {
-                    ProgressView()
-                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                } else {
-                    Text("Continue")
-                        .font(.headline)
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding()
+        ScrollView {
+            VStack(alignment: .leading, spacing: 28) {
+                SwissSectionHeading(number: "02", title: "Apple Health")
+                Divider()
+                Text("Health Data Access")
+                    .font(.largeTitle.weight(.semibold)).tracking(-0.8)
+                Text("Use your workouts and recovery measurements to build your daily readiness estimate.")
+                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 20) {
+                    HealthDataRow(icon: "figure.run", text: "Workouts")
+                    Divider()
+                    HealthDataRow(icon: "bolt", text: "Cycling Power")
+                    Divider()
+                    HealthDataRow(icon: "heart", text: "Heart Rate")
+                    Divider()
+                    HealthDataRow(icon: "waveform.path.ecg", text: "Heart Rate Variability")
+                }
+                .padding(20).swissPanel()
+                Text("Raw Apple Health data stays on this device. Optional morning texts share a short summary only after you enable them.")
+                    .font(.footnote).foregroundStyle(.secondary)
+                if let error {
+                    Text(error.localizedDescription).font(.footnote).foregroundStyle(SwissStyle.critical)
                 }
             }
-            .background(Color.blue)
-            .cornerRadius(12)
-            .disabled(isRequesting)
-            .padding(.horizontal)
-            .padding(.bottom, 30)
+            .frame(maxWidth: 560, alignment: .leading)
+            .padding(24).frame(maxWidth: .infinity)
         }
-        .padding()
+        .swissCanvas()
+        .safeAreaInset(edge: .bottom) {
+            Button(action: requestPermission) {
+                HStack {
+                    if isRequesting { ProgressView() }
+                    Text("Continue").font(.headline)
+                }
+                .frame(maxWidth: .infinity, minHeight: 48)
+            }
+            .swissAction(prominent: true).disabled(isRequesting)
+            .padding(24).background(SwissStyle.canvas)
+        }
     }
 
     private func requestPermission() {
@@ -129,7 +89,7 @@ struct HealthDataRow: View {
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: icon)
-                .foregroundColor(.blue)
+                .foregroundStyle(SwissStyle.accent)
                 .frame(width: 24)
 
             Text(text)

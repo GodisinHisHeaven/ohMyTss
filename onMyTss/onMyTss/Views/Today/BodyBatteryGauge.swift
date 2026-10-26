@@ -7,8 +7,9 @@
 
 import SwiftUI
 
-/// Circular gauge displaying Body Battery score (0-100) with color gradient
+/// Circular gauge displaying Body Battery score (0-100) with a semantic accent
 struct BodyBatteryGauge: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let score: Int
     let readinessLevel: ReadinessLevel
 
@@ -18,20 +19,20 @@ struct BodyBatteryGauge: View {
             Circle()
                 .stroke(Color.gray.opacity(0.2), lineWidth: 20)
 
-            // Progress arc with gradient
+            // The label carries the meaning as well as color.
             Circle()
                 .trim(from: 0, to: CGFloat(score) / 100.0)
                 .stroke(
-                    gradient,
+                    scoreColor,
                     style: StrokeStyle(lineWidth: 20, lineCap: .round)
                 )
                 .rotationEffect(.degrees(-90))
-                .animation(.easeInOut(duration: 0.8), value: score)
+                .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: score)
 
             // Score text and label
             VStack(spacing: 4) {
                 Text("\(score)")
-                    .font(.system(size: 64, weight: .bold, design: .rounded))
+                    .font(.system(size: 64, weight: .bold, design: .default))
                     .foregroundStyle(scoreColor)
                     .contentTransition(.numericText())
 
@@ -45,35 +46,19 @@ struct BodyBatteryGauge: View {
 
     // MARK: - Computed Properties
 
-    /// Color gradient from red (low) to blue (high)
-    private var gradient: AngularGradient {
-        AngularGradient(
-            colors: [
-                Color(hex: "#E53E3E"),  // Red (0-20)
-                Color(hex: "#DD6B20"),  // Orange (20-40)
-                Color(hex: "#D69E2E"),  // Yellow (40-60)
-                Color(hex: "#38A169"),  // Green (60-80)
-                Color(hex: "#3182CE")   // Blue (80-100)
-            ],
-            center: .center,
-            startAngle: .degrees(-90),
-            endAngle: .degrees(270)
-        )
-    }
-
     /// Color of the score number based on readiness level
     private var scoreColor: Color {
         switch readinessLevel {
         case .veryLow:
-            return Color(hex: "#E53E3E")
+            return SwissStyle.critical
         case .low:
-            return Color(hex: "#DD6B20")
+            return SwissStyle.caution
         case .medium:
-            return Color(hex: "#D69E2E")
+            return SwissStyle.caution
         case .good:
-            return Color(hex: "#38A169")
+            return SwissStyle.positive
         case .excellent:
-            return Color(hex: "#3182CE")
+            return SwissStyle.accent
         }
     }
 }

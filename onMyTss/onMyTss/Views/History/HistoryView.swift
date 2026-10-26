@@ -21,7 +21,7 @@ struct HistoryView: View {
                     HistoryContent(days: days, now: max(timeline.date, appearedAt))
                 }
             }
-            .background(Color(uiColor: .systemGroupedBackground))
+            .background(SwissStyle.canvas)
             .navigationTitle("History")
             .onAppear { appearedAt = Date() }
         }
@@ -46,8 +46,8 @@ private struct HistoryContent: View {
     }
 
     var body: some View {
-        List {
-            Section("Trends") {
+        SwissList {
+            Section {
                 VStack(alignment: .leading, spacing: 18) {
                     Picker("Trend", selection: $trend) {
                         ForEach(TrendKind.allCases, id: \.self) { Text($0.rawValue).tag($0) }
@@ -61,8 +61,10 @@ private struct HistoryContent: View {
                     }
                 }
                 .padding(.vertical, 12)
+            } header: {
+                SwissSectionHeading(number: "01", title: "Trends")
             }
-            Section("Recent workouts") {
+            Section {
                 if workouts.isEmpty {
                     Text("No workouts in this period").font(.subheadline).foregroundStyle(.secondary)
                 }
@@ -72,9 +74,10 @@ private struct HistoryContent: View {
                     }
                     .accessibilityIdentifier("history.workout.\(workout.id)")
                 }
+            } header: {
+                SwissSectionHeading(number: "02", title: "Recent workouts")
             }
         }
-        .listSectionSpacing(20)
     }
 
     @ViewBuilder private var readinessChart: some View {
@@ -84,9 +87,9 @@ private struct HistoryContent: View {
         } else {
             Chart(readings, id: \.date) { day in
                 LineMark(x: .value("Date", day.date), y: .value("Readiness", day.bodyBatteryScore))
-                    .foregroundStyle(.teal).lineStyle(StrokeStyle(lineWidth: 2.5))
+                    .foregroundStyle(SwissStyle.accent).lineStyle(StrokeStyle(lineWidth: 2.5))
                 PointMark(x: .value("Date", day.date), y: .value("Readiness", day.bodyBatteryScore))
-                    .foregroundStyle(.teal).symbolSize(20)
+                    .foregroundStyle(SwissStyle.accent).symbolSize(20)
             }
             .chartYScale(domain: 0...100)
             .chartXAxis { AxisMarks(values: .automatic(desiredCount: 4)) { _ in AxisValueLabel(format: .dateTime.month(.abbreviated).day()) } }
@@ -106,9 +109,9 @@ private struct HistoryContent: View {
                 LineMark(x: .value("Date", day.date), y: .value("Load", day.ctl), series: .value("Trend", "Fitness"))
                     .foregroundStyle(by: .value("Trend", "Fitness")).lineStyle(StrokeStyle(lineWidth: 2))
                 LineMark(x: .value("Date", day.date), y: .value("Load", day.atl), series: .value("Trend", "Fatigue"))
-                    .foregroundStyle(by: .value("Trend", "Fatigue")).lineStyle(StrokeStyle(lineWidth: 2))
+                    .foregroundStyle(by: .value("Trend", "Fatigue")).lineStyle(StrokeStyle(lineWidth: 2, dash: [4, 4]))
             }
-            .chartForegroundStyleScale(["Fitness": Color.blue, "Fatigue": Color.orange])
+            .chartForegroundStyleScale(["Fitness": SwissStyle.accent, "Fatigue": SwissStyle.caution])
             .chartXAxis { AxisMarks(values: .automatic(desiredCount: 4)) { _ in AxisValueLabel(format: .dateTime.month(.abbreviated).day()) } }
             .chartLegend(position: .bottom, alignment: .leading)
             .frame(height: 190)

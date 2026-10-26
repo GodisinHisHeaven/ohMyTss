@@ -33,7 +33,7 @@ struct ObservationEditor: View {
 
     var body: some View {
         NavigationStack {
-            Form {
+            SwissForm {
                 Section("Your report") {
                     Picker("Region", selection: $region) {
                         ForEach(Region.allCases) { Text($0.label).tag($0) }
@@ -136,7 +136,7 @@ struct ObservationHistoryView: View {
     @State private var adding = false
 
     var body: some View {
-        List {
+        SwissList {
             if observations.isEmpty {
                 ContentUnavailableView("No reports yet", systemImage: "figure.stand", description: Text("Unreported is different from no discomfort. Add a report whenever useful."))
             }
