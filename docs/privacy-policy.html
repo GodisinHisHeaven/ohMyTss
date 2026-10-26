@@ -138,7 +138,7 @@
 
         <h3>Optional Strava and Morning Status SMS</h3>
         <p>If you connect Strava, the iOS app reads your authorized activity and athlete profile data and stores access credentials in the iOS Keychain. OAuth and API requests go to Strava.</p>
-        <p>Morning Status SMS is an optional web service for existing accounts. It uses account details, an opted-in phone number, and training/wellness data from Intervals.icu and optional Strava connections. The backend stores this data in Supabase and uses Twilio to deliver messages. Its <a href="https://coach-ota.fly.dev/privacy">service privacy notice</a> describes that processing. Opening its account link from iOS does not upload Apple Health data. Reply STOP to stop SMS. Coaching chat, plans, other alerts, and signup are currently paused.</p>
+        <p>Morning Status SMS is an optional service for existing accounts, managed in the app under Settings → Morning Status. It uses account details, an opted-in phone number, and training/wellness data from Intervals.icu and optional Strava connections. The backend stores this data in Supabase and uses Twilio to deliver messages. Sign-in sends your existing account email and password over HTTPS; the app saves only the signed session in this device's Keychain. Status, time zone settings, unsubscribe controls and privacy information are native app screens. The <a href="https://coach-ota.fly.dev/privacy">service privacy notice</a> also describes backend processing. This feature does not upload Apple Health data. Reply STOP to stop SMS or START to resubscribe. Signing out removes this device's session without changing SMS consent. Coaching chat, plans, other alerts, and signup are currently paused.</p>
         <p>We do not collect payment information or advertising identifiers.</p>
 
         <h2>How We Use Your Data</h2>
@@ -215,7 +215,7 @@
         <p>ohMyTss does not use third-party analytics or advertising. Optional Strava and morning status services process the data described above.</p>
 
         <h2>International Users</h2>
-        <p>iOS HealthKit data stays on your device. The optional web service and its providers process account, training, and SMS data on their servers.</p>
+        <p>iOS HealthKit data stays on your device. The optional morning status service and its providers process account, training, and SMS data on their servers.</p>
 
         <h2>Your Consent</h2>
         <p>By using ohMyTss and granting HealthKit permissions, you consent to the collection and use of your health data as described in this Privacy Policy.</p>

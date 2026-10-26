@@ -8,6 +8,14 @@ morning status and consent replies; chat, training plans, activity summaries,
 other reminders, and signup are paused. Current-day wellness data, the local
 06:00–10:30 window, and daily idempotency still govern delivery.
 
+Open **Settings → Morning Status** for the native account screen. Sign in with
+the existing morning status account to view today's wellness and SMS state,
+change the delivery time zone, or unsubscribe. These controls and the feature's
+privacy information stay inside the app. The password is not saved; the app
+session is stored in the device Keychain. Signing out does not unsubscribe.
+Resubscription continues through the existing SMS `START` consent flow.
+This feature does not upload Apple Health data or send a text when refreshed.
+
 ## Repository layout
 
 - `onMyTss/`: iOS app, Xcode project, tests, and Xcode Cloud scripts.
