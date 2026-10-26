@@ -1,4 +1,6 @@
-# Apple 平台验证入口（当前 blocked，未声称通过）
+# Apple 平台验证入口
+
+2026-10-25 本地 Xcode 运行结果见 [验证报告](evidence/LOCAL_XCODE_2026-10-25.md)。以下是复现步骤与完整人工检查清单；通过范围以报告为准。
 
 Linux Swift Package 测试只验证真实共享领域代码，不覆盖 SwiftUI、HealthKit、SwiftData 或 iOS 编译。本文件的命令需要 macOS、合适的 Xcode/iOS SDK 和模拟器；不要降低 deployment target、修改签名/权限来绕过条件。现有 Xcode Cloud 会发布到 TestFlight，本任务不调用它。
 
@@ -41,7 +43,7 @@ iOS 升级检查：在专门测试模拟器安装基线 build，用合成活动�
 
 ## 实际交互证据表
 
-逐项记录设备/系统、build commit、结果与截图/录屏路径。所有条目当前都需要 Apple 环境执行；下表是检查步骤，不是已通过报告。
+逐项记录设备/系统、build commit、结果与截图/录屏路径。下表是完整检查步骤，不是全部已通过的报告；已执行项见上述验证报告。
 
 |流程|操作与预期|
 |---|---|

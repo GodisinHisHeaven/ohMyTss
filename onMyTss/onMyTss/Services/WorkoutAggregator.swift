@@ -233,7 +233,7 @@ final class WorkoutAggregator {
         let after = Date(timeIntervalSince1970: Double(Int(startDate.timeIntervalSince1970)))
         let before = Date(timeIntervalSince1970: Double(Int(endDate.timeIntervalSince1970)))
         let known = try dataStore.fetchWorkouts(from: startDate, to: endDate, includeSupressed: true).filter {
-            $0.source == WorkoutSource.strava.rawValue && !$0.isDeleted &&
+            $0.source == WorkoutSource.strava.rawValue && !$0.isTombstoned &&
             $0.startTime > after && $0.startTime < before &&
             $0.stravaId.map { !returnedIDs.contains($0) } == true
         }

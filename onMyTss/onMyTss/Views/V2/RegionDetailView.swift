@@ -17,7 +17,7 @@ struct RegionDetailView: View {
 
     private var contributions: [Contribution] {
         let cutoff = Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? Date()
-        return workouts.filter { !$0.isSuppressed && !$0.isDeleted && $0.startTime >= cutoff }.flatMap { workout -> [Contribution] in
+        return workouts.filter { !$0.isSuppressed && !$0.isTombstoned && $0.startTime >= cutoff }.flatMap { workout -> [Contribution] in
             guard let estimate = estimates.first(where: { $0.sessionID == workout.id })?.value else { return [] }
             return estimate.regions.filter { $0.region == region }.map { Contribution(workout: workout, estimate: $0) }
         }

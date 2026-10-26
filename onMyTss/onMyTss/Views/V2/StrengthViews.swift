@@ -17,7 +17,7 @@ struct StrengthSessionChooser: View {
                 Section("Supplement an existing activity") {
                     Text("Choose the original session to add sets without adding another cardio contribution.")
                         .font(.caption).foregroundStyle(.secondary)
-                    let available = workouts.filter { !$0.isSuppressed && !$0.isDeleted }
+                    let available = workouts.filter { !$0.isSuppressed && !$0.isTombstoned }
                     if available.isEmpty { Text("No existing sessions").foregroundStyle(.secondary) }
                     ForEach(available) { workout in
                         NavigationLink { V2ActivityDetailView(workout: workout) } label: { V2WorkoutRow(workout: workout) }

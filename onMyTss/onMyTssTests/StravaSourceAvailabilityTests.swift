@@ -64,7 +64,7 @@ final class StravaSourceAvailabilityTests: XCTestCase {
         _ = try await aggregator.fetchWorkouts(from: start, to: start.addingTimeInterval(3600))
         XCTAssertEqual(client.detailRequests, [101])
         XCTAssertTrue(aggregator.latestDeletedStravaIDs.isEmpty)
-        XCTAssertFalse(try XCTUnwrap(store.fetchWorkout(byId: "101")).isDeleted)
+        XCTAssertFalse(try XCTUnwrap(store.fetchWorkout(byId: "101")).isTombstoned)
     }
 
     private func source(id: Int, at date: Date) -> Workout {

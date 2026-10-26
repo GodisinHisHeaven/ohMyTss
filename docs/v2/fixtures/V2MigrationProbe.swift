@@ -20,7 +20,7 @@ struct V2MigrationProbe {
         try check(workout.duration == 3600 && workout.distance == 25_000, "Legacy measured fields")
         try check(workout.averagePower == 180 && workout.normalizedPower == 190, "Legacy power fields")
         try check(workout.featuresData == nil && workout.userTags.isEmpty, "Missing v2 input remains missing")
-        try check(!workout.isDeleted && workout.linkedSessionID == nil, "Default v2 session state")
+        try check(!workout.isTombstoned && workout.linkedSessionID == nil, "Default v2 session state")
         let days = try context.fetch(FetchDescriptor<DayAggregate>())
         try check(days.count == 1 && days[0].totalTSS == 73, "Legacy daily history")
         try check(days[0].ctl == 21 && days[0].atl == 33 && days[0].tsb == -12, "Legacy CTL/ATL/TSB")

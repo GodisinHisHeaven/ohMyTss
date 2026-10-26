@@ -28,7 +28,7 @@ struct V2ActivityDetailView: View {
     private var sets: [StrengthSetRecord] { allSets.filter { $0.sessionID == workout.id } }
     private var revisions: [LoadEstimateRecord] { estimates.filter { $0.sessionID == workout.id } }
     private var latest: LoadEstimateValue? { revisions.first?.value }
-    private var isActive: Bool { !workout.isSuppressed && !workout.isDeleted }
+    private var isActive: Bool { !workout.isSuppressed && !workout.isTombstoned }
     private var isSwim: Bool { workout.workoutType.lowercased().contains("swim") }
     private var isRide: Bool {
         let type = workout.workoutType.lowercased()
@@ -37,10 +37,10 @@ struct V2ActivityDetailView: View {
 
     var body: some View {
         List {
-            if workout.isSuppressed || workout.isDeleted {
+            if workout.isSuppressed || workout.isTombstoned {
                 Section("Archived or linked activity") {
                     Text("This record no longer contributes separately.")
-                    if let targetID = workout.linkedSessionID, let target = workouts.first(where: { $0.id == targetID && !$0.isDeleted }) {
+                    if let targetID = workout.linkedSessionID, let target = workouts.first(where: { $0.id == targetID && !$0.isTombstoned }) {
                         NavigationLink("Open linked activity") { V2ActivityDetailView(workout: target) }
                     }
                 }
@@ -104,7 +104,7 @@ struct V2ActivityDetailView: View {
                         recalculate()
                     }
                     .accessibilityIdentifier("activity.saveTags")
-                    .disabled(workout.isSuppressed || workout.isDeleted)
+                    .disabled(workout.isSuppressed || workout.isTombstoned)
                 }
             }
             Section("Strength sets") {
@@ -118,7 +118,7 @@ struct V2ActivityDetailView: View {
                             Text(setDescription(set)).font(.caption).foregroundStyle(.secondary)
                         }
                     }.foregroundStyle(.primary)
-                    .disabled(workout.isSuppressed || workout.isDeleted)
+                    .disabled(workout.isSuppressed || workout.isTombstoned)
                 }
                 if isActive {
                     Button("Add sets", systemImage: "plus") { addSet = true }
@@ -127,7 +127,7 @@ struct V2ActivityDetailView: View {
                 if isActive && !sets.isEmpty {
                     Button("Save these sets as a template") { namingTemplate = true }
                 }
-                if !templates.isEmpty && !workout.isSuppressed && !workout.isDeleted {
+                if !templates.isEmpty && !workout.isSuppressed && !workout.isTombstoned {
                     Menu("Use a saved template") {
                         ForEach(templates) { template in
                             Button(template.name) {
@@ -145,7 +145,7 @@ struct V2ActivityDetailView: View {
                 }
                 if isActive { NavigationLink("View and edit report history") { ObservationHistoryView() } }
             }
-            if workout.source == "manual" && !workout.isSuppressed && !workout.isDeleted {
+            if workout.source == "manual" && !workout.isSuppressed && !workout.isTombstoned {
                 Section("Already imported elsewhere?") {
                     Button("Link to an imported activity") { linkSession = true }
                     Text("Moves these details to the chosen session, preserving your sets and reports and leaving one contribution.")
@@ -231,7 +231,7 @@ private struct LinkSessionView: View {
             List {
                 Text("Select the imported record for this same session. Dates and durations help you check the match.")
                     .font(.caption).foregroundStyle(.secondary)
-                let candidates = workouts.filter { $0.source != "manual" && !$0.isSuppressed && !$0.isDeleted }
+                let candidates = workouts.filter { $0.source != "manual" && !$0.isSuppressed && !$0.isTombstoned }
                 if candidates.isEmpty { Text("No imported activities available. Sync first, then return here.") }
                 ForEach(candidates) { candidate in
                     Button {

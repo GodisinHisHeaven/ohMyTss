@@ -3,7 +3,11 @@ import XCTest
 /// Runs against the app's DEBUG-only isolated SwiftData store; no fake imports or HealthKit mocks.
 /// These tests require a real Apple simulator and are not runnable on Linux.
 final class V2FlowTests: XCTestCase {
-    override func setUpWithError() throws { continueAfterFailure = false }
+    @MainActor
+    override func setUpWithError() throws {
+        continueAfterFailure = false
+        XCUIDevice.shared.orientation = .portrait
+    }
 
     @MainActor
     private func launch() -> XCUIApplication {
@@ -15,12 +19,18 @@ final class V2FlowTests: XCTestCase {
     }
 
     @MainActor
-    private func reach(_ element: XCUIElement, in app: XCUIApplication) {
-        for _ in 0..<12 {
+    private func reach(_ element: XCUIElement, in app: XCUIApplication,
+                       file: StaticString = #filePath, line: UInt = #line) {
+        for _ in 0..<8 {
             if element.isHittable { return }
             app.swipeUp()
         }
-        XCTAssertTrue(element.isHittable, "Expected connected control to be reachable")
+        // A sheet can return to a retained scroll offset below the edited row.
+        for _ in 0..<12 {
+            if element.isHittable { return }
+            app.swipeDown()
+        }
+        XCTAssertTrue(element.isHittable, "Expected connected control to be reachable", file: file, line: line)
     }
 
     @MainActor
@@ -70,7 +80,7 @@ final class V2FlowTests: XCTestCase {
         rir.tap()
         rir.typeText("0")
         app.buttons["strength.save"].tap()
-        let zero = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "RIR 0")).firstMatch
+        let zero = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "RIR 0")).firstMatch
         reach(zero, in: app)
         XCTAssertTrue(zero.exists)
         zero.tap()
@@ -78,7 +88,7 @@ final class V2FlowTests: XCTestCase {
         editRIR.tap()
         editRIR.typeText(XCUIKeyboardKey.delete.rawValue)
         app.buttons["strength.save"].tap()
-        let unknown = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Effort unknown")).firstMatch
+        let unknown = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Effort unknown")).firstMatch
         reach(unknown, in: app)
         XCTAssertTrue(unknown.exists)
         unknown.tap()
@@ -101,5 +111,54 @@ final class V2FlowTests: XCTestCase {
         reach(history, in: app)
         history.tap()
         XCTAssertTrue(app.staticTexts["No reports yet"].waitForExistence(timeout: 3))
+    }
+
+    @MainActor
+    func testBodyMapIndependentSidesAndBackRegions() {
+        let app = launch()
+        let left = app.buttons.matching(identifier: "bodyMap.front.quads")
+            .matching(NSPredicate(format: "label == %@", "Front thighs, left")).firstMatch
+        reach(left, in: app)
+        XCTAssertEqual(left.value as? String, "No report in the last 7 days")
+        left.tap()
+        app.segmentedControls["feedback.side"].buttons["Left"].tap()
+        app.buttons["feedback.save"].tap()
+        reach(left, in: app)
+        XCTAssertTrue((left.value as? String)?.contains("Soreness") == true)
+
+        let right = app.buttons.matching(identifier: "bodyMap.front.quads")
+            .matching(NSPredicate(format: "label == %@", "Front thighs, right")).firstMatch
+        right.tap()
+        app.segmentedControls["feedback.side"].buttons["Right"].tap()
+        app.buttons["feedback.none"].tap()
+        reach(left, in: app)
+        XCTAssertTrue((left.value as? String)?.contains("Soreness") == true)
+        XCTAssertTrue((right.value as? String)?.contains("No noticeable discomfort") == true)
+        attachBodyMapScreenshot(app, name: "Front — independent left and right reports")
+
+        let back = app.segmentedControls["bodyMap.face"].buttons["Back"]
+        reach(back, in: app)
+        back.tap()
+        let backRegions = [("shoulders", "Shoulders"), ("arms", "Arms"), ("back", "Back"),
+                           ("glutes", "Glutes"), ("hamstrings", "Back thighs"), ("calves", "Calves")]
+        for (region, label) in backRegions {
+            let target = app.buttons["bodyMap.back.\(region)"].firstMatch
+            reach(target, in: app)
+            target.tap()
+            XCTAssertTrue(app.buttons["feedback.skip"].waitForExistence(timeout: 3), "Back \(region) must be tappable")
+            let picker = app.descendants(matching: .any)["feedback.region"].firstMatch
+            XCTAssertTrue((picker.label + " " + (picker.value as? String ?? "")).contains(label))
+            app.buttons["feedback.skip"].tap()
+        }
+        XCTAssertFalse(app.buttons["bodyMap.back.quads"].exists)
+        attachBodyMapScreenshot(app, name: "Back — all six visible regions respond")
+    }
+
+    @MainActor
+    private func attachBodyMapScreenshot(_ app: XCUIApplication, name: String) {
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 }

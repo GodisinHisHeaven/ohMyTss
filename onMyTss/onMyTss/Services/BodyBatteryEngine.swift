@@ -82,7 +82,7 @@ class BodyBatteryEngine {
                     warnings.append("HealthKit incremental changes unavailable. Existing records retained; retry Sync.")
                 }
             }
-            let stored = try dataStore.allWorkouts().filter { !$0.isDeleted && !$0.isSuppressed }
+            let stored = try dataStore.allWorkouts().filter { !$0.isTombstoned && !$0.isSuppressed }
             // Include legacy summary-only days in recomputation; never zero older history from a short response.
             let existing = try dataStore.fetchAllDayAggregates()
             var daily = Dictionary(uniqueKeysWithValues: existing.map { ($0.date, $0.totalTSS) })
@@ -205,7 +205,7 @@ class BodyBatteryEngine {
 
         for workout in workouts {
             // Skip suppressed workouts (duplicates)
-            guard !workout.isSuppressed && !workout.isDeleted else { continue }
+            guard !workout.isSuppressed && !workout.isTombstoned else { continue }
 
             // Aggregate TSS by day
             dailyTSSMap[workout.date, default: 0] += workout.tss
@@ -244,7 +244,7 @@ class BodyBatteryEngine {
     ) async throws {
         // Group workouts by day for linking to aggregates
         var workoutsByDay: [Date: [Workout]] = [:]
-        for workout in workouts where !workout.isSuppressed && !workout.isDeleted {
+        for workout in workouts where !workout.isSuppressed && !workout.isTombstoned {
             workoutsByDay[workout.date, default: []].append(workout)
         }
         // Generate array of all dates in range

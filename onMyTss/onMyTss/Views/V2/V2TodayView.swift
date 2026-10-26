@@ -16,7 +16,7 @@ struct V2TodayView: View {
     @State private var syncMessage: String?
     @State private var nextSport = "None"
 
-    private var activeWorkouts: [Workout] { workouts.filter { !$0.isSuppressed && !$0.isDeleted } }
+    private var activeWorkouts: [Workout] { workouts.filter { !$0.isSuppressed && !$0.isTombstoned } }
     private var todayWorkouts: [Workout] { activeWorkouts.filter { Calendar.current.isDateInToday($0.startTime) } }
     private func estimate(for workout: Workout) -> LoadEstimateValue? {
         estimates.first { $0.sessionID == workout.id }?.value
@@ -25,6 +25,10 @@ struct V2TodayView: View {
     var body: some View {
         NavigationStack {
             List {
+                Section("Quick check-in") {
+                    BodyMapView(observations: observations) { selectedRegion = $0 }
+                    NavigationLink("Report history") { ObservationHistoryView() }
+                }
                 Section {
                     VStack(alignment: .leading, spacing: 12) {
                         Label("Cardio Load", systemImage: "heart.text.square").font(.title2.bold())
@@ -33,10 +37,6 @@ struct V2TodayView: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     .padding(.vertical, 6)
-                }
-                Section("Quick check-in") {
-                    BodyMapView { selectedRegion = $0 }
-                    NavigationLink("Report history") { ObservationHistoryView() }
                 }
                 Section("Regional context") {
                     Text("Highest activity grade in the last 7 days, shown separately for each method. Reports with recent discomfort appear first. Recovery time cannot yet be estimated.")
@@ -248,7 +248,7 @@ struct V2ActivityHistoryView: View {
     @Query(sort: \Workout.startTime, order: .reverse) private var workouts: [Workout]
     var body: some View {
         List {
-            ForEach(workouts.filter { !$0.isSuppressed && !$0.isDeleted }) { workout in
+            ForEach(workouts.filter { !$0.isSuppressed && !$0.isTombstoned }) { workout in
                 NavigationLink { V2ActivityDetailView(workout: workout) } label: { V2WorkoutRow(workout: workout) }
             }
             NavigationLink("Archived and linked activities") { V2ArchivedActivitiesView() }
@@ -269,13 +269,13 @@ struct V2ArchivedActivitiesView: View {
         List {
             Text("These source records are excluded from totals. Retained sets, reports and estimates remain available for review.")
                 .font(.caption).foregroundStyle(.secondary)
-            let archived = workouts.filter { $0.isDeleted || $0.isSuppressed }
+            let archived = workouts.filter { $0.isTombstoned || $0.isSuppressed }
             if archived.isEmpty { Text("No archived or linked records").foregroundStyle(.secondary) }
             ForEach(archived) { workout in
                 NavigationLink { V2ActivityDetailView(workout: workout) } label: {
                     VStack(alignment: .leading, spacing: 4) {
                         V2WorkoutRow(workout: workout)
-                        Text(workout.isDeleted ? "Removed from totals" : "Linked source")
+                        Text(workout.isTombstoned ? "Removed from totals" : "Linked source")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }

@@ -38,6 +38,7 @@ struct ObservationEditor: View {
                     Picker("Region", selection: $region) {
                         ForEach(Region.allCases) { Text($0.label).tag($0) }
                     }
+                    .accessibilityIdentifier("feedback.region")
                     Picker("Side", selection: $side) {
                         Text("Both / centre").tag("both")
                         Text("Left").tag("left")

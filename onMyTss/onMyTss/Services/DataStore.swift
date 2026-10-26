@@ -210,8 +210,8 @@ class DataStore {
                     oldDay.hasWorkoutDetails = true
                     oldDay.totalTSS = 0 // Rebuilt from remaining records, never preserved as summary-only.
                 }
-                if existing.isDeleted && existing.deletionOrigin == "source" {
-                    existing.isDeleted = false
+                if existing.isTombstoned && existing.deletionOrigin == "source" {
+                    existing.isTombstoned = false
                     existing.deletionOrigin = nil
                 }
                 existing.date = workout.date
@@ -285,9 +285,9 @@ class DataStore {
         let groups = Dictionary(grouping: external) { $0.sessionGroupID ?? $0.id }
         for members in groups.values {
             if members.contains(where: { $0.deletionOrigin == "user" }) {
-                for row in members { row.isDeleted = true; row.deletionOrigin = "user" }
+                for row in members { row.isTombstoned = true; row.deletionOrigin = "user" }
             }
-            let canonical = members.filter { !$0.isDeleted }.sorted {
+            let canonical = members.filter { !$0.isTombstoned }.sorted {
                 if $0.source != $1.source { return $0.source == WorkoutSource.strava.rawValue }
                 return $0.id < $1.id
             }.first
@@ -296,13 +296,13 @@ class DataStore {
                 for alias in members where alias.id != canonical.id { alias.userTags = [] }
             }
             for row in members {
-                row.isSuppressed = row.isDeleted || row.id != canonical?.id
+                row.isSuppressed = row.isTombstoned || row.id != canonical?.id
                 row.linkedSessionID = row.id == canonical?.id ? nil : canonical?.id
             }
         }
         // Manual sessions are merged only by an explicit user action, never inferred from timing.
         for row in all where row.source == WorkoutSource.manual.rawValue {
-            row.isSuppressed = row.isDeleted || row.linkedSessionID != nil
+            row.isSuppressed = row.isTombstoned || row.linkedSessionID != nil
         }
     }
 
@@ -339,7 +339,7 @@ class DataStore {
 
         let descriptor = FetchDescriptor<Workout>(
             predicate: #Predicate { workout in
-                workout.date >= start && workout.date <= end && (includeSupressed || (!workout.isSuppressed && !workout.isDeleted))
+                workout.date >= start && workout.date <= end && (includeSupressed || (!workout.isSuppressed && !workout.isTombstoned))
             },
             sortBy: [SortDescriptor(\.startTime, order: .forward)]
         )
@@ -352,7 +352,7 @@ class DataStore {
         let startOfDay = calendar.startOfDay(for: date)
 
         let descriptor = FetchDescriptor<Workout>(
-            predicate: #Predicate { $0.date == startOfDay && !$0.isSuppressed && !$0.isDeleted },
+            predicate: #Predicate { $0.date == startOfDay && !$0.isSuppressed && !$0.isTombstoned },
             sortBy: [SortDescriptor(\.startTime, order: .forward)]
         )
 
@@ -360,7 +360,7 @@ class DataStore {
     }
 
     func deleteWorkout(_ workout: Workout) throws {
-        workout.isDeleted = true
+        workout.isTombstoned = true
         workout.deletionOrigin = "user"
         workout.isSuppressed = true
         try reconcileWorkoutSources()
@@ -376,7 +376,7 @@ class DataStore {
     func applySourceDeletions(_ ids: [String]) throws {
         for id in ids {
             if let row = try fetchWorkout(byId: id) {
-                row.isDeleted = true
+                row.isTombstoned = true
                 if row.deletionOrigin != "user" { row.deletionOrigin = "source" }
                 row.isSuppressed = true
             }
@@ -417,7 +417,7 @@ class DataStore {
             }
             if let dayRows = grouped[day] {
                 aggregate.hasWorkoutDetails = true
-                let active = dayRows.filter { !$0.isSuppressed && !$0.isDeleted }
+                let active = dayRows.filter { !$0.isSuppressed && !$0.isTombstoned }
                 aggregate.totalTSS = active.reduce(0) { $0 + $1.tss }
                 aggregate.workoutCount = active.count
                 aggregate.maxTSSWorkout = active.map(\.tss).max()

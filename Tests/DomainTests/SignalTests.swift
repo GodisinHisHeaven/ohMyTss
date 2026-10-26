@@ -25,8 +25,14 @@ final class SignalTests: XCTestCase {
     func testThirtySamplesAreNotAssumedToBeThirtySeconds() throws {
         // 30 one-second intervals are exactly one 30s window; 30 five-second
         // intervals span 150s and include many complete 0 W and 400 W windows.
-        let one = (0..<30).map { value(Double($0), Double($0 + 1), $0 < 15 ? 0 : 400) }
-        let five = (0..<30).map { value(Double($0 * 5), Double(($0 + 1) * 5), $0 < 15 ? 0 : 400) }
+        let one = (0..<30).map { index -> TimedValue in
+            let start = Double(index)
+            return value(start, start + 1, index < 15 ? 0 : 400)
+        }
+        let five = (0..<30).map { index -> TimedValue in
+            let start = Double(index * 5)
+            return value(start, start + 5, index < 15 ? 0 : 400)
+        }
         XCTAssertEqual(try XCTUnwrap(SignalProcessing.normalizedPower(one)), 200, accuracy: 0.001)
         XCTAssertGreaterThan(try XCTUnwrap(SignalProcessing.normalizedPower(five)), 300)
     }

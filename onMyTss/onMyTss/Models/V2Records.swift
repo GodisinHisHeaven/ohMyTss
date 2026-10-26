@@ -26,7 +26,8 @@ final class LocalObservation {
         self.discomfortRaw = discomfortRaw
         self.severity = severity
         self.observedAt = observedAt
-        self.recordedAt = Date()
+        let recordedAt = Date()
+        self.recordedAt = recordedAt
         self.updatedAt = recordedAt
         self.weakness = false
         self.tightness = false
@@ -59,7 +60,8 @@ final class StrengthSetRecord {
         self.rir = rir
         self.effortRaw = effortRaw
         self.manualRegionsRaw = manualRegionsRaw
-        self.recordedAt = Date()
+        let recordedAt = Date()
+        self.recordedAt = recordedAt
         self.updatedAt = recordedAt
     }
 }

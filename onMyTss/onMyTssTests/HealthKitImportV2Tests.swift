@@ -8,7 +8,7 @@ import HealthKit
 final class HealthKitImportV2Tests: XCTestCase {
     private let start = Date(timeIntervalSince1970: 1_700_000_000)
 
-    private func makeStore() throws -> DataStore {
+    private func makeStore() throws -> onMyTss.DataStore {
         let container = try ModelContainer(for: Schema(AppSchema.models), configurations: ModelConfiguration(isStoredInMemoryOnly: true))
         return DataStore(modelContainer: container)
     }

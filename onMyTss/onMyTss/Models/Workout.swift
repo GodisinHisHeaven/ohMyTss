@@ -70,7 +70,8 @@ final class Workout {
     // Additive v2 fields: optional/default values allow lightweight legacy-store migration.
     var featuresData: Data?
     var userTags: [String] = []
-    var isDeleted: Bool = false
+    // Keep the app tombstone separate from PersistentModel.isDeleted.
+    @Attribute(originalName: "isDeleted") var isTombstoned: Bool = false
     var deletionOrigin: String?
     var linkedSessionID: String?
     var sessionGroupID: String?

@@ -89,7 +89,7 @@ final class V2PersistenceTests: XCTestCase {
         let external = try XCTUnwrap(dataStore.fetchWorkout(byId: "synthetic-hk"))
         try store.linkSession(manual: manual, to: external)
         try dataStore.saveWorkouts([imported()])
-        let active = try context.fetch(FetchDescriptor<Workout>()).filter { !$0.isDeleted && !$0.isSuppressed }
+        let active = try context.fetch(FetchDescriptor<Workout>()).filter { !$0.isTombstoned && !$0.isSuppressed }
         XCTAssertEqual(active.count, 1)
         XCTAssertEqual(active.first?.id, external.id)
         XCTAssertEqual(row.sessionID, external.id)
@@ -155,13 +155,13 @@ final class V2PersistenceTests: XCTestCase {
         try store.saveSet(StrengthSetRecord(sessionID: session.id, exerciseID: "squat", reps: 5))
         try store.saveObservation(LocalObservation(regionRaw: "quads", severity: 2, sessionID: session.id))
         try store.deleteSession(session)
-        XCTAssertTrue(session.isDeleted)
+        XCTAssertTrue(session.isTombstoned)
         XCTAssertEqual(try context.fetch(FetchDescriptor<StrengthSetRecord>()).count, 1)
         XCTAssertEqual(try context.fetch(FetchDescriptor<LocalObservation>()).count, 1)
-        XCTAssertFalse(try context.fetch(FetchDescriptor<Workout>()).contains { !$0.isDeleted && !$0.isSuppressed })
+        XCTAssertFalse(try context.fetch(FetchDescriptor<Workout>()).contains { !$0.isTombstoned && !$0.isSuppressed })
         XCTAssertEqual(try dataStore.fetchDayAggregate(for: start)?.totalTSS ?? 0, 0)
         try dataStore.saveWorkouts([imported()])
-        XCTAssertTrue(try XCTUnwrap(dataStore.fetchWorkout(byId: session.id)).isDeleted,
+        XCTAssertTrue(try XCTUnwrap(dataStore.fetchWorkout(byId: session.id)).isTombstoned,
                       "A user's local tombstone must survive a repeated external snapshot")
     }
 
@@ -199,10 +199,10 @@ final class V2PersistenceTests: XCTestCase {
         try dataStore.rebuildLegacyLoadHistory(now: start.addingTimeInterval(600))
         let all = try context.fetch(FetchDescriptor<Workout>())
         XCTAssertEqual(all.count, 2, "Keep both original source rows for audit")
-        XCTAssertEqual(all.filter { !$0.isSuppressed && !$0.isDeleted }.count, 1)
+        XCTAssertEqual(all.filter { !$0.isSuppressed && !$0.isTombstoned }.count, 1)
         XCTAssertEqual(try dataStore.fetchDayAggregate(for: start)?.totalTSS, 35)
         try dataStore.applyHealthKitDeletions(["synthetic-hk"])
-        XCTAssertEqual(all.filter { !$0.isSuppressed && !$0.isDeleted }.count, 1)
+        XCTAssertEqual(all.filter { !$0.isSuppressed && !$0.isTombstoned }.count, 1)
         XCTAssertEqual(try dataStore.fetchDayAggregate(for: start)?.totalTSS, 35,
                        "A deleted duplicate source must not delete the surviving source's contribution")
     }
@@ -267,7 +267,7 @@ final class V2PersistenceTests: XCTestCase {
         XCTAssertEqual(report.sideRaw, "left")
         XCTAssertEqual(try context.fetch(FetchDescriptor<StrengthSetRecord>()).count, 1)
         XCTAssertEqual(try context.fetch(FetchDescriptor<LocalObservation>()).count, 1)
-        let active = try context.fetch(FetchDescriptor<Workout>()).filter { !$0.isDeleted && !$0.isSuppressed }
+        let active = try context.fetch(FetchDescriptor<Workout>()).filter { !$0.isTombstoned && !$0.isSuppressed }
         XCTAssertEqual(active.map(\.id), ["synthetic-hk"])
         XCTAssertFalse(try latest(context, sessionID: "synthetic-hk").value?.regions.isEmpty ?? true)
     }
@@ -295,7 +295,7 @@ final class V2PersistenceTests: XCTestCase {
         try dataStore.saveWorkouts([imported(id: "synthetic-late-strava", source: .strava)])
         let all = try context.fetch(FetchDescriptor<Workout>())
         XCTAssertEqual(all.count, 2)
-        XCTAssertTrue(all.allSatisfy { $0.isDeleted && $0.isSuppressed && $0.deletionOrigin == "user" })
+        XCTAssertTrue(all.allSatisfy { $0.isTombstoned && $0.isSuppressed && $0.deletionOrigin == "user" })
         try dataStore.rebuildLegacyLoadHistory(now: start.addingTimeInterval(600))
         XCTAssertEqual(try dataStore.fetchDayAggregate(for: start)?.totalTSS, 0)
     }
@@ -306,11 +306,11 @@ final class V2PersistenceTests: XCTestCase {
         try dataStore.saveWorkouts([imported()])
         try dataStore.applySourceDeletions(["synthetic-hk"])
         let deleted = try XCTUnwrap(dataStore.fetchWorkout(byId: "synthetic-hk"))
-        XCTAssertTrue(deleted.isDeleted)
+        XCTAssertTrue(deleted.isTombstoned)
         XCTAssertEqual(deleted.deletionOrigin, "source")
         try dataStore.saveWorkouts([imported(tss: 32)])
         let restored = try XCTUnwrap(dataStore.fetchWorkout(byId: "synthetic-hk"))
-        XCTAssertFalse(restored.isDeleted)
+        XCTAssertFalse(restored.isTombstoned)
         XCTAssertFalse(restored.isSuppressed)
         XCTAssertNil(restored.deletionOrigin)
         XCTAssertEqual(restored.tss, 32)
@@ -423,6 +423,34 @@ final class V2PersistenceTests: XCTestCase {
         let snapshot = try JSONDecoder().decode(V2SnapshotProbe.self, from: latest(context, sessionID: current.id).inputData)
         XCTAssertEqual(snapshot.recentRunningMinutes, 10,
                        "Only the completed ten-minute run belongs to the input available before this session")
+    }
+
+    func testDiskReopenRetainsUserTombstoneAfterResync() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("synthetic-tombstone.store")
+        try autoreleasepool {
+            let context = ModelContext(try container(url: url))
+            let dataStore = DataStore(modelContext: context)
+            try dataStore.saveWorkouts([imported()])
+            let session = try XCTUnwrap(dataStore.fetchWorkout(byId: "synthetic-hk"))
+            try V2Store(context: context, clock: { self.start.addingTimeInterval(600) }).deleteSession(session)
+            XCTAssertTrue(session.isTombstoned)
+            XCTAssertFalse(session.isDeleted, "A retained tombstone is not a SwiftData object deletion")
+        }
+        try autoreleasepool {
+            let context = ModelContext(try container(url: url))
+            let dataStore = DataStore(modelContext: context)
+            try dataStore.saveWorkouts([imported(tss: 40)])
+            let session = try XCTUnwrap(dataStore.fetchWorkout(byId: "synthetic-hk"))
+            XCTAssertTrue(session.isTombstoned)
+            XCTAssertTrue(session.isSuppressed)
+            XCTAssertEqual(session.deletionOrigin, "user")
+            XCTAssertTrue(try dataStore.fetchWorkoutsForDay(start).isEmpty)
+            let tombstones = try context.fetch(FetchDescriptor<Workout>(predicate: #Predicate { $0.isTombstoned }))
+            XCTAssertEqual(tombstones.map(\.id), ["synthetic-hk"])
+        }
     }
 
     func testDiskReopenPreservesObservationsSetsUnknownAndExplicitZero() throws {

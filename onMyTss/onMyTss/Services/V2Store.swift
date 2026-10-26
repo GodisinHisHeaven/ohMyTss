@@ -60,7 +60,7 @@ final class V2Store {
                   record.effortRaw.map({ StrengthEffort(rawValue: $0) != nil }) ?? true,
                   record.manualRegionsRaw.allSatisfy({ Region(rawValue: $0) != nil }),
                   ExerciseCatalog.exercises.contains(where: { $0.id == record.exerciseID }) || !record.manualRegionsRaw.isEmpty,
-                  let session = try workout(record.sessionID), !session.isDeleted, !session.isSuppressed else {
+                  let session = try workout(record.sessionID), !session.isTombstoned, !session.isSuppressed else {
                 throw V2StoreError.invalidSet
             }
             if !sessions.contains(where: { $0.id == session.id }) { sessions.append(session) }
@@ -88,7 +88,7 @@ final class V2Store {
     /// Explicit user-confirmed merge keeps imported cardio only once and moves independent local records.
     func linkSession(manual: Workout, to target: Workout) throws {
         guard manual.source == WorkoutSource.manual.rawValue, manual.id != target.id,
-              !target.isDeleted, !target.isSuppressed, target.source != WorkoutSource.manual.rawValue,
+              !target.isTombstoned, !target.isSuppressed, target.source != WorkoutSource.manual.rawValue,
               manual.linkedSessionID == nil else { throw V2StoreError.invalidSession }
         for row in try context.fetch(FetchDescriptor<StrengthSetRecord>()) where row.sessionID == manual.id {
             row.sessionID = target.id
@@ -109,7 +109,7 @@ final class V2Store {
         let all = try context.fetch(FetchDescriptor<Workout>())
         let ids = relatedIDs(to: session.id, in: all)
         for row in all where ids.contains(row.id) {
-            row.isDeleted = true
+            row.isTombstoned = true
             row.deletionOrigin = "user"
             row.isSuppressed = true
         }
@@ -128,7 +128,7 @@ final class V2Store {
     }
 
     func applyTemplate(_ template: StrengthTemplate, to session: Workout) throws {
-        guard !session.isDeleted && !session.isSuppressed else { throw V2StoreError.invalidSession }
+        guard !session.isTombstoned && !session.isSuppressed else { throw V2StoreError.invalidSession }
         let sets = try JSONDecoder().decode([StrengthSetInput].self, from: template.setsData)
         for set in sets {
             context.insert(StrengthSetRecord(sessionID: session.id, exerciseID: set.exerciseID,
@@ -142,7 +142,7 @@ final class V2Store {
     func refreshEstimates() throws {
         let all = try context.fetch(FetchDescriptor<Workout>())
         // Resolve aliases after a later source arrives; retain old estimate snapshots under original IDs.
-        for canonical in all where !canonical.isDeleted && !canonical.isSuppressed {
+        for canonical in all where !canonical.isTombstoned && !canonical.isSuppressed {
             let ids = relatedIDs(to: canonical.id, in: all)
             for row in try context.fetch(FetchDescriptor<StrengthSetRecord>()) where ids.contains(row.sessionID) {
                 row.sessionID = canonical.id
@@ -155,10 +155,10 @@ final class V2Store {
     }
 
     func recalculate(_ session: Workout) throws {
-        guard !session.isDeleted, !session.isSuppressed else { try context.save(); return }
+        guard !session.isTombstoned, !session.isSuppressed else { try context.save(); return }
         let all = try context.fetch(FetchDescriptor<Workout>())
         let ids = relatedIDs(to: session.id, in: all)
-        let sources = all.filter { ids.contains($0.id) && !$0.isDeleted }
+        let sources = all.filter { ids.contains($0.id) && !$0.isTombstoned }
         var features = session.features
         // Prefer valid time coverage, never sample count; sources can have radically different cadence.
         let window = TimeRange(start: session.startTime, end: features.end ?? session.startTime.addingTimeInterval(session.duration))
@@ -185,7 +185,7 @@ final class V2Store {
         let sets = setRecords.map(input)
         let thresholds = try DataStore(modelContext: context).fetchUserThresholds()
         let priorRuns = all.filter {
-            !$0.isDeleted && !$0.isSuppressed && $0.workoutType.lowercased().contains("run")
+            !$0.isTombstoned && !$0.isSuppressed && $0.workoutType.lowercased().contains("run")
                 && $0.startTime < session.startTime && $0.startTime >= session.startTime.addingTimeInterval(-28 * 86400)
                 && ($0.features.end ?? $0.startTime.addingTimeInterval($0.duration)) <= session.startTime
         }
