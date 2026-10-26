@@ -71,6 +71,7 @@ final class BodyBatteryEngineNoWorkoutTests: XCTestCase {
         // Run recompute; no workouts today, but HRV/RHR present
         try await engine.recomputeAll()
 
+        XCTAssertEqual(fakeHK.workoutChangeCalls, 1)
         let today = Date().startOfDay
         let aggregate = try XCTUnwrap(dataStore.fetchDayAggregate(for: today))
 
@@ -84,8 +85,15 @@ final class BodyBatteryEngineNoWorkoutTests: XCTestCase {
 
 @MainActor
 private final class FakeHealthKitManager: HealthKitManager {
+    private(set) var workoutChangeCalls = 0
+
     override func fetchWorkouts(from startDate: Date, to endDate: Date) async throws -> [HKWorkout] {
         [] // No workouts
+    }
+
+    override func fetchWorkoutChanges(anchor: HKQueryAnchor?) async throws -> (workouts: [HKWorkout], deletedIDs: [String], newAnchor: HKQueryAnchor) {
+        workoutChangeCalls += 1
+        return ([], [], HKQueryAnchor(fromValue: 0))
     }
 
     override func fetchSleepSamples(from startDate: Date, to endDate: Date) async throws -> [HKCategorySample] {

@@ -35,7 +35,11 @@ struct MorningStatusView: View {
                         Button("Save Time Zone") { Task { await model.saveTimezone(timezone) } }
                             .disabled(model.isBusy || timezone == status.timezone)
                             .accessibilityIdentifier("morning.saveTimezone")
-                    } header: { Text("Delivery time") } footer: {
+                        if let notice = model.notice {
+                            Text(notice).foregroundStyle(.secondary)
+                                .accessibilityIdentifier("morning.notice")
+                        }
+                    } header: { Text("Delivery settings") } footer: {
                         Text("The morning window follows this account time zone. Changing it does not send a message or reset today's delivery record.")
                     }
                     if status.smsEnabled {
@@ -89,9 +93,6 @@ struct MorningStatusView: View {
                 Section { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red) }
                     .accessibilityIdentifier("morning.error")
             }
-            if let notice = model.notice {
-                Section { Text(notice).foregroundStyle(.secondary) }
-            }
             Section {
                 NavigationLink("Data and Privacy") { MorningStatusPrivacyView() }
                     .accessibilityIdentifier("morning.privacy")
@@ -113,6 +114,7 @@ struct MorningStatusView: View {
     private func accountSection(_ status: MorningStatus) -> some View {
         Section("Account") {
             LabeledContent("Name", value: status.displayName)
+                .accessibilityIdentifier("morning.name")
             LabeledContent("Email", value: status.email)
             LabeledContent("Phone", value: status.phoneHint ?? "Not configured")
             LabeledContent("SMS", value: status.subscriptionLabel)
