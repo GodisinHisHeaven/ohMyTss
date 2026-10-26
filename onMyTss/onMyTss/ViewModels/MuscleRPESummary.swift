@@ -1,16 +1,17 @@
 import Foundation
 
-/// A bounded seven-day view. It never reads estimates or decodes sensor history.
+/// A bounded seven-day view. Workout summaries supply starting grades without
+/// decoding sensor history, backfilling estimates, or writing perceived RPE.
 @MainActor
 struct MuscleRPESummary {
     struct Reading {
-        enum Source { case reported, sets }
+        enum Source: Int { case history, sets, reported }
         let rpe: Int
         let observedAt: Date
         let updatedAt: Date
         let source: Source
         var grade: MuscleEffortGrade { MuscleEffortGrade(rpe: rpe)! }
-        var sourceLabel: String { source == .reported ? "You" : "From sets" }
+        var isReportedEffort: Bool { source != .history }
     }
 
     private var readings: [String: Reading] = [:]
@@ -27,13 +28,61 @@ struct MuscleRPESummary {
             !$0.isTombstoned && !$0.isSuppressed && $0.startTime >= cutoff && $0.startTime <= now
         }
         let sessions = Dictionary(recent.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let setsBySession = Dictionary(grouping: sets, by: \.sessionID)
+        for workout in recent {
+            let inputs = (setsBySession[workout.id] ?? []).map {
+                StrengthSetInput(exerciseID: $0.exerciseID, reps: $0.reps, weightKG: $0.weightKG,
+                                 rir: $0.rir, effort: $0.effortRaw.flatMap(StrengthEffort.init(rawValue:)),
+                                 manualRegions: $0.manualRegionsRaw.compactMap(Region.init(rawValue:)))
+            }
+            let load = LoadModel.estimate(type: workout.workoutType, start: workout.startTime,
+                duration: workout.duration, distance: workout.distance, features: WorkoutFeatures(),
+                sets: inputs, tags: workout.userTags, maxHeartRate: nil, now: now)
+            for region in load.regions {
+                let grade: MuscleEffortGrade
+                switch region.level {
+                case "Low": grade = .easy
+                case "Moderate": grade = .moderate
+                case "High": grade = .hard
+                default: continue
+                }
+                let reading = Reading(rpe: grade.defaultRPE, observedAt: workout.startTime,
+                                      updatedAt: workout.startTime, source: .history)
+                apply(reading, region: region.region, side: .left)
+                apply(reading, region: region.region, side: .right)
+            }
+            if WorkoutCategory(type: workout.workoutType) == .walking,
+               workout.duration.isFinite, workout.duration > 0 {
+                // The same coarse duration bands used for endurance exposure;
+                // neither pace nor individual perceived effort is fabricated.
+                let minutes = min(workout.duration, max(0, now.timeIntervalSince(workout.startTime))) / 60
+                guard minutes > 0 else { continue }
+                let grade: MuscleEffortGrade = minutes < 20 ? .easy : minutes < 60 ? .moderate : .hard
+                let reading = Reading(rpe: grade.defaultRPE, observedAt: workout.startTime,
+                                      updatedAt: workout.startTime, source: .history)
+                for region in [Region.quads, .hamstrings, .glutes, .calves] {
+                    apply(reading, region: region, side: .left)
+                    apply(reading, region: region, side: .right)
+                }
+            }
+        }
         for set in sets {
-            // Only the established near-failure RIR range is translated. Missing
-            // effort, rep count, duration and heart rate do not invent an RPE.
-            guard let workout = sessions[set.sessionID], let rir = set.rir, (0...4).contains(rir) else { continue }
+            guard let workout = sessions[set.sessionID], (1...500).contains(set.reps),
+                  set.weightKG == nil || (set.weightKG!.isFinite && (0...1500).contains(set.weightKG!)),
+                  set.rir == nil || (0...10).contains(set.rir!) else { continue }
+            let rpe: Int
+            if let rir = set.rir, (0...4).contains(rir) {
+                rpe = 10 - rir
+            } else if let effort = set.effortRaw.flatMap(StrengthEffort.init(rawValue:)) {
+                switch effort {
+                case .easy: rpe = MuscleEffortGrade.easy.defaultRPE
+                case .moderate: rpe = MuscleEffortGrade.moderate.defaultRPE
+                case .hard: rpe = MuscleEffortGrade.hard.defaultRPE
+                }
+            } else { continue }
             let regions = Set((ExerciseCatalog.exercise(id: set.exerciseID)?.regions ?? [])
                               + set.manualRegionsRaw.compactMap(Region.init(rawValue:)))
-            let reading = Reading(rpe: 10 - rir, observedAt: workout.startTime,
+            let reading = Reading(rpe: rpe, observedAt: workout.startTime,
                                   updatedAt: set.updatedAt, source: .sets)
             for region in regions {
                 apply(reading, region: region, side: .left)
@@ -75,9 +124,9 @@ struct MuscleRPESummary {
         if let current = readings[key] {
             if current.observedAt > incoming.observedAt { return }
             if current.observedAt == incoming.observedAt {
-                if current.source == .reported && incoming.source == .sets { return }
+                if current.source.rawValue > incoming.source.rawValue { return }
                 if current.source == incoming.source {
-                    if current.source == .sets && current.rpe >= incoming.rpe { return }
+                    if current.source != .reported && current.rpe >= incoming.rpe { return }
                     if current.source == .reported && current.updatedAt > incoming.updatedAt { return }
                 }
             }

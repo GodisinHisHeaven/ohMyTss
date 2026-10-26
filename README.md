@@ -26,10 +26,12 @@ status or uploading a summary never sends an immediate morning text.
 ## Today and History
 
 Today shows the current day's saved training-readiness estimate, followed by
-muscle RPE for today and the previous six calendar days. Tap a muscle, choose
-an effort band, and adjust by one point if needed. Left/right ratings and dates
-remain separate. Missing effort stays unrated; opening this screen does not
-recalculate the full training history.
+muscle load for today and the previous six calendar days. Saved runs, rides,
+swims, walks and recorded strength exercises supply a starting grade without
+requiring manual RPE. Tap a muscle to adjust its effort band and fine-tune RPE.
+Left/right ratings and dates remain separate. Activities without known muscle
+participation stay unrated. Opening this screen does not recalculate the full
+training history or write automatic grades as user ratings.
 
 History contains a readiness or training-load trend and up to six recent
 workouts. Each workout row shows its category; tap it for details. Older
@@ -43,8 +45,8 @@ The interface combines native Liquid Glass controls with Swiss-style typography,
 aligned sections and a restrained light/dark palette. `SwissStyle` owns shared
 surfaces and actions; content remains on quiet, readable backgrounds. Custom
 glass controls use opaque alternatives with Reduce Transparency or Increase
-Contrast, and older systems use standard materials. Muscle effort retains text,
-numbers and dates alongside its muted color scale.
+Contrast, and older systems use standard materials. The muscle map uses muted
+colors with grade names and dates; numeric RPE controls appear when editing.
 
 ## Repository layout
 

@@ -26,7 +26,8 @@ enum LaunchHistoryFixture {
         try context.save()
     }
 
-    static func seedDashboard(in container: ModelContainer) throws {
+    static func seedDashboard(in container: ModelContainer, includeMuscleRatings: Bool = true,
+                              includeStrengthSets: Bool = true) throws {
         let context = ModelContext(container)
         let now = Date()
         if try context.fetchCount(FetchDescriptor<UserThresholds>()) == 0 {
@@ -45,13 +46,16 @@ enum LaunchHistoryFixture {
             context.insert(Workout(id: "synthetic-dashboard-\(index)", date: start.startOfDay, startTime: start,
                 duration: 2700, workoutType: type, tss: 48, calculationMethod: "duration", source: .manual))
         }
-        context.insert(StrengthSetRecord(sessionID: "synthetic-dashboard-2", exerciseID: "bench_press", reps: 8, rir: 2))
+        if includeStrengthSets {
+            context.insert(StrengthSetRecord(sessionID: "synthetic-dashboard-2", exerciseID: "bench_press", reps: 8, rir: 2))
+        }
         for (region, side, rpe, age) in [
             ("quads", "left", 8, 0), ("quads", "right", 5, 0),
             ("hamstrings", "both", 7, 1), ("glutes", "both", 8, 1),
             ("calves", "both", 5, 0), ("chest", "both", 3, 1),
             ("core", "both", 4, 2)
         ] {
+            guard includeMuscleRatings else { continue }
             context.insert(MuscleRPERecord(regionRaw: region, sideRaw: side, rpe: rpe,
                 observedAt: now.addingTimeInterval(-Double(age) * 86400 - 1800)))
         }

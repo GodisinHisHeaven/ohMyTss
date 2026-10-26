@@ -10,7 +10,9 @@ extension Date {
 @main
 struct ReleaseDashboardSeed {
     @MainActor static func main() throws {
-        guard CommandLine.arguments.count == 2 else { throw CocoaError(.fileWriteInvalidFileName) }
+        guard (2...3).contains(CommandLine.arguments.count) else { throw CocoaError(.fileWriteInvalidFileName) }
+        let historyMap = CommandLine.arguments.count == 3 && CommandLine.arguments[2] == "--history-map"
+        guard CommandLine.arguments.count == 2 || historyMap else { throw CocoaError(.fileWriteInvalidFileName) }
         let url = URL(fileURLWithPath: CommandLine.arguments[1])
         guard !FileManager.default.fileExists(atPath: url.path) else { throw CocoaError(.fileWriteFileExists) }
         let schema = Schema(AppSchema.models)
@@ -37,7 +39,14 @@ struct ReleaseDashboardSeed {
         }
         context.insert(LocalObservation(regionRaw: "calves", sideRaw: "right", severity: 2, observedAt: now))
         try context.save()
-        try LaunchHistoryFixture.seedDashboard(in: container)
-        print("Created synthetic Release store: 1,008 workouts, 1,000 retained estimates, 30 days, 7 RPE ratings, 1 discomfort report.")
+        try LaunchHistoryFixture.seedDashboard(in: container, includeMuscleRatings: !historyMap,
+                                              includeStrengthSets: !historyMap)
+        if historyMap {
+            // Retention sentinels do not supply the lower-body map under test.
+            context.insert(MuscleRPERecord(regionRaw: "chest", sideRaw: "both", rpe: 3, observedAt: now))
+            context.insert(StrengthSetRecord(sessionID: "synthetic-launch-0", exerciseID: "bench_press", reps: 8, rir: 2))
+            try context.save()
+        }
+        print("Created synthetic Release store: 1,008 workouts, 1,000 retained estimates, 30 days, \(historyMap ? 1 : 7) RPE ratings, 1 discomfort report.")
     }
 }

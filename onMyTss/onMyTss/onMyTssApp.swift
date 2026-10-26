@@ -37,6 +37,9 @@ struct ohMyTssApp: App {
         if inMemory && ProcessInfo.processInfo.arguments.contains("--v2-rpe-demo") {
             try LaunchHistoryFixture.seedDashboard(in: container)
         }
+        if inMemory && ProcessInfo.processInfo.arguments.contains("--v2-workout-map-demo") {
+            try LaunchHistoryFixture.seedDashboard(in: container, includeMuscleRatings: false, includeStrengthSets: false)
+        }
         #endif
         return container
     }

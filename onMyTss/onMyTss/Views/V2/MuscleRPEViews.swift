@@ -44,10 +44,10 @@ struct MuscleRPECard: View {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
                     SwissSectionHeading(number: "02", title: "Muscle load")
-                    Text("Last 7 days · latest per side").font(.caption).foregroundStyle(.secondary)
+                    Text("Last 7 days").font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button("About muscle RPE", systemImage: "info.circle") { showingInfo = true }
+                Button("About muscle load", systemImage: "info.circle") { showingInfo = true }
                     .labelStyle(.iconOnly).foregroundStyle(.secondary)
                     .frame(minWidth: 44, minHeight: 44)
                     .buttonStyle(.borderless)
@@ -85,16 +85,14 @@ struct MuscleRPECard: View {
             NavigationStack {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
-                        Text("How hard did that muscle work?").font(.title2.bold())
-                        Text("RPE runs from 1 (very easy) to 10 (maximum effort). The map shows the most recent rating for each side within seven days, with its date.")
-                        Text("Recorded sets with RIR 0–4 provide a starting point for the muscles involved. Tap a muscle to adjust it. No rating stays gray.")
-                        Text("This is perceived effort, not measured muscle force, soreness, or a recovery countdown.")
-                            .foregroundStyle(.secondary)
+                        Text("Your latest training").font(.title2.bold())
+                        Text("Workout type, duration and recorded sets supply each muscle's starting grade. Tap a muscle to adjust it with RPE 1–10.")
+                        Text("Each side keeps its latest entry for seven days.").foregroundStyle(.secondary)
                     }
                     .padding(24)
                 }
                 .swissCanvas()
-                .navigationTitle("Muscle RPE").navigationBarTitleDisplayMode(.inline)
+                .navigationTitle("Muscle load").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showingInfo = false } } }
             }
             .presentationDetents([.medium, .large])
@@ -106,7 +104,7 @@ struct MuscleRPECard: View {
         let right = summary.reading(region, side: .right)
         if let left, let right, left.rpe == right.rpe,
            Calendar.current.isDate(left.observedAt, inSameDayAs: right.observedAt) {
-            Text("\(left.grade.label) · RPE \(left.rpe)").font(.caption.weight(.semibold)).foregroundStyle(left.grade.color)
+            Text(left.grade.label).font(.caption.weight(.semibold)).foregroundStyle(left.grade.color)
             Text(left.observedAt, format: .dateTime.month(.abbreviated).day()).font(.caption2).foregroundStyle(.secondary)
         } else {
             sideRating("L", reading: left)
@@ -116,7 +114,7 @@ struct MuscleRPECard: View {
 
     private func sideRating(_ side: String, reading: MuscleRPESummary.Reading?) -> some View {
         HStack(spacing: 4) {
-            Text("\(side) \(reading.map { "RPE \($0.rpe)" } ?? "—")")
+            Text("\(side) \(reading?.grade.label ?? "—")")
                 .foregroundStyle(reading?.grade.color ?? .secondary)
             if let reading {
                 Text(reading.observedAt, format: .dateTime.month(.abbreviated).day()).foregroundStyle(.secondary)
@@ -149,7 +147,6 @@ struct MuscleRPEEditor: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    Text("How hard did it work?").font(.title2.bold())
                     Picker("Side", selection: $side) {
                         Text("Left").tag(BodySide.left)
                         Text("Both").tag(BodySide.both)
@@ -199,9 +196,6 @@ struct MuscleRPEEditor: View {
                     } else {
                         DatePicker("Date", selection: $observedAt, in: dateRange, displayedComponents: .date)
                             .font(.subheadline)
-                    }
-                    if reading?.source == .sets {
-                        Text("Starting from your recorded sets.").font(.caption).foregroundStyle(.secondary)
                     }
                     if let error { V2ErrorMessage(message: error) }
                     Button("Save RPE") { save() }

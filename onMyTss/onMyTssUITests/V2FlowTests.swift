@@ -216,6 +216,42 @@ final class V2FlowTests: XCTestCase {
     }
 
     @MainActor
+    func testImportedHistoryColorsMusclesAndAllowsQuickOverride() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--v2-ui-tests", "--v2-workout-map-demo"]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Today"].waitForExistence(timeout: 10))
+        let left = app.buttons.matching(identifier: "bodyMap.front.quads")
+            .matching(NSPredicate(format: "label == %@", "Front thighs, left")).firstMatch
+        let right = app.buttons.matching(identifier: "bodyMap.front.quads")
+            .matching(NSPredicate(format: "label == %@", "Front thighs, right")).firstMatch
+        reach(left, in: app)
+        let startingValue = left.value as? String
+        XCTAssertTrue(startingValue?.contains("Moderate") == true)
+        XCTAssertFalse(startingValue?.contains("RPE") == true)
+        XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label CONTAINS[c] 'estimated'")).firstMatch.exists)
+        attachBodyMapScreenshot(app, name: "History alone — muscle grades without manual ratings")
+        left.tap()
+        XCTAssertTrue(app.buttons["rpe.grade.1"].isSelected)
+        XCTAssertEqual(app.keyboards.count, 0)
+        app.buttons["rpe.cancel"].tap()
+        reach(left, in: app)
+        XCTAssertEqual(left.value as? String, startingValue)
+        left.tap()
+        app.buttons["rpe.grade.2"].tap()
+        app.buttons["rpe.save"].tap()
+        reach(left, in: app)
+        XCTAssertTrue((left.value as? String)?.contains("RPE 8") == true)
+        XCTAssertEqual(right.value as? String, startingValue)
+        app.tabBars.buttons["History"].tap()
+        app.tabBars.buttons["Today"].tap()
+        reach(left, in: app)
+        XCTAssertTrue((left.value as? String)?.contains("RPE 8") == true)
+        XCTAssertEqual(right.value as? String, startingValue)
+        attachBodyMapScreenshot(app, name: "History grade with one-side RPE adjustment")
+    }
+
+    @MainActor
     func testReadinessAndHistoryShowTrendsAndWorkoutCategories() {
         let app = XCUIApplication()
         app.launchArguments = ["--v2-ui-tests", "--v2-rpe-demo", "-AppleInterfaceStyle", "Light"]
