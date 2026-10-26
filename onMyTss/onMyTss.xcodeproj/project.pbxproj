@@ -28,6 +28,7 @@
 		138634F82EBEEBF500674956 /* onMyTssTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = onMyTssTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		138635022EBEEBF500674956 /* onMyTssUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = onMyTssUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		13A1C2002F00AAAA00AAAAAA /* Secrets.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = Secrets.xcconfig; path = Config/Secrets.xcconfig; sourceTree = SOURCE_ROOT; };
+		E10A10012F0D222200000001 /* Secrets.xcconfig.template */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.xcconfig; name = Secrets.xcconfig.template; path = Config/Secrets.xcconfig.template; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -97,6 +98,7 @@
 		13A1C2012F00AAAA00AAAAAA /* Config */ = {
 			isa = PBXGroup;
 			children = (
+				E10A10012F0D222200000001 /* Secrets.xcconfig.template */,
 				13A1C2002F00AAAA00AAAAAA /* Secrets.xcconfig */,
 			);
 			path = Config;
@@ -109,6 +111,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 1386350C2EBEEBF500674956 /* Build configuration list for PBXNativeTarget "onMyTss" */;
 			buildPhases = (
+				E10A10022F0D222200000001 /* Validate Strava Credentials */,
 				138634E72EBEEBF200674956 /* Sources */,
 				138634E82EBEEBF200674956 /* Frameworks */,
 				138634E92EBEEBF200674956 /* Resources */,
@@ -240,6 +243,26 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		E10A10022F0D222200000001 /* Validate Strava Credentials */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/ci_scripts/validate_strava_credentials.sh",
+			);
+			name = "Validate Strava Credentials";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "/bin/sh \"${SRCROOT}/ci_scripts/validate_strava_credentials.sh\"\n";
+			showEnvVarsInLog = 0;
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		138634E72EBEEBF200674956 /* Sources */ = {
