@@ -40,7 +40,19 @@ submodule; this repository contains no backend credentials or phone test codes.
   / 132 unique tests**, comprising 113 unit and 22 UI executions, with zero
   failures, skips or runtime warnings. Result bundle:
   `/private/tmp/ohmytss-summary-final-full.xcresult`.
-- Optimized Release results are recorded below when complete.
+- Final ordinary Release (`ENABLE_TESTABILITY=NO`) passed **all five flows** on
+  iPhone 17 Pro / iOS 26.4 with actual dark appearance and Increase Contrast
+  enabled: phone entry/privacy without sending SMS, quick RPE, readiness/history,
+  maximum-heart-rate save during recalculation, and cold launch. Zero failures,
+  skips or runtime warnings. Result bundle:
+  `/private/tmp/ohmytss-summary-release-final.xcresult`.
+- Five cold launches averaged **1.331 seconds**, relative standard deviation
+  2.797%. This measures launch duration, not continuous frame pacing.
+- [Retention check](evidence/release-retention.json): all 1,008 workouts and all
+  1,000 old estimates were unchanged; recalculation added 1,008 estimates. The
+  strength set and seven RPE records were retained; one RPE was intentionally
+  edited by the test. SQLite integrity check passed. Simulator appearance was
+  restored to light and normal contrast afterward.
 - A preceding full run was interrupted when the simulator shut down, terminating
   both the app and UI runner with SIGTERM. Its result is not a passing release
   gate. The interrupted strength create/edit/delete test passed in isolation.
@@ -53,9 +65,13 @@ submodule; this repository contains no backend credentials or phone test codes.
 
 ## Live verification and release
 
-One requested phone verification SMS was accepted by the live API. Six-digit
-code verification is still pending; no morning subscription was enabled or
-resumed by this validation. Test codes and sessions are kept outside Git.
+Live verification passed on the owner-provided phone: code verification and
+authenticated status both returned HTTP 200, with `data_source=app` and
+`app_summary_consent=false`. The existing SMS subscription remained active;
+this check did not enable or resume it and uploaded no health summary. The
+first code expired after its ten-minute window and returned 401; one explicitly
+authorized resend completed successfully. Test codes and sessions were kept
+outside Git and removed after verification.
 
 Xcode Cloud is configured with Build, Test **Required to Pass**, Archive, and
 TestFlight Internal Testing. Release delivery is not complete until the merged
@@ -67,6 +83,7 @@ Synthetic fixtures; no real athlete health data:
 
 ![Explicit summary and SMS consent](evidence/app-summary-consent.png)
 ![New user App summary](evidence/app-summary-new-user.png)
+![Ordinary Release, dark appearance and Increase Contrast](evidence/release-rpe-dark-contrast.png)
 
 See [shared UI evidence](../ui/evidence/glass-swiss/) for Today, History, RPE,
 onboarding, dark appearance and reduced effects.
