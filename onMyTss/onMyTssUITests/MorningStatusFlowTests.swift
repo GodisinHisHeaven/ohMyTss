@@ -71,9 +71,20 @@ final class MorningStatusFlowTests: XCTestCase {
         for _ in 0..<12 {
             let top = app.navigationBars.firstMatch.frame.maxY
             let bottom = app.tabBars.firstMatch.frame.minY
-            if element.isHittable, element.frame.minY >= top, element.frame.maxY <= bottom { return }
-            if towardTop { app.swipeDown() }
-            else { app.swipeUp() }
+            let frame = element.exists ? element.frame : .zero
+            if element.isHittable, frame.minY >= top, frame.maxY <= bottom { return }
+
+            // Form updates can move a row above the viewport after a save.
+            // Follow its current position and use short drags to avoid overshooting it.
+            let hasPosition = !frame.isEmpty
+            let scrollTowardTop = hasPosition ? frame.minY < top : towardTop
+            let center = (top + bottom) / 2
+            let distance = min((bottom - top) * 0.4,
+                               hasPosition ? max(60, abs(frame.midY - center)) : (bottom - top) * 0.4)
+            let start = app.coordinate(withNormalizedOffset: .zero)
+                .withOffset(CGVector(dx: app.frame.width / 2, dy: center))
+            let finish = start.withOffset(CGVector(dx: 0, dy: scrollTowardTop ? distance : -distance))
+            start.press(forDuration: 0.05, thenDragTo: finish)
         }
         XCTFail("Could not fully reveal \(element.description)")
     }
