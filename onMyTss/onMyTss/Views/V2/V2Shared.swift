@@ -10,9 +10,9 @@ enum V2Presentation {
 
     static func color(_ level: String) -> Color {
         switch level.lowercased() {
-        case "high": return .orange
-        case "moderate": return .blue
-        case "low": return .teal
+        case "high": return SwissStyle.caution
+        case "moderate": return SwissStyle.accent
+        case "low": return SwissStyle.positive
         default: return .secondary
         }
     }
@@ -36,7 +36,7 @@ struct V2ErrorMessage: View {
     var body: some View {
         Label(message, systemImage: "exclamationmark.triangle")
             .font(.callout)
-            .foregroundStyle(.orange)
+            .foregroundStyle(SwissStyle.caution)
             .accessibilityIdentifier("v2.error")
     }
 }

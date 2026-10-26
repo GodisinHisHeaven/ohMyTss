@@ -3,17 +3,18 @@ import SwiftUI
 struct ReadinessCard: View {
     let readiness: TodayReadiness
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @ScaledMetric(relativeTo: .largeTitle) private var scoreSize = 44
+    @ScaledMetric(relativeTo: .largeTitle) private var scoreSize = 64
     @State private var showingInfo = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Today's readiness").font(.headline)
+                SwissSectionHeading(number: "01", title: "Today's readiness")
                 Spacer()
                 Button("About readiness", systemImage: "info.circle") { showingInfo = true }
                     .labelStyle(.iconOnly).foregroundStyle(.secondary)
                     .frame(minWidth: 44, minHeight: 44)
+                    .buttonStyle(.borderless)
             }
             if let score = readiness.score {
                 if dynamicTypeSize.isAccessibilitySize {
@@ -25,7 +26,7 @@ struct ReadinessCard: View {
                     HStack(alignment: .firstTextBaseline, spacing: 10) {
                         scoreNumber(score)
                         Spacer(minLength: 8)
-                        Text(level(score)).font(.title3.weight(.medium)).foregroundStyle(color(score))
+                        Text(level(score)).font(.subheadline.weight(.medium)).foregroundStyle(color(score))
                     }
                 }
                 ProgressView(value: Double(score), total: 100).tint(color(score)).accessibilityHidden(true)
@@ -56,6 +57,7 @@ struct ReadinessCard: View {
                     }
                     .padding(24)
                 }
+                .swissCanvas()
                 .navigationTitle("Readiness").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showingInfo = false } } }
             }
@@ -65,7 +67,7 @@ struct ReadinessCard: View {
 
     private func scoreNumber(_ score: Int) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text("\(score)").font(.system(size: scoreSize, weight: .semibold, design: .rounded)).monospacedDigit()
+            Text("\(score)").font(.system(size: scoreSize, weight: .regular, design: .default)).monospacedDigit()
                 .accessibilityIdentifier("readiness.score")
             Text("/ 100").font(.caption).foregroundStyle(.secondary)
         }
@@ -76,6 +78,6 @@ struct ReadinessCard: View {
     }
 
     private func color(_ score: Int) -> Color {
-        switch score { case ..<40: return .orange; case ..<60: return .blue; default: return .teal }
+        switch score { case ..<40: return SwissStyle.caution; case ..<60: return SwissStyle.accent; default: return SwissStyle.positive }
     }
 }

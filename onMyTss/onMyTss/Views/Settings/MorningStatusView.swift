@@ -20,7 +20,7 @@ struct MorningStatusView: View {
     }
 
     var body: some View {
-        Form {
+        SwissForm {
             if model.isSignedIn {
                 if let status = model.status {
                     subscriptionSection(status)
@@ -71,7 +71,7 @@ struct MorningStatusView: View {
                 Section { ProgressView("Loading morning status…") }
             }
             if model.isSignedIn, let error = model.errorMessage {
-                Section { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red) }
+                Section { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(SwissStyle.critical) }
                     .accessibilityIdentifier("morning.error")
             }
             Section {
@@ -118,6 +118,7 @@ struct MorningStatusView: View {
                     Task { await model.verifyCode(submittedCode) }
                 }
                 .disabled(model.isBusy || !MorningPhoneInput.validCode(code))
+                .swissAction(prominent: true)
                 .accessibilityIdentifier("morning.verify")
                 TimelineView(.periodic(from: .now, by: 1)) { context in
                     let remaining = model.resendSeconds(at: context.date)
@@ -146,6 +147,7 @@ struct MorningStatusView: View {
                         Task { await model.requestCode(phone: phone) }
                     }
                     .disabled(model.isBusy || remaining > 0 || MorningPhoneInput.normalized(phone) == nil)
+                    .swissAction(prominent: true)
                     .accessibilityIdentifier("morning.sendCode")
                 }
             }
@@ -158,7 +160,7 @@ struct MorningStatusView: View {
     private var phoneError: some View {
         if let error = model.errorMessage {
             Label(error, systemImage: "exclamationmark.triangle")
-                .foregroundStyle(.red)
+                .foregroundStyle(SwissStyle.critical)
                 .accessibilityIdentifier("morning.error")
         }
     }
@@ -188,7 +190,7 @@ struct MorningStatusView: View {
             LabeledContent("Wellness synced through", value: status.wellnessThrough ?? "No data yet")
             if status.syncFailures > 0 {
                 Label("The last data sync did not complete. Scheduled sync will retry.", systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(SwissStyle.caution)
             }
         } header: { Text("Today's delivery") } footer: {
             Text("Up to one morning text per local day, between 06:00 and 10:30, after current-day data is available. Refreshing this screen does not send a text.")
@@ -226,19 +228,21 @@ private struct MorningTimeZonePicker: View {
     }
 
     var body: some View {
-        List(timezones, id: \.self) { identifier in
-            Button {
-                selection = identifier
-                dismiss()
-            } label: {
-                HStack {
-                    Text(identifier.replacingOccurrences(of: "_", with: " "))
-                        .foregroundStyle(.primary)
-                    Spacer()
-                    if identifier == selection { Image(systemName: "checkmark") }
+        SwissList {
+            ForEach(timezones, id: \.self) { identifier in
+                Button {
+                    selection = identifier
+                    dismiss()
+                } label: {
+                    HStack {
+                        Text(identifier.replacingOccurrences(of: "_", with: " "))
+                            .foregroundStyle(.primary)
+                        Spacer()
+                        if identifier == selection { Image(systemName: "checkmark") }
+                    }
                 }
+                .accessibilityIdentifier("morning.zone.\(identifier)")
             }
-            .accessibilityIdentifier("morning.zone.\(identifier)")
         }
         .searchable(text: $search, placement: .navigationBarDrawer(displayMode: .always), prompt: "City or time zone")
         .navigationTitle("Time Zone")
@@ -248,7 +252,7 @@ private struct MorningTimeZonePicker: View {
 
 struct MorningStatusPrivacyView: View {
     var body: some View {
-        List {
+        SwissList {
             Section("Your phone number") {
                 Text("Morning status uses your phone number, SMS consent and training data already synced from Intervals.icu. This data is stored by the private service in Supabase.")
                 Text("Twilio verifies your phone with a one-time text code. Your number and code are sent over HTTPS. The app stores only your signed session in this device's Keychain, so you do not need an email or password.")

@@ -11,75 +11,38 @@ struct WelcomeView: View {
     var onContinue: () -> Void
 
     var body: some View {
-        VStack(spacing: 30) {
-            Spacer()
-
-            // App Icon/Logo
-            Image(systemName: "bolt.heart.fill")
-                .font(.system(size: 80))
-                .foregroundStyle(.linearGradient(
-                    colors: [.blue, .purple],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                ))
-                .padding(.bottom, 20)
-
-            // Title
-            Text(AppIdentity.name)
-                .font(.largeTitle)
-                .fontWeight(.bold)
-
-            // Subtitle
-            Text("Your Daily Readiness Score")
-                .font(.title3)
-                .foregroundColor(.secondary)
-
-            Spacer()
-
-            // Features
-            VStack(alignment: .leading, spacing: 20) {
-                FeatureRow(
-                    icon: "figure.outdoor.cycle",
-                    title: "Track Your Training",
-                    description: "Automatically analyze workouts from Apple Health"
-                )
-
-                FeatureRow(
-                    icon: "chart.line.uptrend.xyaxis",
-                    title: "Monitor Load",
-                    description: "See your fitness, fatigue, and form metrics"
-                )
-
-                FeatureRow(
-                    icon: "lightbulb.fill",
-                    title: "Get Guidance",
-                    description: "Receive personalized training recommendations"
-                )
+        ScrollView {
+            VStack(alignment: .leading, spacing: 32) {
+                SwissSectionHeading(number: "01", title: AppIdentity.name)
+                Divider()
+                Text("Your daily\nreadiness.")
+                    .font(.largeTitle.weight(.semibold)).tracking(-0.8)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("Training, recovery and how your muscles feel. One clear view of your day.")
+                    .font(.body).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 24) {
+                    FeatureRow(icon: "figure.outdoor.cycle", title: "Track your training",
+                               description: "Workouts from Apple Health and Strava")
+                    Divider()
+                    FeatureRow(icon: "chart.line.uptrend.xyaxis", title: "Follow your trends",
+                               description: "Readiness and training load over time")
+                    Divider()
+                    FeatureRow(icon: "figure.stand", title: "Check in with your muscles",
+                               description: "A quick effort rating, whenever useful")
+                }
+                .padding(.vertical, 8)
             }
-            .padding(.horizontal)
-
-            Spacer()
-
-            // Continue Button
-            Button(action: onContinue) {
-                Text("Get Started")
-                    .font(.headline)
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding()
-                    .background(
-                        LinearGradient(
-                            colors: [.blue, .purple],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
-                    .cornerRadius(12)
-            }
-            .padding(.horizontal)
-            .padding(.bottom, 30)
+            .frame(maxWidth: 560, alignment: .leading)
+            .padding(24).frame(maxWidth: .infinity)
         }
-        .padding()
+        .swissCanvas()
+        .safeAreaInset(edge: .bottom) {
+            Button(action: onContinue) {
+                Text("Get Started").font(.headline).frame(maxWidth: .infinity, minHeight: 48)
+            }
+            .swissAction(prominent: true)
+            .padding(24).background(SwissStyle.canvas)
+        }
     }
 }
 
@@ -91,8 +54,8 @@ struct FeatureRow: View {
     var body: some View {
         HStack(spacing: 15) {
             Image(systemName: icon)
-                .font(.title2)
-                .foregroundColor(.blue)
+                .font(.title3.weight(.regular))
+                .foregroundStyle(SwissStyle.accent)
                 .frame(width: 40)
 
             VStack(alignment: .leading, spacing: 4) {

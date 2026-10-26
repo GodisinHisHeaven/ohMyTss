@@ -13,7 +13,7 @@ struct StrengthSessionChooser: View {
 
     var body: some View {
         NavigationStack {
-            List {
+            SwissList {
                 Section("Supplement an existing activity") {
                     Text("Choose the original session to add sets without adding another cardio contribution.")
                         .font(.caption).foregroundStyle(.secondary)
@@ -75,7 +75,7 @@ struct StrengthSetEditor: View {
 
     var body: some View {
         NavigationStack {
-            Form {
+            SwissForm {
                 Section("Exercise") {
                     Button { choosingExercise = true } label: {
                         HStack { Text(V2Presentation.exerciseName(exerciseID)); Spacer(); Image(systemName: "magnifyingglass") }
@@ -184,7 +184,7 @@ private struct ExercisePickerView: View {
 
     var body: some View {
         NavigationStack {
-            List {
+            SwissList {
                 Picker("Region", selection: $region) {
                     Text("All regions").tag("all")
                     ForEach(Region.allCases) { Text($0.label).tag($0.rawValue) }

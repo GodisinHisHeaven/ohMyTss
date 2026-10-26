@@ -43,7 +43,7 @@ private struct TodayDashboard: View {
         let currentNow = Date()
         let activeWorkouts = workouts.filter { $0.startTime <= currentNow }
         NavigationStack {
-            List {
+            SwissList {
                 Section {
                     ReadinessCard(readiness: TodayReadiness(days: days,
                         lastComputation: appStates.first?.lastComputationDate, now: currentNow))
@@ -53,7 +53,7 @@ private struct TodayDashboard: View {
                     MuscleRPECard(workouts: activeWorkouts, now: currentNow)
                         .padding(.vertical, 8)
                 }
-                Section("Recent workouts") {
+                Section {
                     if activeWorkouts.isEmpty {
                         Text("No workouts in the last 7 days").foregroundStyle(.secondary)
                     }
@@ -63,15 +63,17 @@ private struct TodayDashboard: View {
                         }
                     }
                     Button("Record strength", systemImage: "plus") { strength = true }
+                        .swissAction()
                         .accessibilityIdentifier("today.strength")
+                } header: {
+                    SwissSectionHeading(number: "03", title: "Recent workouts")
                 }
                 if let message = error ?? syncMessage {
                     Section {
-                        Text(message).font(.caption).foregroundStyle(error == nil ? Color.secondary : .orange)
+                        Text(message).font(.caption).foregroundStyle(error == nil ? Color.secondary : SwissStyle.caution)
                     }
                 }
             }
-            .listSectionSpacing(18)
             .navigationTitle("Today")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -118,10 +120,14 @@ struct WorkoutCategoryRow: View {
     let type: String
     var body: some View {
         let category = WorkoutCategory(type: type)
-        Label(category.rawValue, systemImage: category.icon)
-            .font(.subheadline.weight(.medium))
-            .padding(.vertical, 8)
-            .accessibilityIdentifier("workout.category")
+        Label {
+            Text(category.rawValue).font(.subheadline.weight(.medium))
+        } icon: {
+            Image(systemName: category.icon).font(.body.weight(.regular))
+                .foregroundStyle(SwissStyle.accent).frame(width: 28)
+        }
+        .padding(.vertical, 8)
+        .accessibilityIdentifier("workout.category")
     }
 }
 
@@ -139,7 +145,7 @@ struct V2WorkoutRow: View {
 struct V2ActivityHistoryView: View {
     @Query(sort: \Workout.startTime, order: .reverse) private var workouts: [Workout]
     var body: some View {
-        List {
+        SwissList {
             ForEach(workouts.filter { !$0.isSuppressed && !$0.isTombstoned }) { workout in
                 NavigationLink { V2ActivityDetailView(workout: workout) } label: { V2WorkoutRow(workout: workout) }
             }
@@ -158,7 +164,7 @@ struct V2ActivityHistoryView: View {
 struct V2ArchivedActivitiesView: View {
     @Query(sort: \Workout.startTime, order: .reverse) private var workouts: [Workout]
     var body: some View {
-        List {
+        SwissList {
             Text("These source records are excluded from totals. Retained sets, reports and estimates remain available for review.")
                 .font(.caption).foregroundStyle(.secondary)
             let archived = workouts.filter { $0.isTombstoned || $0.isSuppressed }

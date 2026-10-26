@@ -94,7 +94,7 @@ struct TodayView: View {
                         HStack(spacing: 8) {
                             Image(systemName: "heart.text.square.fill")
                                 .font(.title3)
-                                .foregroundStyle(.pink)
+                                .foregroundStyle(SwissStyle.accent)
 
                             Text(recoveryStatus)
                                 .font(.subheadline.weight(.medium))
@@ -106,15 +106,15 @@ struct TodayView: View {
                                 Text(modifier)
                                     .font(.subheadline.weight(.semibold))
                                     .foregroundStyle(
-                                        modifier.hasPrefix("+") ? .green :
-                                        modifier.hasPrefix("-") ? .orange : .secondary
+                                        modifier.hasPrefix("+") ? SwissStyle.positive :
+                                        modifier.hasPrefix("-") ? SwissStyle.caution : .secondary
                                     )
                             }
                         }
                         .padding()
                         .background(
                             RoundedRectangle(cornerRadius: 12)
-                                .fill(Color(uiColor: .secondarySystemBackground))
+                                .fill(SwissStyle.surface)
                         )
                     }
 
@@ -221,7 +221,7 @@ struct TodayView: View {
 
             Image(systemName: "battery.100.bolt")
                 .font(.system(size: 72))
-                .foregroundStyle(.blue.gradient)
+                .foregroundStyle(SwissStyle.accent)
 
             VStack(spacing: 12) {
                 Text("Ready to Track Your Readiness")
@@ -244,7 +244,7 @@ struct TodayView: View {
         VStack {
             HStack {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(SwissStyle.caution)
 
                 Text(message)
                     .font(.subheadline)
@@ -258,9 +258,7 @@ struct TodayView: View {
                 .font(.subheadline.weight(.medium))
             }
             .padding()
-            .background(Color(uiColor: .secondarySystemBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-            .shadow(color: .black.opacity(0.1), radius: 10, y: 5)
+            .swissGlass()
             .padding()
 
             Spacer()
@@ -279,9 +277,9 @@ struct TodayView: View {
 
         let iconColor: Color = {
             switch alert.severity {
-            case .high: return .red
-            case .medium: return .orange
-            case .low: return .yellow
+            case .high: return SwissStyle.critical
+            case .medium: return SwissStyle.caution
+            case .low: return SwissStyle.caution
             }
         }()
 
@@ -338,7 +336,7 @@ struct MetricCard: View {
         .padding(.vertical, 16)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(Color(uiColor: .secondarySystemBackground))
+                .fill(SwissStyle.surface)
         )
     }
 }
@@ -356,7 +354,7 @@ struct PhysiologyMetricCard: View {
             HStack(spacing: 4) {
                 Image(systemName: icon)
                     .font(.caption)
-                    .foregroundStyle(.pink)
+                    .foregroundStyle(SwissStyle.accent)
 
                 Text(title)
                     .font(.caption)
@@ -371,8 +369,8 @@ struct PhysiologyMetricCard: View {
                 Text(modifier)
                     .font(.caption2.weight(.medium))
                     .foregroundStyle(
-                        modifier.hasPrefix("+") ? .green :
-                        modifier.hasPrefix("-") ? .orange : .secondary
+                        modifier.hasPrefix("+") ? SwissStyle.positive :
+                        modifier.hasPrefix("-") ? SwissStyle.caution : .secondary
                     )
             } else {
                 Text("—")
@@ -384,7 +382,7 @@ struct PhysiologyMetricCard: View {
         .padding(.vertical, 12)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(Color(uiColor: .secondarySystemBackground))
+                .fill(SwissStyle.surface)
         )
     }
 }

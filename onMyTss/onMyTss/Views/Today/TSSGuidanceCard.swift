@@ -42,7 +42,7 @@ struct TSSGuidanceCard: View {
 
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
                     Text("\(recommendation.optimal)")
-                        .font(.system(size: 32, weight: .bold, design: .rounded))
+                        .font(.system(size: 32, weight: .bold, design: .default))
                         .foregroundStyle(intensityColor)
 
                     Text("(\(recommendation.min)-\(recommendation.max))")
@@ -78,11 +78,7 @@ struct TSSGuidanceCard: View {
             .padding(.top, 4)
         }
         .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color(uiColor: .systemBackground))
-                .shadow(color: .black.opacity(0.1), radius: 10, x: 0, y: 5)
-        )
+        .swissPanel()
     }
 
     // MARK: - Computed Properties
@@ -90,17 +86,17 @@ struct TSSGuidanceCard: View {
     private var intensityColor: Color {
         switch recommendation.intensity {
         case .recovery:
-            return Color(hex: "#E53E3E") // Red
+            return SwissStyle.critical // Red
         case .endurance:
-            return Color(hex: "#38A169") // Green
+            return SwissStyle.positive // Green
         case .tempo:
-            return Color(hex: "#D69E2E") // Yellow
+            return SwissStyle.caution // Yellow
         case .threshold:
-            return Color(hex: "#3182CE") // Blue
+            return SwissStyle.accent // Blue
         case .vo2Max:
-            return Color(hex: "#9F7AEA") // Purple
+            return SwissStyle.accent // Purple
         case .anaerobic:
-            return Color(hex: "#E53E3E") // Red
+            return SwissStyle.critical // Red
         }
     }
 }

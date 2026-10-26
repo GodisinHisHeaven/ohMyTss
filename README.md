@@ -32,6 +32,13 @@ existing discomfort reports through **Today → More → Discomfort reports**.
 See the [RPE and readiness contract](docs/v2/MODEL.md) and
 [UI research and validation](docs/v2/evidence/RPE_DASHBOARD_2026-10-26.md).
 
+The interface combines native Liquid Glass controls with Swiss-style typography,
+aligned sections and a restrained light/dark palette. `SwissStyle` owns shared
+surfaces and actions; content remains on quiet, readable backgrounds. Custom
+glass controls use opaque alternatives with Reduce Transparency or Increase
+Contrast, and older systems use standard materials. Muscle effort retains text,
+numbers and dates alongside its muted color scale.
+
 ## Repository layout
 
 - `onMyTss/`: iOS app, Xcode project, tests, and Xcode Cloud scripts.

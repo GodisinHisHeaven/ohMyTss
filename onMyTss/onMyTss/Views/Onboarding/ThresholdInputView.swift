@@ -23,23 +23,19 @@ struct ThresholdInputView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 24) {
-                // Icon
-                Image(systemName: "speedometer")
-                    .font(.system(size: 70))
-                    .foregroundColor(.orange)
-                    .padding(.top, 12)
+            VStack(alignment: .leading, spacing: 24) {
+                SwissSectionHeading(number: "03", title: "Optional setup")
+                Divider()
 
                 // Title
                 Text("Cycling Threshold (Optional)")
-                    .font(.title)
-                    .fontWeight(.bold)
+                    .font(.largeTitle.weight(.semibold)).tracking(-0.8)
 
                 // Description
                 Text("Your cycling FTP is used only for cycling power TSS. Other sports and local feedback work without it.")
                     .font(.body)
                     .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
+                    .multilineTextAlignment(.leading)
                     .padding(.horizontal)
 
                 // FTP Input
@@ -53,7 +49,8 @@ struct ThresholdInputView: View {
 #if os(iOS)
                             .keyboardType(.numberPad)
 #endif
-                            .textFieldStyle(RoundedBorderTextFieldStyle())
+                            .textFieldStyle(.plain).padding(12)
+                            .background(SwissStyle.inset, in: RoundedRectangle(cornerRadius: 8))
 
                         Text("W")
                             .font(.title3)
@@ -61,8 +58,7 @@ struct ThresholdInputView: View {
                     }
                 }
                 .padding()
-                .background(Color.secondary.opacity(0.1))
-                .cornerRadius(12)
+                .swissPanel()
 
                 // Help text
                 VStack(alignment: .leading, spacing: 10) {
@@ -83,42 +79,40 @@ struct ThresholdInputView: View {
                     .foregroundColor(.secondary)
                 }
                 .padding()
-                .background(Color.blue.opacity(0.1))
-                .cornerRadius(12)
+                .overlay(alignment: .top) { Divider() }
 
                 // Spacer to allow scroll when keyboard is up
-                Spacer().frame(height: 120)
+                Spacer().frame(height: 24)
             }
             .padding(.horizontal, 24)
             .padding(.top, 16)
             .padding(.bottom, 40)
         }
+        .swissCanvas()
         .scrollDismissesKeyboard(.interactively)
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 12) {
                 if let error = error {
                     Text(error.localizedDescription)
                         .font(.caption)
-                        .foregroundColor(.red)
-                        .multilineTextAlignment(.center)
+                        .foregroundStyle(SwissStyle.critical)
+                        .multilineTextAlignment(.leading)
                 }
 
                 Button(action: saveAndContinue) {
                     if isSaving {
                         ProgressView()
-                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                            .tint(SwissStyle.accent)
                             .frame(maxWidth: .infinity)
                             .padding()
                     } else {
                         Text("Continue")
                             .font(.headline)
-                            .foregroundColor(.white)
                             .frame(maxWidth: .infinity)
                             .padding()
                     }
                 }
-                .background(isValidFTP ? Color.blue : Color.gray)
-                .cornerRadius(12)
+                .swissAction(prominent: true)
                 .disabled(!isValidFTP || isSaving)
 
                 Button("Skip (FTP Unknown)") {
@@ -133,7 +127,7 @@ struct ThresholdInputView: View {
             .padding(.horizontal, 24)
             .padding(.top, 12)
             .padding(.bottom, 20)
-            .background(.ultraThinMaterial)
+            .background(SwissStyle.canvas)
         }
     }
 
@@ -176,7 +170,7 @@ struct HelpItem: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "checkmark.circle.fill")
-                .foregroundColor(.blue)
+                .foregroundStyle(SwissStyle.accent)
                 .font(.caption)
 
             Text(text)

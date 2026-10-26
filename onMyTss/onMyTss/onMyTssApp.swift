@@ -61,6 +61,12 @@ struct ohMyTssApp: App {
                         .task { openStorage() }
                 }
             }
+            .tint(SwissStyle.accent)
+            .fontDesign(.default)
+            .background(SwissStyle.canvas.ignoresSafeArea())
+            #if DEBUG
+            .modifier(SwissAccessibilityFixture())
+            #endif
         }
     }
 

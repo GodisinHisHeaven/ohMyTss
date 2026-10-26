@@ -60,8 +60,9 @@ struct ContentView: View {
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("--v2-ui-tests") {
                 // App selects isolated storage for this exact test-only flag.
-                thresholds.hasCompletedOnboarding = true
-                hasCompletedOnboarding = true
+                let completed = !ProcessInfo.processInfo.arguments.contains("--swiss-onboarding")
+                thresholds.hasCompletedOnboarding = completed
+                hasCompletedOnboarding = completed
             }
             #endif
 

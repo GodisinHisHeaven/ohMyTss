@@ -10,10 +10,10 @@ struct MuscleSelection: Identifiable {
 extension MuscleEffortGrade {
     var color: Color {
         switch self {
-        case .easy: return .teal
-        case .moderate: return .blue
-        case .hard: return .orange
-        case .veryHard: return .pink
+        case .easy: return SwissStyle.positive
+        case .moderate: return SwissStyle.accent
+        case .hard: return SwissStyle.caution
+        case .veryHard: return SwissStyle.critical
         }
     }
 }
@@ -43,13 +43,14 @@ struct MuscleRPECard: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Muscle load").font(.title3.bold())
+                    SwissSectionHeading(number: "02", title: "Muscle load")
                     Text("Last 7 days · latest per side").font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button("About muscle RPE", systemImage: "info.circle") { showingInfo = true }
                     .labelStyle(.iconOnly).foregroundStyle(.secondary)
                     .frame(minWidth: 44, minHeight: 44)
+                    .buttonStyle(.borderless)
             }
             BodyMapView(summary: summary) { region, side in
                 selection = MuscleSelection(region: region, side: side)
@@ -67,7 +68,7 @@ struct MuscleRPECard: View {
                             }
                             .frame(maxWidth: .infinity, minHeight: 65, alignment: .leading)
                             .padding(12)
-                            .background(Color(uiColor: .tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
+                            .overlay(alignment: .top) { Rectangle().fill(SwissStyle.rule).frame(height: 0.5) }
                         }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("muscle.summary.\(region.rawValue)")
@@ -92,6 +93,7 @@ struct MuscleRPECard: View {
                     }
                     .padding(24)
                 }
+                .swissCanvas()
                 .navigationTitle("Muscle RPE").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showingInfo = false } } }
             }
@@ -154,30 +156,32 @@ struct MuscleRPEEditor: View {
                         Text("Right").tag(BodySide.right)
                     }
                     .pickerStyle(.segmented).accessibilityIdentifier("rpe.side")
-                    LazyVGrid(columns: dynamicTypeSize.isAccessibilitySize
-                              ? [GridItem(.flexible())] : [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                        ForEach(MuscleEffortGrade.allCases) { grade in
-                            let selected = rpe.flatMap(MuscleEffortGrade.init(rpe:)) == grade
-                            Button {
-                                if !selected { rpe = grade.defaultRPE }
-                            } label: {
-                                VStack(alignment: .leading, spacing: 5) {
-                                    HStack {
-                                        Text(grade.label).font(.headline)
-                                        Spacer(minLength: 2)
-                                        if selected { Image(systemName: "checkmark.circle.fill").accessibilityHidden(true) }
+                    SwissGlassGroup {
+                        LazyVGrid(columns: dynamicTypeSize.isAccessibilitySize
+                                  ? [GridItem(.flexible())] : [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                            ForEach(MuscleEffortGrade.allCases) { grade in
+                                let selected = rpe.flatMap(MuscleEffortGrade.init(rpe:)) == grade
+                                Button {
+                                    if !selected { rpe = grade.defaultRPE }
+                                } label: {
+                                    VStack(alignment: .leading, spacing: 5) {
+                                        HStack {
+                                            Text(grade.label).font(.headline)
+                                            Spacer(minLength: 2)
+                                            if selected { Image(systemName: "checkmark.circle.fill").accessibilityHidden(true) }
+                                        }
+                                        Text("RPE \(grade.rangeLabel)").font(.caption)
                                     }
-                                    Text("RPE \(grade.rangeLabel)").font(.caption)
+                                    .foregroundStyle(.primary)
+                                    .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                                    .padding(14)
+                                    .swissGlass()
+                                    .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(selected ? SwissStyle.accent : .clear, lineWidth: 1.5))
                                 }
-                                .foregroundStyle(selected ? Color.primary : .secondary)
-                                .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
-                                .padding(14)
-                                .background(grade.color.opacity(selected ? 0.17 : 0.06), in: RoundedRectangle(cornerRadius: 16))
-                                .overlay(RoundedRectangle(cornerRadius: 16).stroke(grade.color.opacity(selected ? 0.8 : 0.15), lineWidth: selected ? 2 : 1))
+                                .buttonStyle(.plain)
+                                .accessibilityAddTraits(selected ? .isSelected : [])
+                                .accessibilityIdentifier("rpe.grade.\(grade.rawValue)")
                             }
-                            .buttonStyle(.plain)
-                            .accessibilityAddTraits(selected ? .isSelected : [])
-                            .accessibilityIdentifier("rpe.grade.\(grade.rawValue)")
                         }
                     }
                     if let value = rpe {
@@ -201,13 +205,14 @@ struct MuscleRPEEditor: View {
                     }
                     if let error { V2ErrorMessage(message: error) }
                     Button("Save RPE") { save() }
-                        .buttonStyle(.borderedProminent).controlSize(.large)
+                        .swissAction(prominent: true).controlSize(.large)
                         .frame(maxWidth: .infinity)
                         .disabled(rpe == nil)
                         .accessibilityIdentifier("rpe.save")
                 }
                 .padding(24)
             }
+            .swissCanvas()
             .navigationTitle(selection.region.label).navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

@@ -10,6 +10,7 @@ import SwiftData
 
 struct OnboardingContainerView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var currentStep: OnboardingStep = .welcome
     @State private var healthKitManager = HealthKitManager()
 
@@ -24,7 +25,7 @@ struct OnboardingContainerView: View {
             switch currentStep {
             case .welcome:
                 WelcomeView {
-                    withAnimation {
+                    withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
                         currentStep = .healthPermission
                     }
                 }
@@ -33,7 +34,7 @@ struct OnboardingContainerView: View {
                 HealthPermissionView(
                     healthKitManager: healthKitManager,
                     onContinue: {
-                        withAnimation {
+                        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
                             currentStep = .thresholdInput
                         }
                     }
@@ -48,7 +49,15 @@ struct OnboardingContainerView: View {
                 )
             }
         }
-        .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
+        .transition(reduceMotion ? .identity : .asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
+        #if DEBUG
+        .onAppear {
+            let arguments = ProcessInfo.processInfo.arguments
+            if arguments.contains("--v2-ui-tests") && arguments.contains("--swiss-threshold-preview") {
+                currentStep = .thresholdInput
+            }
+        }
+        #endif
     }
 }
 
