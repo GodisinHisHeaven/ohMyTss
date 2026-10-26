@@ -12,6 +12,9 @@ import SwiftData
 struct MainTabView: View {
     let engine: any BodyBatteryEngineProtocol
     let dataStore: DataStore
+    @Environment(\.scenePhase) private var scenePhase
+    @Query private var appStates: [AppState]
+    @State private var morningSync = MorningSummarySync()
 
     @State private var selectedTab: Tab = .today
 
@@ -44,7 +47,23 @@ struct MainTabView: View {
                 }
                 .tag(Tab.settings)
         }
+        .task(id: MorningSyncTrigger(isActive: scenePhase == .active, computedAt: appStates.first?.lastComputationDate)) {
+            await syncMorningSummaryIfActive()
+        }
     }
+
+    private func syncMorningSummaryIfActive() async {
+        guard scenePhase == .active else { return }
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--v2-ui-tests") { return }
+        #endif
+        await morningSync.sync(store: dataStore)
+    }
+}
+
+private struct MorningSyncTrigger: Equatable {
+    let isActive: Bool
+    let computedAt: Date?
 }
 
 // MARK: - Previews

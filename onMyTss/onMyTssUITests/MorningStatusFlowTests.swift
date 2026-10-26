@@ -37,6 +37,45 @@ final class MorningStatusFlowTests: XCTestCase {
     // someone runs all UI tests against a normal Release app.
     #if DEBUG
     @MainActor
+    func testNewPhoneUserEnablesSummaryWithoutAccountForm() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--v2-ui-tests", "--v2-rpe-demo", "--morning-status-ui-fixture", "--morning-new-user-fixture", "-AppleInterfaceStyle", "Light"]
+        app.launch()
+        XCTAssertTrue(app.tabBars.buttons["Settings"].waitForExistence(timeout: 10))
+        app.tabBars.buttons["Settings"].tap()
+        let entry = app.buttons["settings.morningStatus"]
+        reach(entry, app: app)
+        entry.tap()
+        let phone = app.textFields["morning.phone"]
+        XCTAssertTrue(phone.waitForExistence(timeout: 5))
+        phone.tap(); phone.typeText("2025550100")
+        app.buttons["morning.sendCode"].tap()
+        let code = app.textFields["morning.code"]
+        XCTAssertTrue(code.waitForExistence(timeout: 5))
+        code.tap(); code.typeText("123456")
+        app.buttons["morning.verify"].tap()
+        let enable = app.buttons["morning.enable"]
+        XCTAssertTrue(enable.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["morning.subscription"].label.contains("Not subscribed"))
+        XCTAssertFalse(app.buttons["morning.syncSummary"].exists)
+        enable.tap()
+        attach(app, "Morning texts — explicit summary consent")
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(enable.exists)
+        enable.tap()
+        app.buttons.matching(NSPredicate(format: "label == %@ AND identifier != %@", "Enable Morning Texts", "morning.enable")).firstMatch.tap()
+        let sync = app.buttons["morning.syncSummary"]
+        reach(sync, app: app)
+        XCTAssertTrue(sync.isEnabled)
+        sync.tap()
+        XCTAssertEqual(app.secureTextFields.count, 0)
+        XCTAssertTrue(app.staticTexts["Readiness"].exists)
+        attach(app, "Morning texts — new user app summary")
+        XCTAssertEqual(app.state, .runningForeground)
+    }
+
+    @MainActor
     func testMorningPhoneStaysNativeThroughPrivacySettingsAndDisconnect() {
         continueAfterFailure = false
         let app = XCUIApplication()

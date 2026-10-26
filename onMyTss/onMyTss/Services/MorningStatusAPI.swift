@@ -1,7 +1,7 @@
 import Foundation
 
 enum MorningStatusError: LocalizedError, Equatable {
-    case unauthorized, invalidInput, rateLimited, unavailable, invalidResponse, secureStorage, noSubscription
+    case unauthorized, invalidInput, rateLimited, unavailable, invalidResponse, secureStorage, noSubscription, consentRequired
 
     var errorDescription: String? {
         switch self {
@@ -12,6 +12,7 @@ enum MorningStatusError: LocalizedError, Equatable {
         case .invalidResponse: "Morning status returned an unexpected response. Please try again later."
         case .secureStorage: "Unable to access your saved morning status session. Unlock your device and try again."
         case .noSubscription: "This phone number has no morning status subscription yet."
+        case .consentRequired: "Check your morning text consent and delivery time zone. If you opted out by text, reply START first."
         }
     }
 }
@@ -46,6 +47,8 @@ protocol MorningStatusServing {
     func fetchStatus(token: String) async throws -> MorningStatus
     func updateTimezone(_ timezone: String, token: String) async throws -> MorningStatus
     func unsubscribe(token: String) async throws -> MorningStatus
+    func subscribe(timezone: String, token: String) async throws -> MorningStatus
+    func uploadSummary(_ summary: MorningAppSummary, token: String) async throws -> MorningStatus
 }
 
 private final class MorningStatusRedirectDelegate: NSObject, URLSessionTaskDelegate {
@@ -98,7 +101,9 @@ final class MorningStatusAPI: MorningStatusServing {
 
     func verifyCode(challenge: String, code: String) async throws -> String {
         struct Session: Decodable { let accessToken: String; let tokenType: String }
-        let result: Session = try await request("phone/verify", method: "POST", body: ["challenge": challenge, "code": code])
+        let result: Session = try await request("phone/verify", method: "POST", body: [
+            "challenge": challenge, "code": code, "privacy_version": "app-morning-v1"
+        ])
         guard !result.accessToken.isEmpty, result.tokenType == "Bearer" else {
             throw MorningStatusError.invalidResponse
         }
@@ -117,8 +122,17 @@ final class MorningStatusAPI: MorningStatusServing {
         try await request("morning-status/unsubscribe", method: "POST", token: token)
     }
 
+    func subscribe(timezone: String, token: String) async throws -> MorningStatus {
+        try await request("morning-status/subscribe", method: "POST", token: token,
+                          body: ["timezone": timezone, "consent_version": "app-morning-v1"])
+    }
+
+    func uploadSummary(_ summary: MorningAppSummary, token: String) async throws -> MorningStatus {
+        try await request("morning-status/summary", method: "PUT", token: token, body: summary.payload)
+    }
+
     private func request<T: Decodable>(_ path: String, method: String = "GET", token: String? = nil,
-                                       body: [String: String]? = nil) async throws -> T {
+                                       body: [String: Any]? = nil) async throws -> T {
         guard baseURL.scheme == "https" else { throw MorningStatusError.invalidResponse }
         var request = URLRequest(url: baseURL.appendingPathComponent(path))
         request.httpMethod = method
@@ -134,6 +148,7 @@ final class MorningStatusAPI: MorningStatusServing {
         switch response.statusCode {
         case 200: break
         case 401: throw MorningStatusError.unauthorized
+        case 403: throw MorningStatusError.consentRequired
         case 409: throw MorningStatusError.noSubscription
         case 422: throw MorningStatusError.invalidInput
         case 429: throw MorningStatusError.rateLimited

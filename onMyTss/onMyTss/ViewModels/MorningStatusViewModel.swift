@@ -131,6 +131,19 @@ final class MorningStatusViewModel {
         }
     }
 
+    func enableAppMorning(timezone: String) async {
+        await perform(notice: "Morning texts enabled. Sync your app summary when today's data is ready.") {
+            try await self.api.subscribe(timezone: timezone, token: $0)
+        }
+    }
+
+    func syncSummary(_ summary: MorningAppSummary) async {
+        guard status?.canUploadSummary == true else { return }
+        await perform(notice: "Today's app summary is synced.") {
+            try await self.api.uploadSummary(summary, token: $0)
+        }
+    }
+
     func signOut() {
         guard !isBusy else { return }
         do {

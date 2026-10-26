@@ -1,6 +1,15 @@
 import Foundation
 
 struct MorningStatus: Decodable, Equatable {
+    struct AppSummary: Decodable, Equatable {
+        let readinessScore: Int?
+        let sleepHours: Double?
+        let trainingMinutes7d: Int
+        enum CodingKeys: String, CodingKey {
+            case readinessScore, sleepHours
+            case trainingMinutes7d = "trainingMinutes7D"
+        }
+    }
     struct Wellness: Decodable, Equatable {
         let hrv: Double?
         let restingHr: Double?
@@ -24,6 +33,13 @@ struct MorningStatus: Decodable, Equatable {
     let lastActivitySync: String?
     let wellnessThrough: String?
     let syncFailures: Int
+    var dataSource: String? = nil
+    var appSummaryConsent: Bool? = nil
+    var requiresSmsRestart: Bool? = nil
+    var appSummary: AppSummary? = nil
+
+    var usesAppSummary: Bool { dataSource == "app" }
+    var canUploadSummary: Bool { usesAppSummary && appSummaryConsent == true && smsEnabled }
 
     var subscriptionLabel: String {
         switch smsState {
@@ -38,7 +54,7 @@ struct MorningStatus: Decodable, Equatable {
     var deliveryDescription: String {
         if sentToday { return "Today's message was submitted for delivery." }
         if !smsEnabled { return "Morning texts are not enabled." }
-        if !hasTodayData { return "Waiting for today's wellness data." }
+        if !hasTodayData { return "Open the app and sync today's summary." }
         if inDeliveryWindow { return "Today's data is available. The next scheduled check can send your message." }
         return "Outside the morning window. Messages are sent only with current-day data."
     }

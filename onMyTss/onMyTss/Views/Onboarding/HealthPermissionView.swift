@@ -38,7 +38,7 @@ struct HealthPermissionView: View {
                     HealthDataRow(icon: "waveform.path.ecg", text: "Heart Rate Variability")
                 }
                 .padding(20).swissPanel()
-                Text("Apple Health data stays on this device. You choose what to share with the app.")
+                Text("Raw Apple Health data stays on this device. Optional morning texts share a short summary only after you enable them.")
                     .font(.footnote).foregroundStyle(.secondary)
                 if let error {
                     Text(error.localizedDescription).font(.footnote).foregroundStyle(SwissStyle.critical)

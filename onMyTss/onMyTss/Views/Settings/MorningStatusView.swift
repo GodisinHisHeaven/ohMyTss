@@ -1,15 +1,18 @@
 import SwiftUI
 
 struct MorningStatusView: View {
+    let dataStore: DataStore
     @State private var model: MorningStatusViewModel
     @State private var phone = ""
     @State private var code = ""
     @State private var timezone = "UTC"
     @State private var confirmingUnsubscribe = false
+    @State private var confirmingEnable = false
     @FocusState private var focusedField: PhoneField?
     private enum PhoneField { case phone, code }
 
-    init() {
+    init(dataStore: DataStore) {
+        self.dataStore = dataStore
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--morning-status-ui-fixture") {
             _model = State(initialValue: MorningStatusViewModel(api: MorningStatusUIFixture(), tokenStore: MorningSessionUIFixture()))
@@ -25,7 +28,7 @@ struct MorningStatusView: View {
                 if let status = model.status {
                     subscriptionSection(status)
                     deliverySection(status)
-                    wellnessSection(status)
+                    appSummarySection(status)
                     Section {
                         NavigationLink {
                             MorningTimeZonePicker(selection: $timezone)
@@ -78,7 +81,7 @@ struct MorningStatusView: View {
                 NavigationLink("Data and Privacy") { MorningStatusPrivacyView() }
                     .accessibilityIdentifier("morning.privacy")
             } footer: {
-                Text("Morning status uses the Intervals.icu data linked to your phone. Apple Health data is not uploaded by this feature.")
+                Text("Use your app's latest summary for morning texts. No email, password or Intervals.icu account is required.")
             }
         }
         .navigationTitle("Morning Status")
@@ -97,6 +100,17 @@ struct MorningStatusView: View {
             Button("Turn Off Texts", role: .destructive) { Task { await model.unsubscribe() } }
         } message: {
             Text("This unsubscribes your phone from SMS. To resubscribe, reply START to an existing ohMyTss message.")
+        }
+        .alert("Enable morning texts with your app summary?", isPresented: $confirmingEnable) {
+            Button("Cancel", role: .cancel) { }
+            Button("Enable Morning Texts") {
+                Task {
+                    await model.enableAppMorning(timezone: TimeZone.current.identifier)
+                    if model.status?.canUploadSummary == true { await syncAppSummary() }
+                }
+            }
+        } message: {
+            Text("Share your latest readiness score, sleep duration and seven-day training minutes with ohMyTss for up to one morning text per day. Message and data rates may apply. Reply STOP to unsubscribe or HELP for help. Uses this device's time zone.")
         }
     }
 
@@ -152,7 +166,7 @@ struct MorningStatusView: View {
                 }
             }
         } header: { Text("Your phone number") } footer: {
-            Text("Enter the US number linked to your morning texts. We'll send a verification code and remember this device. Message and data rates may apply. Verification does not change your SMS subscription.")
+            Text("Enter your US phone number. We'll send a code and remember this device. Verifying connects your number under our Data and Privacy terms; it does not subscribe you or share training data. Message and data rates may apply.")
         }
     }
 
@@ -171,9 +185,14 @@ struct MorningStatusView: View {
                 .accessibilityIdentifier("morning.connectedPhone")
             LabeledContent("SMS", value: status.subscriptionLabel)
                 .accessibilityIdentifier("morning.subscription")
-            if !status.smsEnabled {
+            if status.requiresSmsRestart == true {
                 Text("If your phone is already linked, reply START to an existing ohMyTss text to resubscribe. Reply STOP at any time to unsubscribe.")
                     .font(.footnote).foregroundStyle(.secondary)
+            } else if !status.canUploadSummary {
+                Button(status.smsEnabled ? "Use App Summary" : "Enable Morning Texts") { confirmingEnable = true }
+                    .swissAction(prominent: true)
+                    .disabled(model.isBusy || status.smsState == "paused")
+                    .accessibilityIdentifier("morning.enable")
             }
         }
     }
@@ -187,7 +206,7 @@ struct MorningStatusView: View {
             if status.sentToday {
                 Text("Submission does not confirm carrier delivery.").font(.footnote).foregroundStyle(.secondary)
             }
-            LabeledContent("Wellness synced through", value: status.wellnessThrough ?? "No data yet")
+            LabeledContent("App summary date", value: status.wellnessThrough ?? "No data yet")
             if status.syncFailures > 0 {
                 Label("The last data sync did not complete. Scheduled sync will retry.", systemImage: "exclamationmark.triangle")
                     .foregroundStyle(SwissStyle.caution)
@@ -197,16 +216,35 @@ struct MorningStatusView: View {
         }
     }
 
-    private func wellnessSection(_ status: MorningStatus) -> some View {
-        Section("Today's wellness") {
-            if let wellness = status.wellness {
-                LabeledContent("HRV", value: measurement(wellness.hrv, unit: "ms"))
-                LabeledContent("Resting heart rate", value: measurement(wellness.restingHr, unit: "bpm"))
-                LabeledContent("Sleep", value: measurement(wellness.sleepHours, unit: "hours"))
-                LabeledContent("Training stress balance", value: measurement(wellness.tsb, unit: ""))
+    private func appSummarySection(_ status: MorningStatus) -> some View {
+        Section {
+            if let summary = status.appSummary {
+                LabeledContent("Readiness", value: summary.readinessScore.map { "\($0)/100" } ?? "Not available")
+                LabeledContent("Sleep", value: measurement(summary.sleepHours, unit: "hours"))
+                LabeledContent("Last 7 days", value: "\(summary.trainingMinutes7d) min of training")
             } else {
-                Text("No wellness record for today yet.").foregroundStyle(.secondary)
+                Text("No app summary for today yet.").foregroundStyle(.secondary)
             }
+            if status.canUploadSummary {
+                Button("Sync App Summary") { Task { await syncAppSummary() } }
+                    .disabled(model.isBusy)
+                    .accessibilityIdentifier("morning.syncSummary")
+            }
+        } header: { Text("Today's app summary") } footer: {
+            Text("Open and sync the app in the morning. Summaries update while the app is active; iOS may not refresh data while it is closed. Only the latest summary is stored, and syncing does not send a text immediately.")
+        }
+    }
+
+    private func syncAppSummary() async {
+        guard let status = model.status, status.canUploadSummary else { return }
+        do {
+            guard let summary = try MorningAppSummary.make(store: dataStore, timezone: status.timezone) else {
+                model.notice = "Sync today's training on Today first, and use this device's time zone for morning delivery."
+                return
+            }
+            await model.syncSummary(summary)
+        } catch {
+            model.errorMessage = "Unable to prepare your app summary. Your saved training data has not changed."
         }
     }
 
@@ -254,15 +292,16 @@ struct MorningStatusPrivacyView: View {
     var body: some View {
         SwissList {
             Section("Your phone number") {
-                Text("Morning status uses your phone number, SMS consent and training data already synced from Intervals.icu. This data is stored by the private service in Supabase.")
+                Text("Morning status uses your verified phone number. No email, password or Intervals.icu account is needed. Verification creates a private connection but does not enable texts or upload training data.")
                 Text("Twilio verifies your phone with a one-time text code. Your number and code are sent over HTTPS. The app stores only your signed session in this device's Keychain, so you do not need an email or password.")
             }
             Section("Morning texts") {
-                Text("Twilio processes SMS delivery. Texts require opt-in and current-day wellness data, and are limited to one morning message per local day. Message and data rates may apply.")
+                Text("When you enable app summaries, ohMyTss stores only your latest readiness score, sleep duration and seven-day training minutes in its private Supabase service. No raw HealthKit samples, workout routes or muscle notes are uploaded. Morning texts use only app summaries. Historical service records are not used for delivery.")
+                Text("Twilio processes SMS delivery and receives the text summary. Texts require opt-in and a current-day summary, and are limited to one morning message per local day. Message and data rates may apply.")
                 Text("Reply STOP to unsubscribe, START to resubscribe or HELP for help. Disconnecting this device does not unsubscribe you.")
             }
             Section("Apple Health") {
-                Text("This feature does not upload Apple Health data or grant the server access to it. Refreshing morning status does not trigger SMS delivery.")
+                Text("HealthKit calculations happen on your device. Only the three summary values described above are shared after you enable morning texts. Turning texts off stops future summary uploads; disconnecting removes this device's session. Refreshing status does not trigger SMS delivery.")
             }
             Section("Contact") {
                 Text("This is a personal project run by Mingjun Liu. For account access or data deletion, contact mingjun6@illinois.edu.")

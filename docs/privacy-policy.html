@@ -138,7 +138,9 @@
 
         <h3>Optional Strava and Morning Status SMS</h3>
         <p>If you connect Strava, the iOS app reads your authorized activity and athlete profile data and stores access credentials in the iOS Keychain. OAuth and API requests go to Strava.</p>
-        <p>Morning Status SMS is an optional service for existing subscriptions, managed in the app under Settings → Morning Status. It uses your phone number, SMS consent, and training/wellness data from Intervals.icu and optional Strava connections. The backend stores this data in Supabase and uses Twilio to deliver messages. Enter your phone number and request a one-time code to verify ownership through Twilio; no email or password is needed. Your number and code are sent over HTTPS, and the app saves only the signed session in this device's Keychain. Verification does not subscribe you to morning texts or reverse an opt-out. Status, time zone settings, unsubscribe controls and privacy information are native app screens. The <a href="https://coach-ota.fly.dev/privacy">service privacy notice</a> also describes backend processing. This feature does not upload Apple Health data. Reply STOP to stop SMS or START to resubscribe. Disconnecting removes this device's session without changing SMS consent. Coaching chat, plans, other alerts, and signup are currently paused.</p>
+        <p>Morning Status SMS is optional and stays inside Settings → Morning Status. Enter your US phone number and verify it with a Twilio code; no email, password or Intervals.icu account is required. Verification creates a private phone identity without subscribing you or sharing training data. The app stores only the signed session in Keychain.</p>
+        <p>Enabling morning texts separately consents to share your latest readiness score, sleep duration and seven-day training minutes, calculated on your device. The private service stores only the latest summary in Supabase and includes it in the text processed by Twilio. Raw HealthKit samples, workout routes and muscle notes are not uploaded. App summaries are not sent to an LLM.</p>
+        <p>All morning texts use app summaries. Historical Intervals data remains stored but is not synced or used for morning delivery. Existing subscribers must separately connect their app summary. Delivery requires current-day data and is limited to one text per local day, 06:00–10:30. Open and sync the app in the morning; background refresh is not guaranteed. Status refresh and uploads do not send a text immediately. Message and data rates may apply. Reply STOP to stop SMS, START to resubscribe or HELP for help. Turning texts off stops future uploads; disconnecting removes this device's session without changing consent. See the <a href="https://coach-ota.fly.dev/privacy">service privacy notice</a> for backend processing and deletion. Web coaching signup, chat, plans and other alerts remain paused.</p>
         <p>We do not collect payment information or advertising identifiers.</p>
 
         <h2>How We Use Your Data</h2>
@@ -156,13 +158,13 @@
         <h3>iOS HealthKit Storage</h3>
         <ul>
             <li>HealthKit data and calculated metrics are stored locally using Apple's SwiftData framework</li>
-            <li>This integration does not upload HealthKit data to the morning status service</li>
+            <li>Only the three summary values above are uploaded after separate morning-text consent</li>
             <li>Optional Strava and SMS services use the connections described above</li>
             <li>Data is protected by iOS sandboxing and encryption mechanisms</li>
         </ul>
 
         <h3>No Account Required</h3>
-        <p>The iOS HealthKit features do not require an account. Strava requires separate authorization; morning status uses phone verification for an existing subscription and requires separate SMS opt-in.</p>
+        <p>The iOS HealthKit features do not require an account. Strava requires separate authorization; morning status uses phone verification and separate SMS/summary opt-in.</p>
 
         <h2>Data You Control</h2>
 
@@ -215,7 +217,7 @@
         <p>ohMyTss does not use third-party analytics or advertising. Optional Strava and morning status services process the data described above.</p>
 
         <h2>International Users</h2>
-        <p>iOS HealthKit data stays on your device. The optional morning status service and its providers process account, training, and SMS data on their servers.</p>
+        <p>Raw iOS HealthKit data stays on your device. With separate consent, the optional morning status service and its providers process your phone, latest summary and SMS on their servers.</p>
 
         <h2>Your Consent</h2>
         <p>By using ohMyTss and granting HealthKit permissions, you consent to the collection and use of your health data as described in this Privacy Policy.</p>
@@ -230,7 +232,7 @@
         <div class="summary">
             <h2>Summary</h2>
             <p><strong>In Plain English:</strong></p>
-            <p>ohMyTss reads your workout data from Apple Health to calculate how ready you are to train. HealthKit calculations happen on your device. Optional Strava authorization and the separate morning SMS service use external providers as described above. HealthKit data is not uploaded by this integration or used for advertising. You can delete all calculated data anytime, and your original Health data stays safe in Apple Health.</p>
+            <p>ohMyTss reads your workout data from Apple Health to calculate how ready you are to train. HealthKit calculations happen on your device. Optional Strava authorization and the separate morning SMS service use external providers as described above. Only the latest readiness score, sleep duration and seven-day training minutes are shared if you enable morning texts. Health data is never used for advertising. You can delete all calculated data anytime, and your original Health data stays safe in Apple Health.</p>
         </div>
 
         <div class="footer">

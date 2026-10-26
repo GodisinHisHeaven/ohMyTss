@@ -10,6 +10,7 @@ import SwiftData
 
 /// Settings screen for managing user preferences and app configuration
 struct SettingsView: View {
+    private let dataStore: DataStore
     @Environment(\.modelContext) private var modelContext
     @State private var cardioHR = ""
     @State private var cardioMessage: String?
@@ -19,6 +20,7 @@ struct SettingsView: View {
     @State private var showingFTPEditor = false
 
     init(dataStore: DataStore, engine: any BodyBatteryEngineProtocol) {
+        self.dataStore = dataStore
         _viewModel = State(initialValue: SettingsViewModel(dataStore: dataStore, engine: engine))
     }
 
@@ -179,7 +181,7 @@ struct SettingsView: View {
 
                 Section {
                     NavigationLink {
-                        MorningStatusView()
+                        MorningStatusView(dataStore: dataStore)
                     } label: {
                         Label("Morning Status", systemImage: "message")
                     }

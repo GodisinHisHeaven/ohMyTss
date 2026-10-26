@@ -28,7 +28,7 @@ final class MorningStatusTests: XCTestCase {
         XCTAssertEqual(body, ["phone": "+12025550100"])
         XCTAssertEqual(calls[1].url?.path, "/api/mobile/phone/verify")
         XCTAssertEqual(try JSONSerialization.jsonObject(with: calls[1].httpBody!) as? [String: String],
-                       ["challenge": "fixture-challenge", "code": "123456"])
+                       ["challenge": "fixture-challenge", "code": "123456", "privacy_version": "app-morning-v1"])
         XCTAssertEqual(calls[2].value(forHTTPHeaderField: "Authorization"), "Bearer fixture-session")
         XCTAssertNil(calls[2].httpBody)
         for request in calls {
@@ -293,7 +293,7 @@ final class MorningStatusTests: XCTestCase {
 }
 
 @MainActor
-private final class MorningServiceStub: MorningStatusServing {
+final class MorningServiceStub: MorningStatusServing {
     var error: Error?
     var json = morningFixtureJSON
     var requestedPhone: String?
@@ -302,6 +302,8 @@ private final class MorningServiceStub: MorningStatusServing {
     var updatedTimezone: String?
     var unsubscribeCalls = 0
     var fetchCalls = 0
+    var subscribeCalls = 0
+    var uploadedSummaries: [MorningAppSummary] = []
     func requestCode(phone: String) async throws -> MorningPhoneChallenge {
         if let error { throw error }
         requestCalls += 1
@@ -328,11 +330,20 @@ private final class MorningServiceStub: MorningStatusServing {
         unsubscribeCalls += 1
         return try await fetchStatus(token: token)
     }
+    func subscribe(timezone: String, token: String) async throws -> MorningStatus {
+        subscribeCalls += 1
+        return try await fetchStatus(token: token)
+    }
+    func uploadSummary(_ summary: MorningAppSummary, token: String) async throws -> MorningStatus {
+        if let error { throw error }
+        uploadedSummaries.append(summary)
+        return try await fetchStatus(token: token)
+    }
     nonisolated deinit {}
 }
 
 @MainActor
-private final class MorningSessionStub: MorningSessionStoring {
+final class MorningSessionStub: MorningSessionStoring {
     var token: String?
     var failWrites = false
     init(token: String? = nil) { self.token = token }
@@ -345,7 +356,7 @@ private final class MorningSessionStub: MorningSessionStoring {
     nonisolated deinit {}
 }
 
-private let morningFixtureJSON = #"""
+let morningFixtureJSON = #"""
 {"display_name":"Fixture Athlete","email":"athlete@example.invalid","phone_hint":"Ending in 0100",
  "timezone":"America/Chicago","local_date":"2026-10-25","window_start":"06:00","window_end":"10:30",
  "sms_state":"active","sms_enabled":true,"sent_today":false,"has_today_data":true,"in_delivery_window":false,
