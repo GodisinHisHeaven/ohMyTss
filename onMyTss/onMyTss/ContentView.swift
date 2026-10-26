@@ -65,8 +65,8 @@ struct ContentView: View {
             }
             #endif
 
-            // Local history opens without waiting for network or HealthKit. Today offers explicit sync.
-            if hasCompletedOnboarding { try store.refreshV2Estimates() }
+            // Open saved history immediately. Today backfills estimates cooperatively;
+            // recalculating the entire history here blocks launch on the main actor.
         } catch {
             // If error fetching, assume not completed
             hasCompletedOnboarding = false

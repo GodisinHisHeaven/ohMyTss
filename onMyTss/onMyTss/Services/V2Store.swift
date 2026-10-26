@@ -158,6 +158,30 @@ final class V2Store {
         }
     }
 
+    /// Fill legacy/model-version gaps after launch without blocking the main actor
+    /// for the whole history. Imports and edits already refresh changed inputs.
+    func backfillEstimates() async throws {
+        // Give SwiftUI time to present the saved history before doing derived work.
+        try await Task.sleep(for: .milliseconds(1))
+        let snapshots = try context.fetch(FetchDescriptor<LoadEstimateRecord>(
+            sortBy: [SortDescriptor(\.computedAt, order: .reverse)]
+        ))
+        var latestVersions: [String: String] = [:]
+        for snapshot in snapshots where latestVersions[snapshot.sessionID] == nil {
+            latestVersions[snapshot.sessionID] = snapshot.version
+        }
+        let sessions = try context.fetch(FetchDescriptor<Workout>(
+            sortBy: [SortDescriptor(\.startTime, order: .reverse)]
+        ))
+        for session in sessions where !session.isTombstoned && !session.isSuppressed {
+            guard latestVersions[session.id] != LoadModel.version else { continue }
+            // A real suspension lets the UI process input and cancellation between
+            // sessions. Each saved snapshot also makes an interrupted pass resumable.
+            try await Task.sleep(for: .milliseconds(1))
+            try recalculate(session)
+        }
+    }
+
     func recalculate(_ session: Workout) throws {
         guard !session.isTombstoned, !session.isSuppressed else { try context.save(); return }
         let all = try context.fetch(FetchDescriptor<Workout>())
@@ -202,8 +226,13 @@ final class V2Store {
                                      thresholdsModifiedAt: thresholds.lastModified,
                                      sourceIDs: sources.map { "\($0.source):\($0.id)" }.sorted())
         let inputData = try encoder.encode(snapshot)
-        let previous = try context.fetch(FetchDescriptor<LoadEstimateRecord>(sortBy: [SortDescriptor(\.computedAt, order: .reverse)]))
-            .first { $0.sessionID == session.id }
+        let sessionID = session.id
+        var previousQuery = FetchDescriptor<LoadEstimateRecord>(
+            predicate: #Predicate { $0.sessionID == sessionID },
+            sortBy: [SortDescriptor(\.computedAt, order: .reverse)]
+        )
+        previousQuery.fetchLimit = 1
+        let previous = try context.fetch(previousQuery).first
         let now = clock()
         let estimate = LoadModel.estimate(type: session.workoutType, start: session.startTime, duration: session.duration,
                                           distance: session.distance, features: features, sets: sets, tags: tags,

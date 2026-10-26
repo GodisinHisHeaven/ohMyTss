@@ -16,14 +16,19 @@ struct V2TodayView: View {
     @State private var syncMessage: String?
     @State private var nextSport = "None"
 
-    private var activeWorkouts: [Workout] { workouts.filter { !$0.isSuppressed && !$0.isTombstoned } }
-    private var todayWorkouts: [Workout] { activeWorkouts.filter { Calendar.current.isDateInToday($0.startTime) } }
-    private func estimate(for workout: Workout) -> LoadEstimateValue? {
-        estimates.first { $0.sessionID == workout.id }?.value
+    init(engine: any BodyBatteryEngineProtocol, dataStore: DataStore) {
+        self.engine = engine
+        self.dataStore = dataStore
+        let cutoff = Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? Date()
+        // Today only displays recent estimates. Backfilling older sessions must
+        // not change this query's result and rerender the entire home screen.
+        _estimates = Query(filter: #Predicate<LoadEstimateRecord> { $0.inputCutoff >= cutoff },
+                           sort: \LoadEstimateRecord.computedAt, order: .reverse)
     }
 
     var body: some View {
-        NavigationStack {
+        let summary = V2TodaySummary(workouts: workouts, estimates: estimates, observations: observations)
+        return NavigationStack {
             List {
                 Section("Quick check-in") {
                     BodyMapView(observations: observations) { selectedRegion = $0 }
@@ -32,7 +37,7 @@ struct V2TodayView: View {
                 Section {
                     VStack(alignment: .leading, spacing: 12) {
                         Label("Cardio Load", systemImage: "heart.text.square").font(.title2.bold())
-                        cardioSummary
+                        cardioSummary(summary)
                         Text("Estimated cardiovascular demand from timed heart rate. Legacy TSS remains in History.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
@@ -41,8 +46,8 @@ struct V2TodayView: View {
                 Section("Regional context") {
                     Text("Highest activity grade in the last 7 days, shown separately for each method. Reports with recent discomfort appear first. Recovery time cannot yet be estimated.")
                         .font(.caption).foregroundStyle(.secondary)
-                    ForEach(prioritizedRegions) { region in
-                        NavigationLink { RegionDetailView(region: region) } label: { regionRow(region) }
+                    ForEach(summary.prioritizedRegions) { region in
+                        NavigationLink { RegionDetailView(region: region) } label: { regionRow(region, summary: summary) }
                     }
                 }
                 Section("Strength training") {
@@ -50,12 +55,12 @@ struct V2TodayView: View {
                         .accessibilityIdentifier("today.strength")
                 }
                 Section("Activities") {
-                    if activeWorkouts.isEmpty {
+                    if summary.activeWorkouts.isEmpty {
                         Text("No activities available. Sync Apple Health or connected Strava, or record strength training here.")
                         Text("No readable Health data may mean no records or a permission choice. Manual reports work offline.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
-                    ForEach(Array(activeWorkouts.prefix(5))) { workout in
+                    ForEach(Array(summary.activeWorkouts.prefix(5))) { workout in
                         NavigationLink { V2ActivityDetailView(workout: workout) } label: {
                             V2WorkoutRow(workout: workout)
                         }
@@ -94,17 +99,17 @@ struct V2TodayView: View {
             .task {
                 // Add v2 estimates to legacy records without replacing their stored TSS.
                 do {
-                    for workout in activeWorkouts where estimate(for: workout) == nil {
-                        try V2Store(context: context).recalculate(workout)
-                    }
+                    try await V2Store(context: context).backfillEstimates()
+                } catch is CancellationError {
+                    // Leaving Today pauses backfill; saved progress is reused next time.
                 } catch { self.error = error.localizedDescription }
             }
         }
     }
 
-    @ViewBuilder private var cardioSummary: some View {
-        let measured = todayWorkouts.compactMap { estimate(for: $0)?.cardio }
-        if todayWorkouts.isEmpty {
+    @ViewBuilder private func cardioSummary(_ summary: V2TodaySummary) -> some View {
+        let measured = summary.cardio
+        if summary.todayCount == 0 {
             Text("No activity recorded today").font(.headline)
             Text("Cardio demand is not estimated yet.").font(.subheadline).foregroundStyle(.secondary)
         } else if measured.isEmpty {
@@ -122,7 +127,7 @@ struct V2TodayView: View {
                 Text("Open each activity for its method and observed load; unlike methods are not totalled.")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            Text("\(measured.count) of \(todayWorkouts.count) activities have an estimate. Unobserved intervals are excluded.")
+            Text("\(measured.count) of \(summary.todayCount) activities have an estimate. Unobserved intervals are excluded.")
                 .font(.caption).foregroundStyle(.secondary)
             if measured.contains(where: { $0.coverage < 0.8 }) {
                 Text("Partial heart-rate coverage: the displayed load covers observed intervals only.")
@@ -132,60 +137,9 @@ struct V2TodayView: View {
         }
     }
 
-    private var recentCutoff: Date {
-        Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? Date()
-    }
-
-    private func reports(for region: Region) -> [LocalObservation] {
-        // Keep independent latest left/right/both reports visible; a new right-side "none"
-        // must not hide an existing left-side symptom.
-        var sides: Set<String> = []
-        return observations.filter { observation in
-            observation.regionRaw == region.rawValue && sides.insert(observation.sideRaw).inserted
-        }
-    }
-
-    private func regionalEstimates(for region: Region) -> [RegionalEstimate] {
-        activeWorkouts.filter { $0.startTime >= recentCutoff }.flatMap {
-            estimate(for: $0)?.regions.filter { $0.region == region } ?? []
-        }
-    }
-
-    private func levelOrder(_ level: String) -> Int {
-        switch level { case "High": return 3; case "Moderate": return 2; case "Low": return 1; default: return 0 }
-    }
-
-    private func reportOrder(_ region: Region) -> Int {
-        // A display order only, never a recovery or physiological score.
-        reports(for: region).filter { $0.observedAt >= recentCutoff }.map {
-            if $0.discomfortRaw == "none" { return 0 }
-            let severity = $0.severity ?? 0
-            let symptoms = $0.weakness || $0.tightness || $0.limitedMovement
-            return max(severity, symptoms || $0.discomfortRaw != "soreness" ? 1 : 0)
-        }.max() ?? 0
-    }
-
-    private var prioritizedRegions: [Region] {
-        Region.allCases.sorted { left, right in
-            let leftReport = reportOrder(left), rightReport = reportOrder(right)
-            if leftReport != rightReport { return leftReport > rightReport }
-            let leftLevel = regionalEstimates(for: left).map { levelOrder($0.level) }.max() ?? 0
-            let rightLevel = regionalEstimates(for: right).map { levelOrder($0.level) }.max() ?? 0
-            if leftLevel != rightLevel { return leftLevel > rightLevel }
-            return left.label < right.label
-        }
-    }
-
-    private func regionalSummaries(_ region: Region) -> [RegionalEstimate] {
-        let groups = Dictionary(grouping: regionalEstimates(for: region)) { "\($0.method):\($0.unit)" }
-        return groups.keys.sorted().compactMap { key in
-            groups[key]?.max { levelOrder($0.level) < levelOrder($1.level) }
-        }
-    }
-
-    private func regionRow(_ region: Region) -> some View {
-        let summaries = regionalSummaries(region)
-        let latestReports = reports(for: region)
+    private func regionRow(_ region: Region, summary: V2TodaySummary) -> some View {
+        let summaries = summary.regionalSummaries[region] ?? []
+        let latestReports = summary.reports[region] ?? []
         return VStack(alignment: .leading, spacing: 4) {
             Text(region.label).font(.headline)
             if summaries.isEmpty {
