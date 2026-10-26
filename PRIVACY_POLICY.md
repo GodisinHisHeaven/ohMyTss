@@ -23,13 +23,18 @@ If you connect Strava, the iOS app reads your authorized activity and athlete
 profile data and stores access credentials in the iOS Keychain. OAuth and API
 requests go to Strava.
 
-Morning Status SMS is an optional web service for existing accounts. It uses
-account details, an opted-in phone number, and training/wellness data from
-Intervals.icu and optional Strava connections. The backend stores this data in
-Supabase and uses Twilio to deliver messages. Its [service privacy
-notice](https://coach-ota.fly.dev/privacy) describes that processing. Opening
-its account link from iOS does not upload Apple Health data. Reply STOP to stop
-SMS. Coaching chat, plans, other alerts, and signup are currently paused.
+Morning Status SMS is an optional service for existing accounts, managed in
+the app under Settings → Morning Status. It uses account details, an opted-in
+phone number, and training/wellness data from Intervals.icu and optional Strava
+connections. The backend stores this data in Supabase and uses Twilio to
+deliver messages. Sign-in sends your existing account email and password over
+HTTPS; the app saves only the signed session in this device's Keychain. Status,
+time zone settings, unsubscribe controls and privacy information are native
+app screens. The [service privacy notice](https://coach-ota.fly.dev/privacy)
+also describes backend processing. This feature does not upload Apple Health
+data. Reply STOP to stop SMS or START to resubscribe. Signing out removes this
+device's session without changing SMS consent. Coaching chat, plans, other
+alerts, and signup are currently paused.
 
 We do not collect payment information or advertising identifiers.
 
@@ -110,7 +115,7 @@ ohMyTss does not use third-party analytics or advertising. Optional Strava and m
 
 ## International Users
 
-iOS HealthKit data stays on your device. The optional web service and its providers process account, training, and SMS data on their servers.
+iOS HealthKit data stays on your device. The optional morning status service and its providers process account, training, and SMS data on their servers.
 
 ## Your Consent
 

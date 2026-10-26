@@ -8,7 +8,7 @@ final class StravaOAuthTests: XCTestCase {
         let schemes = types.flatMap { $0["CFBundleURLSchemes"] as? [String] ?? [] }
         XCTAssertTrue(schemes.contains(StravaOAuth.callbackScheme))
         XCTAssertTrue(schemes.contains("onmytss"))
-        XCTAssertEqual(URL(string: StravaOAuth.redirectURI)?.host, AppIdentity.accountURL.host)
+        XCTAssertEqual(URL(string: StravaOAuth.redirectURI)?.host, AppIdentity.mobileAPIURL.host)
         XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String, AppIdentity.name)
         XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String, AppIdentity.name)
     }

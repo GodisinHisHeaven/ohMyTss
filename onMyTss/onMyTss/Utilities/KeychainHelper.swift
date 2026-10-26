@@ -17,6 +17,7 @@ struct KeychainHelper {
         // Persisted identifiers are retained across the ohMyTss branding change.
         case stravaAccessToken = "com.onmytss.strava.accessToken"
         case stravaRefreshToken = "com.onmytss.strava.refreshToken"
+        case morningStatusSession = "com.ohmytss.morningStatus.session"
     }
 
     // MARK: - Errors
@@ -51,7 +52,8 @@ struct KeychainHelper {
         ]
         let attributes: [String: Any] = [
             kSecValueData as String: data,
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock
+            kSecAttrAccessible as String: key == .morningStatusSession
+                ? kSecAttrAccessibleWhenUnlockedThisDeviceOnly : kSecAttrAccessibleAfterFirstUnlock
         ]
 
         // Update in place so a failed write cannot delete the previous token.

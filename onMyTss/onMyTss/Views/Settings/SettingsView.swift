@@ -186,16 +186,16 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    Link(destination: AppIdentity.accountURL) {
-                        Label("Open Morning Status Account", systemImage: "message")
+                    NavigationLink {
+                        MorningStatusView()
+                    } label: {
+                        Label("Morning Status", systemImage: "message")
                     }
-                    Link(destination: AppIdentity.servicePrivacyURL) {
-                        Label("Morning Status Privacy", systemImage: "hand.raised")
-                    }
+                    .accessibilityIdentifier("settings.morningStatus")
                 } header: {
                     Text("Morning Status SMS")
                 } footer: {
-                    Text("Existing ohMyTss accounts receive one morning status text when current-day data is available, between 6:00 and 10:30 AM in their local time. SMS requires opt-in; reply STOP to unsubscribe. Coaching chat, plans, and other alerts are paused. Opening the account page does not upload Apple Health data.")
+                    Text("Manage your existing morning status account here. View today's status, set the delivery time zone and turn off texts without leaving the app.")
                 }
 
                 // App Information
