@@ -114,6 +114,38 @@ confirmed that per-region cards display both sides and their observed dates.
 [Large-text readiness](rpe-dashboard/today-dark-large.png) ·
 [Large-text RPE editor](rpe-dashboard/rpe-dark-large.png)
 
+## Compact-screen cloud regression
+
+Main commit `a059f2a` triggered Cloud Build 27. Build and Archive passed, but
+Test passed 116 of 117 unique tests: the back-map test could not reach the
+glutes on iPhone SE (3rd generation), iOS 27.0. TestFlight did not run.
+
+The same case failed locally on iPhone SE / iOS 26.4. Its whole-screen swipes
+jumped the small target past the visible area. The test helper now uses short
+drags with overlapping visible areas in both directions. It still requires
+each target to be hittable, taps it, and checks the matching editor title.
+Failures now include the target identifier and frame. App code, data models,
+and release requirements are unchanged.
+
+The focused reproduction failed before the helper change and passed afterward,
+including independent left/right values and all six back regions. The actual
+[compact-screen screenshot](rpe-dashboard/back-compact.png) was inspected.
+Normal Release (`ENABLE_TESTABILITY=NO`) also passed three changed UI flows on
+iPhone 17 Pro / iOS 26.4 with the retained 1,008-workout synthetic store:
+readiness/History, quick RPE, and accessibility XXXL controls. No tests were
+skipped and the result bundle reported no runtime warnings.
+
+The first attempt to rebuild that normal Release UI run included unit tests,
+whose `@testable` imports require a test-enabled app module. The successful
+run built only the UI-test target and normal app, then used
+`test-without-building`. The complete Release unit suite above used the
+separate test-enabled configuration as intended.
+
+Result bundles: `/private/tmp/ohmytss-rpe-compact-repro.xcresult`,
+`ohmytss-rpe-compact-fixed.xcresult`, and
+`ohmytss-rpe-release-scroll-verified.xcresult`. The follow-up PR records the
+complete compact-device suite and the next exact-commit Cloud delivery.
+
 ## Reproducing the persisted Release fixture
 
 `ReleaseDashboardSeed.swift` is an external macOS tool; it is not in the iOS

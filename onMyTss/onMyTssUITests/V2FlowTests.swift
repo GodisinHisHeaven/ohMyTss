@@ -79,16 +79,22 @@ final class V2FlowTests: XCTestCase {
     @MainActor
     private func reach(_ element: XCUIElement, in app: XCUIApplication,
                        file: StaticString = #filePath, line: UInt = #line) {
-        for _ in 0..<8 {
+        // Full-screen swipes can jump a small body-map target from beneath
+        // the tab bar to above the navigation bar on iPhone SE. Short drags
+        // leave overlapping visible areas, so every region can be reached.
+        let upper = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4))
+        let lower = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.6))
+        for _ in 0..<16 {
             if element.isHittable { return }
-            app.swipeUp()
+            lower.press(forDuration: 0.05, thenDragTo: upper)
         }
         // A sheet can return to a retained scroll offset below the edited row.
-        for _ in 0..<12 {
+        for _ in 0..<16 {
             if element.isHittable { return }
-            app.swipeDown()
+            upper.press(forDuration: 0.05, thenDragTo: lower)
         }
-        XCTAssertTrue(element.isHittable, "Expected connected control to be reachable", file: file, line: line)
+        XCTAssertTrue(element.isHittable, "Expected \(element.identifier) to be reachable at \(element.frame)",
+                      file: file, line: line)
     }
 
     @MainActor
