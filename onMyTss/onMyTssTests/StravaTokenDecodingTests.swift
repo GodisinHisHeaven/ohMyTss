@@ -8,6 +8,7 @@
 import XCTest
 @testable import onMyTss
 
+@MainActor
 final class StravaTokenDecodingTests: XCTestCase {
 
     func testTokenResponseAllowsMissingAthlete() throws {

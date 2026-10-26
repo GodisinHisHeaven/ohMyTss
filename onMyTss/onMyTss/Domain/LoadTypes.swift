@@ -1,27 +1,27 @@
 import Foundation
 
-struct TimeRange: Codable, Equatable, Sendable {
+nonisolated struct TimeRange: Codable, Equatable, Sendable {
     var start: Date
     var end: Date
     var duration: Double { max(0, end.timeIntervalSince(start)) }
 }
 
 /// A measured interval, or a timestamped observation when start == end.
-struct TimedValue: Codable, Equatable, Sendable {
+nonisolated struct TimedValue: Codable, Equatable, Sendable {
     var start: Date
     var end: Date
     var value: Double
     var duration: Double { max(0, end.timeIntervalSince(start)) }
 }
 
-struct SwimSegment: Codable, Equatable, Sendable {
+nonisolated struct SwimSegment: Codable, Equatable, Sendable {
     var start: Date
     var end: Date
     /// Raw source stroke name; unknown remains unknown.
     var stroke: String
 }
 
-struct WorkoutFeatures: Codable, Equatable, Sendable {
+nonisolated struct WorkoutFeatures: Codable, Equatable, Sendable {
     var heartRate: [TimedValue] = [] // beats/minute
     var power: [TimedValue] = [] // watts
     var cadence: [TimedValue] = [] // crank revolutions/minute
@@ -39,7 +39,7 @@ struct WorkoutFeatures: Codable, Equatable, Sendable {
     var end: Date? = nil
 }
 
-enum Region: String, Codable, CaseIterable, Identifiable, Sendable {
+nonisolated enum Region: String, Codable, CaseIterable, Identifiable, Sendable {
     case quads, hamstrings, glutes, calves, shoulders, chest, back, arms, core
     var id: String { rawValue }
     var label: String {
@@ -57,13 +57,13 @@ enum Region: String, Codable, CaseIterable, Identifiable, Sendable {
     }
 }
 
-enum StrengthEffort: String, Codable, CaseIterable, Identifiable, Sendable {
+nonisolated enum StrengthEffort: String, Codable, CaseIterable, Identifiable, Sendable {
     case easy, moderate, hard
     var id: String { rawValue }
     var label: String { rawValue.capitalized }
 }
 
-struct StrengthSetInput: Codable, Equatable, Identifiable, Sendable {
+nonisolated struct StrengthSetInput: Codable, Equatable, Identifiable, Sendable {
     var id: UUID = UUID()
     var exerciseID: String
     var reps: Int
@@ -73,14 +73,14 @@ struct StrengthSetInput: Codable, Equatable, Identifiable, Sendable {
     var manualRegions: [Region] = []
 }
 
-struct ExerciseDefinition: Identifiable, Sendable {
+nonisolated struct ExerciseDefinition: Identifiable, Sendable {
     let id: String
     let name: String
     /// Participation categories, never activation percentages or force shares.
     let regions: [Region]
 }
 
-struct CardioEstimate: Codable, Equatable, Sendable {
+nonisolated struct CardioEstimate: Codable, Equatable, Sendable {
     var points: Double
     var level: String
     var coverage: Double
@@ -88,7 +88,7 @@ struct CardioEstimate: Codable, Equatable, Sendable {
     var reasons: [String]
 }
 
-struct RegionalEstimate: Codable, Equatable, Identifiable, Sendable {
+nonisolated struct RegionalEstimate: Codable, Equatable, Identifiable, Sendable {
     var region: Region
     var level: String
     var exposure: Double
@@ -99,7 +99,7 @@ struct RegionalEstimate: Codable, Equatable, Identifiable, Sendable {
     var id: String { "\(region.rawValue):\(method):\(unit)" }
 }
 
-struct LoadEstimateValue: Codable, Equatable, Sendable {
+nonisolated struct LoadEstimateValue: Codable, Equatable, Sendable {
     var version: String
     var method: String
     var inputCutoff: Date
@@ -111,13 +111,13 @@ struct LoadEstimateValue: Codable, Equatable, Sendable {
 }
 
 /// Values are retained as observations, independent of model estimates.
-enum BodySide: String, Codable, CaseIterable, Identifiable, Sendable {
+nonisolated enum BodySide: String, Codable, CaseIterable, Identifiable, Sendable {
     case left, right, both, unspecified
     var id: String { rawValue }
     var label: String { rawValue.capitalized }
 }
 
-enum DiscomfortKind: String, Codable, CaseIterable, Identifiable, Sendable {
+nonisolated enum DiscomfortKind: String, Codable, CaseIterable, Identifiable, Sendable {
     case soreness, sharpPain, jointPain, other
     var id: String { rawValue }
     var label: String {

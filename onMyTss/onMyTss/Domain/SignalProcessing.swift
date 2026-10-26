@@ -1,7 +1,7 @@
 import Foundation
 
 /// Timestamp-based integration shared by the import adapter and v2 model.
-enum SignalProcessing {
+nonisolated enum SignalProcessing {
     /// Explicit nonzero intervals retain their measured support. Point samples are
     /// held until the next timestamp only when that gap is <= maxGap (15 s).
     /// Last points, invalid values, and longer gaps are missing, never zero.

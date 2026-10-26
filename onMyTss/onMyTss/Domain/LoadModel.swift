@@ -2,7 +2,7 @@ import Foundation
 
 /// Experimental exposure rules. Levels describe recorded training demand only.
 /// They do not measure tissue damage or predict recovery/safety.
-enum LoadModel {
+nonisolated enum LoadModel {
     static let version = "v2-exposure-1"
 
     static func cardioLevel(_ points: Double) -> String {

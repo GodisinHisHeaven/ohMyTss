@@ -1,7 +1,7 @@
 import Foundation
 
 /// A small participation catalog, not a biomechanical force model.
-enum ExerciseCatalog {
+nonisolated enum ExerciseCatalog {
     static let exercises: [ExerciseDefinition] = [
         .init(id: "squat", name: "Squat", regions: [.quads, .glutes, .core]),
         .init(id: "goblet_squat", name: "Goblet squat", regions: [.quads, .glutes, .core]),

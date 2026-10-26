@@ -146,7 +146,7 @@ final class V2PersistenceTests: XCTestCase {
         XCTAssertEqual(try context.fetch(FetchDescriptor<LocalObservation>()).map(\.id), [right.id])
     }
 
-    func testDeleteSessionRemovesContributionButRetainsUserHistory() throws {
+    func testDeleteSessionRemovesContributionButRetainsUserHistory() async throws {
         let context = ModelContext(try container())
         let dataStore = DataStore(modelContext: context)
         let store = V2Store(context: context)
@@ -154,7 +154,7 @@ final class V2PersistenceTests: XCTestCase {
         let session = try XCTUnwrap(dataStore.fetchWorkout(byId: "synthetic-hk"))
         try store.saveSet(StrengthSetRecord(sessionID: session.id, exerciseID: "squat", reps: 5))
         try store.saveObservation(LocalObservation(regionRaw: "quads", severity: 2, sessionID: session.id))
-        try store.deleteSession(session)
+        try await store.deleteSession(session)
         XCTAssertTrue(session.isTombstoned)
         XCTAssertEqual(try context.fetch(FetchDescriptor<StrengthSetRecord>()).count, 1)
         XCTAssertEqual(try context.fetch(FetchDescriptor<LocalObservation>()).count, 1)
@@ -225,10 +225,47 @@ final class V2PersistenceTests: XCTestCase {
         XCTAssertEqual(try context.fetch(FetchDescriptor<LoadEstimateRecord>()).count, 4)
     }
 
+    func testBackfillCompletesInterruptedHeartRateUpdateAfterDiskReopen() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("interrupted.store")
+        func seedPartialUpdate() throws -> Set<UUID> {
+            let context = ModelContext(try container(url: url))
+            let dataStore = DataStore(modelContext: context)
+            let store = V2Store(context: context)
+            let thresholds = try dataStore.fetchUserThresholds()
+            thresholds.cardioMaxHeartRate = 190
+            try dataStore.saveUserThresholds(thresholds)
+            let first = imported(id: "finished")
+            let second = imported(id: "interrupted")
+            context.insert(first)
+            context.insert(second)
+            try store.recalculate(first)
+            try store.recalculate(second)
+            thresholds.cardioMaxHeartRate = 180
+            try dataStore.saveUserThresholds(thresholds)
+            // Simulate termination after only the first session has been updated.
+            try store.recalculate(first)
+            return Set(try context.fetch(FetchDescriptor<LoadEstimateRecord>()).map(\.id))
+        }
+        let oldIDs = try seedPartialUpdate()
+        let context = ModelContext(try container(url: url))
+        let store = V2Store(context: context)
+        try await store.backfillEstimates()
+        let rows = try context.fetch(FetchDescriptor<LoadEstimateRecord>())
+        XCTAssertEqual(rows.count, 4, "Only the unfinished session needs a new snapshot")
+        XCTAssertTrue(oldIDs.isSubset(of: Set(rows.map(\.id))))
+        XCTAssertEqual(try latest(context, sessionID: "finished").value?.cardio?.points,
+                       try latest(context, sessionID: "interrupted").value?.cardio?.points)
+        try await store.backfillEstimates()
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<LoadEstimateRecord>()), 4)
+    }
+
     func testBackfillAllowsMainActorCancellationAndResumesWithoutDuplicateSnapshots() async throws {
         let context = ModelContext(try container())
         let store = V2Store(context: context)
-        for index in 0..<30 { context.insert(imported(id: "cancel-\(index)")) }
+        for index in 0..<300 { context.insert(imported(id: "cancel-\(index)")) }
         try context.save()
         let task = Task { try await store.backfillEstimates() }
         // This main-actor continuation must run while backfill still has work.
@@ -239,12 +276,12 @@ final class V2PersistenceTests: XCTestCase {
             XCTFail("Backfill should yield before processing the entire history")
         } catch is CancellationError {}
         let saved = try context.fetch(FetchDescriptor<LoadEstimateRecord>())
-        XCTAssertLessThan(saved.count, 30)
+        XCTAssertLessThan(saved.count, 300)
         let savedIDs = Set(saved.map(\.id))
 
         try await store.backfillEstimates()
         let resumed = try context.fetch(FetchDescriptor<LoadEstimateRecord>())
-        XCTAssertEqual(resumed.count, 30)
+        XCTAssertEqual(resumed.count, 300)
         XCTAssertTrue(savedIDs.isSubset(of: Set(resumed.map(\.id))))
     }
 
@@ -304,7 +341,7 @@ final class V2PersistenceTests: XCTestCase {
         XCTAssertEqual(try dataStore.fetchDayAggregate(for: start)?.workoutCount, 1)
     }
 
-    func testLocalDeletionRebuildsDependentScoresAndRampRates() throws {
+    func testLocalDeletionRebuildsDependentScoresAndRampRates() async throws {
         let context = ModelContext(try container())
         let dataStore = DataStore(modelContext: context)
         let end = start.addingDays(10)
@@ -322,7 +359,7 @@ final class V2PersistenceTests: XCTestCase {
         let oldScore = oldLast.bodyBatteryScore
         let oldRampRate = oldLast.rampRate
 
-        try store.deleteSession(session)
+        try await store.deleteSession(session)
 
         let expectedScore = BodyBatteryCalculator.calculateScoreWithModifiers(tsb: 0, hrvModifier: -8, rhrModifier: 2)
         XCTAssertNotEqual(oldScore, expectedScore)
@@ -356,7 +393,7 @@ final class V2PersistenceTests: XCTestCase {
         XCTAssertEqual(try context.fetch(FetchDescriptor<Workout>()).count, 1)
     }
 
-    func testCanonicalSourceSwitchAndDeletionRetainUserRowsOnSurvivingSource() throws {
+    func testCanonicalSourceSwitchAndDeletionRetainUserRowsOnSurvivingSource() async throws {
         let context = ModelContext(try container())
         let dataStore = DataStore(modelContext: context)
         let store = V2Store(context: context)
@@ -367,11 +404,11 @@ final class V2PersistenceTests: XCTestCase {
         try store.saveSet(row)
         try store.saveObservation(report)
         try dataStore.saveWorkouts([imported(id: "synthetic-strava", source: .strava)])
-        try store.refreshEstimates()
+        try await store.refreshEstimates()
         XCTAssertEqual(row.sessionID, "synthetic-strava")
         XCTAssertEqual(report.sessionID, "synthetic-strava")
         try dataStore.applySourceDeletions(["synthetic-strava"])
-        try store.refreshEstimates()
+        try await store.refreshEstimates()
         XCTAssertEqual(row.sessionID, "synthetic-hk")
         XCTAssertEqual(report.sessionID, "synthetic-hk")
         XCTAssertEqual(row.rir, 0)
@@ -469,7 +506,7 @@ final class V2PersistenceTests: XCTestCase {
         XCTAssertTrue(retained.features.power.allSatisfy { $0.value == 0 })
     }
 
-    func testRemovingCanonicalTagAfterManualLinkDoesNotResurrectAliasTag() throws {
+    func testRemovingCanonicalTagAfterManualLinkDoesNotResurrectAliasTag() async throws {
         let context = ModelContext(try container())
         let dataStore = DataStore(modelContext: context)
         let store = V2Store(context: context)
@@ -483,13 +520,13 @@ final class V2PersistenceTests: XCTestCase {
         external.userTags = []
         try store.recalculate(external)
         try dataStore.saveWorkouts([imported()])
-        try store.refreshEstimates()
+        try await store.refreshEstimates()
         let snapshot = try JSONDecoder().decode(V2SnapshotProbe.self, from: latest(context, sessionID: external.id).inputData)
         XCTAssertTrue(external.userTags.isEmpty)
         XCTAssertTrue(snapshot.tags.isEmpty)
     }
 
-    func testSourceWithMoreValidTimeCoverageWinsOverMoreDuplicateSamples() throws {
+    func testSourceWithMoreValidTimeCoverageWinsOverMoreDuplicateSamples() async throws {
         let context = ModelContext(try container())
         let dataStore = DataStore(modelContext: context)
         let store = V2Store(context: context)
@@ -502,14 +539,14 @@ final class V2PersistenceTests: XCTestCase {
         denseFeatures.heartRate = Array(repeating: TimedValue(start: start, end: start.addingTimeInterval(1), value: 180), count: 120)
         dense.features = denseFeatures
         try dataStore.saveWorkouts([full, dense])
-        try store.refreshEstimates()
+        try await store.refreshEstimates()
         let estimate = try latest(context, sessionID: dense.id)
         let snapshot = try JSONDecoder().decode(V2SnapshotProbe.self, from: estimate.inputData)
         XCTAssertEqual(snapshot.features.heartRate, full.features.heartRate)
         XCTAssertEqual(try XCTUnwrap(estimate.value?.cardio?.coverage), 1, accuracy: 0.000001)
     }
 
-    func testOverlappingRunIsExcludedFromPriorPersonalExposure() throws {
+    func testOverlappingRunIsExcludedFromPriorPersonalExposure() async throws {
         let context = ModelContext(try container())
         let dataStore = DataStore(modelContext: context)
         let store = V2Store(context: context)
@@ -530,26 +567,27 @@ final class V2PersistenceTests: XCTestCase {
         completedFeatures.end = start.addingTimeInterval(-3000)
         completed.features = completedFeatures
         try dataStore.saveWorkouts([current, overlapping, completed])
-        try store.refreshEstimates()
+        try await store.refreshEstimates()
         let snapshot = try JSONDecoder().decode(V2SnapshotProbe.self, from: latest(context, sessionID: current.id).inputData)
         XCTAssertEqual(snapshot.recentRunningMinutes, 10,
                        "Only the completed ten-minute run belongs to the input available before this session")
     }
 
-    func testDiskReopenRetainsUserTombstoneAfterResync() throws {
+    func testDiskReopenRetainsUserTombstoneAfterResync() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let url = directory.appendingPathComponent("synthetic-tombstone.store")
-        try autoreleasepool {
+        func seedAndDelete() async throws {
             let context = ModelContext(try container(url: url))
             let dataStore = DataStore(modelContext: context)
             try dataStore.saveWorkouts([imported()])
             let session = try XCTUnwrap(dataStore.fetchWorkout(byId: "synthetic-hk"))
-            try V2Store(context: context, clock: { self.start.addingTimeInterval(600) }).deleteSession(session)
+            try await V2Store(context: context, clock: { self.start.addingTimeInterval(600) }).deleteSession(session)
             XCTAssertTrue(session.isTombstoned)
             XCTAssertFalse(session.isDeleted, "A retained tombstone is not a SwiftData object deletion")
         }
+        try await seedAndDelete()
         try autoreleasepool {
             let context = ModelContext(try container(url: url))
             let dataStore = DataStore(modelContext: context)

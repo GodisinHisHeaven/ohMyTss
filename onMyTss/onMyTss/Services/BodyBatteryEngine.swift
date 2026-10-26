@@ -92,7 +92,7 @@ class BodyBatteryEngine {
             for row in stored { daily[row.date, default: 0] += row.tss }
             let first = (existing.map(\.date) + allRows.map(\.date) + [start]).min() ?? start
             warnings += try await computeAndSaveMetrics(dailyTSSMap: daily, startDate: first, endDate: now, workouts: stored)
-            try dataStore.refreshV2Estimates()
+            try await dataStore.refreshV2Estimates()
             try dataStore.updateHealthKitSyncDate(now, anchor: encodedAnchor)
             state.lastSyncMessage = warnings.isEmpty
                 ? (stored.isEmpty ? "No readable activities. You can record strength and feedback offline. HealthKit cannot distinguish denied read access from no data." : "Sync complete. Saved history remains available offline.")

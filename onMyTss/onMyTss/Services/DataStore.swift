@@ -441,10 +441,10 @@ class DataStore {
         try modelContext.save()
     }
 
-    func refreshV2Estimates() throws {
+    func refreshV2Estimates() async throws {
         // Older focused unit-test containers may intentionally include only the legacy schema.
         guard modelContext.container.schema.entities.contains(where: { $0.name == "LoadEstimateRecord" }) else { return }
-        try V2Store(context: modelContext).refreshEstimates()
+        try await V2Store(context: modelContext).refreshEstimates()
     }
 
     // MARK: - StravaAuth Operations

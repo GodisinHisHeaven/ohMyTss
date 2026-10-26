@@ -59,7 +59,7 @@ struct ContentView: View {
             hasCompletedOnboarding = thresholds.hasCompletedOnboarding
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("--v2-ui-tests") {
-                // App also selects an in-memory container for this exact test-only flag.
+                // App selects isolated storage for this exact test-only flag.
                 thresholds.hasCompletedOnboarding = true
                 hasCompletedOnboarding = true
             }

@@ -1,0 +1,77 @@
+{
+  "date": "2026-10-26",
+  "xcode": "27.1",
+  "swift": "6.4",
+  "source_base": "2e86371d96ce98206acdac034cb5ef776d355d54",
+  "tests": [
+    {
+      "result_bundle": "ohmytss-quality-final-full.xcresult",
+      "configuration": "Debug",
+      "enable_testability": true,
+      "os": "26.1",
+      "device": "iPhone 17 Pro",
+      "result": "Passed",
+      "unique_tests": 100,
+      "executions": 103,
+      "failures": 0,
+      "skips": 0
+    },
+    {
+      "result_bundle": "ohmytss-heart-rate-release-ios261.xcresult",
+      "configuration": "Release",
+      "enable_testability": true,
+      "os": "26.1",
+      "device": "iPhone 17 Pro",
+      "result": "Passed",
+      "unique_tests": 89,
+      "executions": 89,
+      "failures": 0,
+      "skips": 0,
+      "persisted_store_check": {
+        "workouts": 1000,
+        "snapshots": 2000,
+        "latest_estimates": 1000,
+        "all_latest_hr_190": true,
+        "all_latest_have_30_hr_intervals": true,
+        "saved_threshold": 190,
+        "integrity": "ok"
+      }
+    },
+    {
+      "result_bundle": "ohmytss-heart-rate-release-normal-ios264.xcresult",
+      "configuration": "Release",
+      "enable_testability": false,
+      "os": "26.4",
+      "device": "iPhone 17 Pro",
+      "result": "Passed",
+      "unique_tests": 1,
+      "executions": 1,
+      "failures": 0,
+      "skips": 0,
+      "persisted_store_check": {
+        "workouts": 1000,
+        "snapshots": 2000,
+        "latest_estimates": 1000,
+        "all_latest_hr_190": true,
+        "all_latest_have_30_hr_intervals": true,
+        "saved_threshold": 190,
+        "integrity": "ok"
+      }
+    }
+  ],
+  "responsiveness": {
+    "records": 1000,
+    "hr_intervals_per_record": 30,
+    "debug": {
+      "refresh_seconds": 2.347985029220581,
+      "maximum_main_actor_gap_seconds": 0.12052798271179199
+    },
+    "release": {
+      "refresh_seconds": 3.340957999229431,
+      "maximum_main_actor_gap_seconds": 0.14829504489898682
+    }
+  },
+  "migration": "passed",
+  "ci_configuration_tests_passed": 9,
+  "physical_device_verified": false
+}

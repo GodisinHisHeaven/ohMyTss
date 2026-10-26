@@ -29,6 +29,37 @@ final class V2FlowTests: XCTestCase {
     }
 
     @MainActor
+    func testStorageOpenFailureShowsRetryInsteadOfTerminatingApp() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--v2-ui-tests", "--v2-storage-failure-once"]
+        app.launch()
+        XCTAssertTrue(app.buttons["storage.retry"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.state, .runningForeground)
+        app.buttons["storage.retry"].tap()
+        XCTAssertTrue(app.navigationBars["Today"].waitForExistence(timeout: 10))
+    }
+
+    @MainActor
+    func testSavingMaximumHeartRateWithThousandDiskRecordsKeepsNavigationUsable() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--v2-ui-tests", "--v2-large-history", "--v2-disk-history"]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Today"].waitForExistence(timeout: 10))
+        app.tabBars.buttons["Settings"].tap()
+        let heartRate = app.textFields["settings.cardioHR"]
+        XCTAssertTrue(heartRate.waitForExistence(timeout: 5))
+        heartRate.tap()
+        heartRate.typeText("190")
+        app.buttons["settings.saveCardio"].tap()
+        app.tabBars.buttons["Today"].tap()
+        XCTAssertTrue(app.navigationBars["Today"].waitForExistence(timeout: 5))
+        app.tabBars.buttons["Settings"].tap()
+        XCTAssertTrue(app.staticTexts["Saved. Estimates updated; previous versions retained."].waitForExistence(timeout: 30))
+        XCTAssertEqual(heartRate.value as? String, "190")
+        XCTAssertEqual(app.state, .runningForeground)
+    }
+
+    @MainActor
     private func assertLargeHistoryOpensUsableTabs(missingEstimates: Bool) {
         let app = XCUIApplication()
         app.launchArguments = ["--v2-ui-tests", "--v2-large-history"]

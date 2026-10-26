@@ -7,6 +7,12 @@ file, so merging a pull request into `main` starts a build automatically.
 The archive uses **TestFlight (Internal Testing Only)** and the post-action
 sends it to the existing **close door** internal testing group.
 
+The **Test - iOS** action must be **Required To Pass**. This was corrected on
+2026-10-26 after Build 24's optional test action allowed distribution before
+testing finished. Keep this requirement enabled when editing or recreating the
+workflow. Local full-suite and Release checks are also required before merging
+a release change; see the repository's release gates in `AGENTS.md`.
+
 ## Strava configuration
 
 The shared Strava application is named `ohMyTss`, client ID `167899`. Its
