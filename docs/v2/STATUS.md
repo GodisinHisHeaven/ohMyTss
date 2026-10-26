@@ -1,5 +1,19 @@
 # v2 唯一进度入口
 
+## 2026-10-25 Strava 与 main 整合验证
+
+当前交付以本节为准；下方保留早期实现和验证检查点。
+
+- 将 PR #18 与 main `5979a5b` 整合，最终生产代码提交为 `584b0bcdc23d30dd69528a51d27ca55c4ea04ad8`。
+- TestFlight 0.0.5（19）在 iPhone 上完成真实 Strava 授权、返回 App、同步和 History 查看。首次授权后的自动同步未刷新设置页时间已复现并修复；同步按钮改为 `Sync Activities`，系统短名称统一为 `ohMyTss`。
+- 修复三项远端审查：Walking/Walk 共用来源归一化；生理或睡眠查询失败保留相应历史值并提示；本地删除活动同步重算历史评分及 CTL 周变化。
+- iOS 26.1 复现了三个类在同步测试退出时的 Swift isolated-deinit 崩溃。为 DataStore、V2Store 和 WorkoutAggregator 明确声明空的 nonisolated deinit，原同步测试保持不变。问题及运行时范围见 [Swift #88036](https://github.com/swiftlang/swift/issues/88036)。
+- Xcode 27.1 / iPhone 17 Pro / iOS 26.1：完整 scheme 通过，77 项唯一测试、80 次执行（70 单元 + 10 UI），0 失败、0 跳过。覆盖同步成功/失败状态、三项审查回归、人体图分侧/背面、体感编辑删除、力量组次和启动。
+- 30 个共享领域测试、9 个生产 Strava 合成 HTTP 场景、9 个构建配置测试通过；当前模型的真实 Apple SwiftData 基线迁移通过。
+- 本节的实机结果属于已发布 Build 19；当前 PR 的 TestFlight 二进制需在 main 云端构建后单独验证。完整 VoiceOver、真人记录计时及新增 HealthKit 类型的真实采样仍没有完整实测结论。
+
+完整命令、失败定位与结果路径见 [本地 Xcode 报告](evidence/LOCAL_XCODE_2026-10-25.md#strava-与-main-整合验证)。
+
 ## 2026-10-25 人体图视觉补全
 
 - 前后视图改为原生矢量人体与肌群轮廓，加入选中反馈、分侧体感着色、图例、深浅色与大字号适配；人体卡片移到 Today 顶部。
@@ -26,7 +40,7 @@ PR #18 的 `8bb4973f6d7860ba4d5f7b54bb10c6e11c0bc26e` 已在独立本地分支 `
 - 2026-10-25 可执行回归：30 个共享生产 Swift 领域测试、9 个生产 Strava API 合成 HTTP 情景、4 个原配置测试通过（43 个工程检查）。最近验证的代码提交为 `cf900d1b59f713fe582359203929dc4ca7ca1e5e`（与通过回归/语法检查的生产代码一致）；后续提交只更新交付入口。
 - Debian 13 / Swift 6.0.3（本次下载并真实执行）；无 Xcode、xcrun、iOS SDK/模拟器。app 原 target 18.6、测试原 target 26.1、bundle/签名/entitlements 保持不变。
 
-## 验收状态
+## 原始验收状态（历史记录）
 状态表示验证层级：Apple 运行依赖项即使已有完整代码也仍为 blocked。
 
 |编号|状态|实现与证据|
@@ -71,14 +85,14 @@ PR #18 的 `8bb4973f6d7860ba4d5f7b54bb10c6e11c0bc26e` 已在独立本地分支 `
 - 需要执行真实迁移后才确认兼容。macOS脚本从固定基线提取原模型创建合成旧库，再用当前生产模型打开同一路径；iOS升级检查禁止卸载/重装掩盖问题。
 - 回退代码使用 `git revert` 本次提交；**不保证旧二进制读取升级后库**。数据回退使用升级前测试/用户备份，绝不以删库回退。
 
-## 阻塞与下一步（仅3项）
+## 原实现阶段的阻塞与下一步（历史记录）
 1. macOS + 合适Xcode/iOS SDK：按 `MACOS_CHECKS.md` 发现真实destination，运行项目scheme的完整test（原test最低26.1）；修复任何Apple类型/宏/运行问题。
 2. 执行 `scripts/check_v2_migration.sh` 与iOS不卸载升级、磁盘重开；保存真实xcresult/迁移证据。
 3. 实机/模拟器走首次、权限空、离线、导入、体感、力量、关联、归档和VoiceOver路径，记录10–20秒目标实际耗时。然后更新本入口，再决定是否解除draft；本任务不发布或合并。
 
 现有Xcode Cloud main工作流附带TestFlight后操作，未经调用；没有安全可调用的现成非发布macOS CI。没有购买资源、改权限或签名来绕过阻塞。
 
-## 交付入口
+## 原始交付入口（历史记录）
 - Draft PR：[GodisinHisHeaven/ohMyTss #18](https://github.com/GodisinHisHeaven/ohMyTss/pull/18)
 - 工作分支：`codex/v2-mvp`，已推送 `origin/codex/v2-mvp`。
 - 实现/验证提交：`cf900d1b59f713fe582359203929dc4ca7ca1e5e`（Implement traceable v2 training load MVP）。
