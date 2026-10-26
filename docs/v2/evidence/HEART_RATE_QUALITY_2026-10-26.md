@@ -75,6 +75,19 @@ before cancellation. Neither failure was treated as a successful release check.
 
 ## Limits
 
+Build 25 was blocked by the required cloud test action. iPhone SE and iPhone 16
+Pro reported additional test-worker launch failures with zero tests executed:
+`SBMainWorkspace` could not find `mj6.onMyTssUITests.xctrunner`. The observed
+training, morning-account and launch suites had passed, but these runner errors
+are not accepted as a successful release. The shared scheme now runs both test
+bundles serially per destination, retaining all cases and the four recommended
+iPhone destinations. The full suite using the shared scheme, without a
+`-parallel-testing-enabled` command-line override, passed on iOS 26.1:
+100 unique tests / 103 executions, zero failures and zero skips
+(`ohmytss-serial-scheme-full.xcresult`). App and test source are unchanged from
+the preceding validated Release runs. Cloud delivery must still verify the
+new configuration before publication.
+
 The reported physical-device freeze has no matching device trace available in
 this session. Simulator tests and main-actor heartbeat measurements establish
 the tested behavior, not a guarantee of zero dropped frames or zero crashes on

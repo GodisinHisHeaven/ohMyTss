@@ -13,6 +13,12 @@ testing finished. Keep this requirement enabled when editing or recreating the
 workflow. Local full-suite and Release checks are also required before merging
 a release change; see the repository's release gates in `AGENTS.md`.
 
+Test bundles run serially on each destination. Keep every test enabled and the
+recommended iPhone destinations selected. Build 25 encountered parallel worker
+startup failures (`SBMainWorkspace` reported an unknown test-runner application
+identifier) despite completed test suites. Serial execution avoids extra
+parallel worker launches; it does not reduce test or device coverage.
+
 ## Strava configuration
 
 The shared Strava application is named `ohMyTss`, client ID `167899`. Its

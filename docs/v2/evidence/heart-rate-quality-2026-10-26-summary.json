@@ -73,5 +73,18 @@
   },
   "migration": "passed",
   "ci_configuration_tests_passed": 9,
-  "physical_device_verified": false
+  "physical_device_verified": false,
+  "serial_scheme_validation": {
+    "source_base": "e847259757d1e905b6c8ebc1b3fbe5639ac5aacc",
+    "result_bundle": "ohmytss-serial-scheme-full.xcresult",
+    "configuration": "Debug",
+    "os": "26.1",
+    "result": "Passed",
+    "unique_tests": 100,
+    "executions": 103,
+    "failures": 0,
+    "skips": 0,
+    "parallel_testing_cli_override": false,
+    "app_source_changed": false
+  }
 }
