@@ -1,0 +1,23 @@
+{
+  "base_pr": "https://github.com/GodisinHisHeaven/ohMyTss/pull/18",
+  "head": "8bb4973f6d7860ba4d5f7b54bb10c6e11c0bc26e",
+  "local_branch": "codex/v2-xcode-validation",
+  "tested_files": {
+    "Tests/DomainTests/SignalTests.swift": "f9adb7c0b7228d76501ac83e5e694b04f2ad259f018d1e09a37fde8382adc351",
+    "docs/v2/fixtures/V2MigrationProbe.swift": "c4945e876d58d2492e1ebbee9b17c30c5585d2e7fee817bf4ee3c8721995d629",
+    "onMyTss/onMyTss/Models/V2Records.swift": "1b1260cde5efc20927f29214a67c9210fd0ee871194033679babe58077e3e0e2",
+    "onMyTss/onMyTss/Models/Workout.swift": "9bf67d27f7e835a5ef830617dfa4b79c03653fbff232f931a73790896d4aea19",
+    "onMyTss/onMyTss/Services/BodyBatteryEngine.swift": "b394cce0ccf8988f9a92f2254597ae9671ff47820ae4b68ec7734922d40ec73a",
+    "onMyTss/onMyTss/Services/DataStore.swift": "18ddde3b919a4c50a925185801e19308a76e181ab68d19fdab7a0e64685d6275",
+    "onMyTss/onMyTss/Services/V2Store.swift": "4cb530b2ce1a11e972302a94f46f8762c5ac02b4e5ed8aa46fb80300e46fca65",
+    "onMyTss/onMyTss/Services/WorkoutAggregator.swift": "91cde51f684b42a31a172b89f994db90cf49d9001c1be1fccc426f40cce86287",
+    "onMyTss/onMyTss/Views/V2/RegionDetailView.swift": "8c54d1bc89ab84155dcd1930b63a1e3f83f074414f6cfe156dec7464fce08e86",
+    "onMyTss/onMyTss/Views/V2/StrengthViews.swift": "2c5a9d72d5218b532b380413b766968a34dac05a5d1a6c3a5e64862b881cf4ac",
+    "onMyTss/onMyTss/Views/V2/V2ActivityDetailView.swift": "7aa79ea6dc0e14528f4b396a53d91532a89653826497f07ab2a20b2867a22616",
+    "onMyTss/onMyTss/Views/V2/V2TodayView.swift": "c24e748414e5a19b4aa39bfca954fff0e13c386d24dcba80581245dbc24f0584",
+    "onMyTss/onMyTssTests/HealthKitImportV2Tests.swift": "c6b2527d14aa67dcf49cc75118d1aa686f25c8a3fb1153715320807faf962c53",
+    "onMyTss/onMyTssTests/StravaSourceAvailabilityTests.swift": "0e37e5ebb978f9887a5b78e057ec1b565e94f56078057366a33e02f156445ed4",
+    "onMyTss/onMyTssTests/V2PersistenceTests.swift": "21f47212fa55f97a66613d54d47658f6c7e377ee82c1a14dbb89a3b24293aa92",
+    "onMyTss/onMyTssUITests/V2FlowTests.swift": "61e0315becedadb8c7c313baeaa998bb02dbbbe938ac0d304b19b0170df02f7e"
+  }
+}

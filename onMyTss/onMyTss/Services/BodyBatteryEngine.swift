@@ -47,104 +47,65 @@ class BodyBatteryEngine {
     /// - User requests a manual refresh
     /// - App launches after being inactive
     func recomputeAll() async throws {
-        guard !isProcessing else {
-            throw EngineError.alreadyProcessing
-        }
-
-#if DEBUG
-        print("[BBEngine] recomputeAll start")
-#endif
-
-        isProcessing = true
-        defer { isProcessing = false }
-
-        do {
-            // Step 1: Fetch user thresholds
-            let thresholds = try dataStore.fetchUserThresholds()
-
-            guard thresholds.hasCompletedOnboarding else {
-                throw EngineError.onboardingIncomplete
-            }
-
-            // Step 2: Determine date range for computation
-            let endDate = Date()
-            let startDate = Calendar.current.date(byAdding: .day, value: -Constants.initialSyncDays, to: endDate) ?? endDate
-
-            // Step 3: Fetch workouts from both Strava and HealthKit
-            let workouts = try await workoutAggregator.fetchWorkouts(from: startDate, to: endDate)
-
-            // Step 4: Save workouts to database
-            try dataStore.saveWorkouts(workouts)
-
-            // Step 5: Process each workout and calculate daily TSS
-            let dailyTSSMap = processDailyTSS(workouts: workouts)
-
-            // Step 6: Calculate CTL/ATL/TSB time series
-            try await computeAndSaveMetrics(dailyTSSMap: dailyTSSMap, startDate: startDate, endDate: endDate, workouts: workouts)
-
-            // Step 6: Update sync state
-            try dataStore.updateHealthKitSyncDate(Date(), anchor: nil)
-            lastSyncDate = Date()
-            lastError = nil
-
-        } catch {
-#if DEBUG
-            print("[BBEngine] recomputeAll error: \(error)")
-#endif
-            lastError = error
-            throw error
-        }
-#if DEBUG
-        print("[BBEngine] recomputeAll done")
-#endif
+        try await synchronize()
     }
 
-    /// Incremental update using HealthKit anchored query
-    /// Called periodically to sync new workouts without reprocessing everything
+    /// Anchored changes include corrections/deletions, with a bounded recent refresh for richer samples.
     func incrementalUpdate() async throws {
-        guard !isProcessing else {
-            throw EngineError.alreadyProcessing
-        }
+        try await synchronize()
+    }
 
+    private func synchronize() async throws {
+        guard !isProcessing else { throw EngineError.alreadyProcessing }
         isProcessing = true
         defer { isProcessing = false }
-
         do {
-            // Get last sync date for incremental Strava fetch
-            let appState = try dataStore.fetchAppState()
-            let previousSyncDate = appState.lastHealthKitSyncDate ?? Calendar.current.date(byAdding: .day, value: -7, to: Date())!
-
-            // Fetch workouts from both sources since last sync
-            let workouts = try await workoutAggregator.fetchWorkouts(from: previousSyncDate, to: Date())
-
-            guard !workouts.isEmpty else {
-                // No new workouts
-                return
+            let thresholds = try dataStore.fetchUserThresholds()
+            guard thresholds.hasCompletedOnboarding else { throw EngineError.onboardingIncomplete }
+            let now = Date()
+            let start = Calendar.current.date(byAdding: .day, value: -Constants.initialSyncDays, to: now) ?? now
+            _ = try await workoutAggregator.fetchWorkouts(from: start, to: now)
+            try dataStore.saveWorkouts(workoutAggregator.latestImportedWorkouts)
+            try dataStore.applySourceDeletions(workoutAggregator.latestDeletedStravaIDs)
+            var warnings = workoutAggregator.warnings
+            let state = try dataStore.fetchAppState()
+            var encodedAnchor = state.healthKitAnchor
+            if workoutAggregator.successfulSources.contains(WorkoutSource.healthKit.rawValue) {
+                do {
+                    let anchor = state.healthKitAnchor.flatMap { healthKitManager.decodeAnchor(from: $0) }
+                    let changes = try await healthKitManager.fetchWorkoutChanges(anchor: anchor)
+                    let additions = try await workoutAggregator.convertHealthKitWorkouts(changes.workouts)
+                    try dataStore.saveWorkouts(additions)
+                    try dataStore.applyHealthKitDeletions(changes.deletedIDs)
+                    encodedAnchor = healthKitManager.encodeAnchor(changes.newAnchor)
+                } catch {
+                    warnings.append("HealthKit incremental changes unavailable. Existing records retained; retry Sync.")
+                }
             }
-
-            // Save workouts to database
-            try dataStore.saveWorkouts(workouts)
-
-            // Process new workouts
-            let dailyTSSMap = processDailyTSS(workouts: workouts)
-
-            // Get the date range of new workouts
-            let dates = dailyTSSMap.keys.sorted()
-            guard let startDate = dates.first, let endDate = dates.last else {
-                return
-            }
-
-            // Recompute metrics from the earliest affected date
-            try await computeAndSaveMetrics(dailyTSSMap: dailyTSSMap, startDate: startDate, endDate: Date(), workouts: workouts)
-
-            // Update sync date
-            try dataStore.updateHealthKitSyncDate(Date(), anchor: nil)
-
-            lastSyncDate = Date()
+            let stored = try dataStore.allWorkouts().filter { !$0.isTombstoned && !$0.isSuppressed }
+            // Include legacy summary-only days in recomputation; never zero older history from a short response.
+            let existing = try dataStore.fetchAllDayAggregates()
+            var daily = Dictionary(uniqueKeysWithValues: existing.map { ($0.date, $0.totalTSS) })
+            let allRows = try dataStore.allWorkouts()
+            for aggregate in existing where aggregate.hasWorkoutDetails { daily[aggregate.date] = 0 }
+            for day in Set(allRows.map(\.date)) { daily[day] = 0 }
+            for row in stored { daily[row.date, default: 0] += row.tss }
+            let first = (existing.map(\.date) + allRows.map(\.date) + [start]).min() ?? start
+            warnings += try await computeAndSaveMetrics(dailyTSSMap: daily, startDate: first, endDate: now, workouts: stored)
+            try dataStore.refreshV2Estimates()
+            try dataStore.updateHealthKitSyncDate(now, anchor: encodedAnchor)
+            state.lastSyncMessage = warnings.isEmpty
+                ? (stored.isEmpty ? "No readable activities. You can record strength and feedback offline. HealthKit cannot distinguish denied read access from no data." : "Sync complete. Saved history remains available offline.")
+                : warnings.joined(separator: "\n")
+            try dataStore.saveAppState(state)
+            lastSyncDate = now
             lastError = nil
-
         } catch {
             lastError = error
+            if let state = try? dataStore.fetchAppState() {
+                state.lastSyncMessage = "Sync unavailable. Saved data and manual recording remain available. Retry when connected."
+                try? dataStore.saveAppState(state)
+            }
             throw error
         }
     }
@@ -244,7 +205,7 @@ class BodyBatteryEngine {
 
         for workout in workouts {
             // Skip suppressed workouts (duplicates)
-            guard !workout.isSuppressed else { continue }
+            guard !workout.isSuppressed && !workout.isTombstoned else { continue }
 
             // Aggregate TSS by day
             dailyTSSMap[workout.date, default: 0] += workout.tss
@@ -280,10 +241,10 @@ class BodyBatteryEngine {
         startDate: Date,
         endDate: Date,
         workouts: [Workout]
-    ) async throws {
+    ) async throws -> [String] {
         // Group workouts by day for linking to aggregates
         var workoutsByDay: [Date: [Workout]] = [:]
-        for workout in workouts where !workout.isSuppressed {
+        for workout in workouts where !workout.isSuppressed && !workout.isTombstoned {
             workoutsByDay[workout.date, default: []].append(workout)
         }
         // Generate array of all dates in range
@@ -305,10 +266,13 @@ class BodyBatteryEngine {
         let timeSeries = LoadCalculator.calculateTimeSeries(tssValues: tssValues)
 
         // Fetch and process data in parallel for better performance
-        async let physiologyMap = processPhysiologyData(from: startDate, to: endDate)
-        async let sleepMap = processSleepData(from: startDate, to: endDate)
+        async let physiologyMap = try? processPhysiologyData(from: startDate, to: endDate)
+        async let sleepMap = try? processSleepData(from: startDate, to: endDate)
 
-        let (physiology, sleep) = try await (physiologyMap, sleepMap)
+        let (physiology, sleep) = await (physiologyMap, sleepMap)
+        var warnings: [String] = []
+        if physiology == nil { warnings.append("HealthKit physiology unavailable. Saved HRV and resting heart rate retained; retry Sync.") }
+        if sleep == nil { warnings.append("HealthKit sleep unavailable. Saved sleep measurements retained; retry Sync.") }
 
         // Collect all aggregates for batch save (better performance)
         var aggregatesToSave: [DayAggregate] = []
@@ -319,11 +283,12 @@ class BodyBatteryEngine {
             let metrics = timeSeries[index]
 
             // Get physiological data for this day
-            let physiologyData = physiology[date]
-            let avgHRV = physiologyData?.hrv
-            let avgRHR = physiologyData?.rhr
-            let hrvModifier = physiologyData?.hrvMod
-            let rhrModifier = physiologyData?.rhrMod
+            let existing = try dataStore.fetchDayAggregate(for: date)
+            let physiologyData = physiology?[date]
+            let avgHRV = physiology == nil ? existing?.avgHRV : physiologyData?.hrv
+            let avgRHR = physiology == nil ? existing?.avgRHR : physiologyData?.rhr
+            let hrvModifier = physiology == nil ? existing?.hrvModifier : physiologyData?.hrvMod
+            let rhrModifier = physiology == nil ? existing?.rhrModifier : physiologyData?.rhrMod
 
             // Calculate Body Battery score with HRV/RHR modifiers. Even with zero TSS today, we still compute based on existing CTL/ATL.
             let bodyBatteryScore = BodyBatteryCalculator.calculateScoreWithModifiers(
@@ -333,16 +298,16 @@ class BodyBatteryEngine {
             )
 
             // Detect potential illness from HRV/RHR signals
-            let illnessLikelihood = PhysiologyModifier.detectIllness(
+            let illnessLikelihood = physiology == nil ? existing?.illnessLikelihood : PhysiologyModifier.detectIllness(
                 hrvModifier: hrvModifier,
                 rhrModifier: rhrModifier
             )
 
             // Get sleep data for this day
-            let sleepData = sleep[date]
-            let sleepDuration = sleepData?.durationHours
-            let sleepQualityScore = sleepData?.qualityScore
-            let deepSleepDuration = sleepData?.deepSleepHours
+            let sleepData = sleep?[date]
+            let sleepDuration = sleep == nil ? existing?.sleepDuration : sleepData?.durationHours
+            let sleepQualityScore = sleep == nil ? existing?.sleepQualityScore : sleepData?.qualityScore
+            let deepSleepDuration = sleep == nil ? existing?.deepSleepDuration : sleepData?.deepSleepHours
 
             // Calculate ramp rate if we have data from a week ago
             var rampRate: Double?
@@ -360,9 +325,10 @@ class BodyBatteryEngine {
             let maxTSS = dayWorkouts.map { $0.tss }.max()
 
             // Try to fetch existing aggregate or create new one
-            if let existing = try dataStore.fetchDayAggregate(for: date) {
+            if let existing {
                 // Update existing
                 existing.totalTSS = tss
+                if !dayWorkouts.isEmpty { existing.hasWorkoutDetails = true }
                 existing.ctl = metrics.ctl
                 existing.atl = metrics.atl
                 existing.tsb = metrics.tsb
@@ -407,6 +373,7 @@ class BodyBatteryEngine {
                     deepSleepDuration: deepSleepDuration
                 )
 
+                aggregate.hasWorkoutDetails = !dayWorkouts.isEmpty
                 // Link workouts to aggregate
                 for workout in dayWorkouts {
                     workout.dayAggregate = aggregate
@@ -420,6 +387,7 @@ class BodyBatteryEngine {
         if !aggregatesToSave.isEmpty {
             try dataStore.saveDayAggregatesBatch(aggregatesToSave)
         }
+        return warnings
     }
 
     // MARK: - Utility Methods

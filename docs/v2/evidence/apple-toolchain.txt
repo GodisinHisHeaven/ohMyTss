@@ -1,0 +1,3 @@
+BLOCKED: xcodebuild not installed; xcodebuild -version cannot execute.
+BLOCKED: xcrun not installed; xcrun simctl list devices available cannot execute.
+No Apple SDK/framework substitution used. Existing Xcode Cloud workflow publishes TestFlight; not invoked.

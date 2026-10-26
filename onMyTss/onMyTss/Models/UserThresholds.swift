@@ -34,6 +34,9 @@ final class UserThresholds {
     // Heart rate
     var maxHeartRate: Int? // Maximum heart rate (bpm)
 
+    /// Explicitly confirmed for v2; legacy default max HR is not evidence.
+    var cardioMaxHeartRate: Int?
+
     // Running thresholds (future v1.0)
     var runningLTPace: Int? // Lactate Threshold Pace (seconds per km)
     var runningLTHeartRate: Int? // LT Heart Rate (bpm)
@@ -54,7 +57,7 @@ final class UserThresholds {
         cyclingFTP: Int? = nil,
         stravaFTP: Int? = nil,
         preferStravaFTP: Bool = false,
-        maxHeartRate: Int? = 190,
+        maxHeartRate: Int? = nil,
         runningLTPace: Int? = nil,
         runningLTHeartRate: Int? = nil,
         swimmingLTPace: Int? = nil,

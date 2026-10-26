@@ -11,14 +11,12 @@ import SwiftData
 @main
 struct ohMyTssApp: App {
     var sharedModelContainer: ModelContainer = {
-        let schema = Schema([
-            DayAggregate.self,
-            UserThresholds.self,
-            AppState.self,
-            Workout.self,
-            StravaAuth.self
-        ])
-        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+        let schema = Schema(AppSchema.models)
+        var inMemory = false
+        #if DEBUG
+        inMemory = ProcessInfo.processInfo.arguments.contains("--v2-ui-tests")
+        #endif
+        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: inMemory)
 
         do {
             return try ModelContainer(for: schema, configurations: [modelConfiguration])

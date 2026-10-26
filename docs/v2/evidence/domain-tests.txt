@@ -1,0 +1,93 @@
+[0/1] Planning build
+Building for debugging...
+[0/4] Write sources
+[1/4] Write swift-version-34569C9CE204F859.txt
+[3/6] Emitting module DomainTests
+[4/6] Compiling DomainTests SignalTests.swift
+[5/7] Wrapping AST for DomainTests for debugging
+[6/12] /workspace/ohMyTss/.build/x86_64-unknown-linux-gnu/debug/OhMyTssDomainPackageDiscoveredTests.derived/all-discovered-tests.swift
+[7/13] Write sources
+[9/16] Compiling OhMyTssDomainPackageDiscoveredTests all-discovered-tests.swift
+[10/16] Compiling OhMyTssDomainPackageDiscoveredTests DomainTests.swift
+[11/16] Emitting module OhMyTssDomainPackageDiscoveredTests
+[12/17] /workspace/ohMyTss/.build/x86_64-unknown-linux-gnu/debug/OhMyTssDomainPackageTests.derived/runner.swift
+[13/18] Write sources
+[14/18] Wrapping AST for OhMyTssDomainPackageDiscoveredTests for debugging
+[16/20] Compiling OhMyTssDomainPackageTests runner.swift
+[17/20] Emitting module OhMyTssDomainPackageTests
+[18/20] Write Objects.LinkFileList
+[19/20] Linking OhMyTssDomainPackageTests.xctest
+Build complete! (9.45s)
+Test Suite 'All tests' started at 2026-10-25 02:51:55.223
+Test Suite 'debug.xctest' started at 2026-10-25 02:51:55.225
+Test Suite 'LoadModelTests' started at 2026-10-25 02:51:55.225
+Test Case 'LoadModelTests.testFeaturesOnlyInfluenceRegionsWhenObserved' started at 2026-10-25 02:51:55.225
+Test Case 'LoadModelTests.testFeaturesOnlyInfluenceRegionsWhenObserved' passed (0.001 seconds)
+Test Case 'LoadModelTests.testFutureSessionDoesNotPretendCompletedSetsOrLoad' started at 2026-10-25 02:51:55.226
+Test Case 'LoadModelTests.testFutureSessionDoesNotPretendCompletedSetsOrLoad' passed (0.0 seconds)
+Test Case 'LoadModelTests.testHeartRateDistributionUsesTimeNotWholeWorkoutMean' started at 2026-10-25 02:51:55.227
+Test Case 'LoadModelTests.testHeartRateDistributionUsesTimeNotWholeWorkoutMean' passed (0.0 seconds)
+Test Case 'LoadModelTests.testInvalidEmptyDurationNeverProducesNaNOrFakeRecovery' started at 2026-10-25 02:51:55.227
+Test Case 'LoadModelTests.testInvalidEmptyDurationNeverProducesNaNOrFakeRecovery' passed (0.0 seconds)
+Test Case 'LoadModelTests.testMissingHRAndConfiguredMaximumAreUnknownNotZero' started at 2026-10-25 02:51:55.227
+Test Case 'LoadModelTests.testMissingHRAndConfiguredMaximumAreUnknownNotZero' passed (0.0 seconds)
+Test Case 'LoadModelTests.testMissingTimeDoesNotScaleObservedCardioToFullDuration' started at 2026-10-25 02:51:55.228
+Test Case 'LoadModelTests.testMissingTimeDoesNotScaleObservedCardioToFullDuration' passed (0.0 seconds)
+Test Case 'LoadModelTests.testNoFTPRequiredForAnyModalityOrCardio' started at 2026-10-25 02:51:55.228
+Test Case 'LoadModelTests.testNoFTPRequiredForAnyModalityOrCardio' passed (0.001 seconds)
+Test Case 'LoadModelTests.testNoFutureSamplesEnterFrozenCutoff' started at 2026-10-25 02:51:55.228
+Test Case 'LoadModelTests.testNoFutureSamplesEnterFrozenCutoff' passed (0.0 seconds)
+Test Case 'LoadModelTests.testNoRouteDoesNotInventSlopeButMeasuredDownhillChangesQuads' started at 2026-10-25 02:51:55.229
+Test Case 'LoadModelTests.testNoRouteDoesNotInventSlopeButMeasuredDownhillChangesQuads' passed (0.0 seconds)
+Test Case 'LoadModelTests.testPausesExcludeCardioAndUseActualElapsedEndpoint' started at 2026-10-25 02:51:55.229
+Test Case 'LoadModelTests.testPausesExcludeCardioAndUseActualElapsedEndpoint' passed (0.0 seconds)
+Test Case 'LoadModelTests.testRIRZeroAndMissingEffortStayDistinct' started at 2026-10-25 02:51:55.229
+Test Case 'LoadModelTests.testRIRZeroAndMissingEffortStayDistinct' passed (0.001 seconds)
+Test Case 'LoadModelTests.testSnapshotRoundTripRetainsVersionCutoffAndSeparateMethods' started at 2026-10-25 02:51:55.230
+Test Case 'LoadModelTests.testSnapshotRoundTripRetainsVersionCutoffAndSeparateMethods' passed (0.001 seconds)
+Test Case 'LoadModelTests.testStrengthAddEditDeleteChangesRegionWithoutAddingCardio' started at 2026-10-25 02:51:55.231
+Test Case 'LoadModelTests.testStrengthAddEditDeleteChangesRegionWithoutAddingCardio' passed (0.0 seconds)
+Test Case 'LoadModelTests.testStrengthDetailsDoNotEraseEnduranceOrDoubleCardio' started at 2026-10-25 02:51:55.231
+Test Case 'LoadModelTests.testStrengthDetailsDoNotEraseEnduranceOrDoubleCardio' passed (0.0 seconds)
+Test Case 'LoadModelTests.testStrengthMassIsContextNotUniversalFatigueOrRecovery' started at 2026-10-25 02:51:55.232
+Test Case 'LoadModelTests.testStrengthMassIsContextNotUniversalFatigueOrRecovery' passed (0.0 seconds)
+Test Case 'LoadModelTests.testSwimStrokeAndUserEquipmentRemainDistinctFromUnknown' started at 2026-10-25 02:51:55.232
+Test Case 'LoadModelTests.testSwimStrokeAndUserEquipmentRemainDistinctFromUnknown' passed (0.0 seconds)
+Test Case 'LoadModelTests.testUnlocatedPausesUseElapsedCoverageAndExplicitMethod' started at 2026-10-25 02:51:55.232
+Test Case 'LoadModelTests.testUnlocatedPausesUseElapsedCoverageAndExplicitMethod' passed (0.0 seconds)
+Test Case 'LoadModelTests.testUnsupportedExerciseRequiresExplicitManualRegionAndIsLowConfidence' started at 2026-10-25 02:51:55.233
+Test Case 'LoadModelTests.testUnsupportedExerciseRequiresExplicitManualRegionAndIsLowConfidence' passed (0.0 seconds)
+Test Suite 'LoadModelTests' passed at 2026-10-25 02:51:55.233
+	 Executed 18 tests, with 0 failures (0 unexpected) in 0.008 (0.008) seconds
+Test Suite 'SignalTests' started at 2026-10-25 02:51:55.233
+Test Case 'SignalTests.testAltitudeNoiseDoesNotInventClimbingAndMissingRouteRemainsMissing' started at 2026-10-25 02:51:55.233
+Test Case 'SignalTests.testAltitudeNoiseDoesNotInventClimbingAndMissingRouteRemainsMissing' passed (0.0 seconds)
+Test Case 'SignalTests.testClippingHonorsAbsoluteTimeAcrossMidnight' started at 2026-10-25 02:51:55.233
+Test Case 'SignalTests.testClippingHonorsAbsoluteTimeAcrossMidnight' passed (0.001 seconds)
+Test Case 'SignalTests.testGapsAreUnknownAndFinalPointIsNotExtended' started at 2026-10-25 02:51:55.235
+Test Case 'SignalTests.testGapsAreUnknownAndFinalPointIsNotExtended' passed (0.0 seconds)
+Test Case 'SignalTests.testLongRideUsesTimestampWindowsWithoutSamplingDrift' started at 2026-10-25 02:51:55.235
+Test Case 'SignalTests.testLongRideUsesTimestampWindowsWithoutSamplingDrift' passed (0.02 seconds)
+Test Case 'SignalTests.testPausesRemoveSupportAndPreventRollingWindowBridge' started at 2026-10-25 02:51:55.255
+Test Case 'SignalTests.testPausesRemoveSupportAndPreventRollingWindowBridge' passed (0.0 seconds)
+Test Case 'SignalTests.testRegularAndIrregularSamplingOfSameSignalAgree' started at 2026-10-25 02:51:55.255
+Test Case 'SignalTests.testRegularAndIrregularSamplingOfSameSignalAgree' passed (0.001 seconds)
+Test Case 'SignalTests.testSamePowerDifferentCadenceChangesMechanicalTorqueOnly' started at 2026-10-25 02:51:55.255
+Test Case 'SignalTests.testSamePowerDifferentCadenceChangesMechanicalTorqueOnly' passed (0.0 seconds)
+Test Case 'SignalTests.testStepSignalSamplingInvariantWithKnownWeightedMean' started at 2026-10-25 02:51:55.256
+Test Case 'SignalTests.testStepSignalSamplingInvariantWithKnownWeightedMean' passed (0.0 seconds)
+Test Case 'SignalTests.testThirtySamplesAreNotAssumedToBeThirtySeconds' started at 2026-10-25 02:51:55.256
+Test Case 'SignalTests.testThirtySamplesAreNotAssumedToBeThirtySeconds' passed (0.0 seconds)
+Test Case 'SignalTests.testTrueZeroPowerIsObservedButMissingPowerIsNot' started at 2026-10-25 02:51:55.256
+Test Case 'SignalTests.testTrueZeroPowerIsObservedButMissingPowerIsNot' passed (0.0 seconds)
+Test Case 'SignalTests.testUnorderedOverlappingDuplicateAndInvalidValuesDoNotDoubleCount' started at 2026-10-25 02:51:55.256
+Test Case 'SignalTests.testUnorderedOverlappingDuplicateAndInvalidValuesDoNotDoubleCount' passed (0.0 seconds)
+Test Suite 'SignalTests' passed at 2026-10-25 02:51:55.256
+	 Executed 11 tests, with 0 failures (0 unexpected) in 0.023 (0.023) seconds
+Test Suite 'debug.xctest' passed at 2026-10-25 02:51:55.256
+	 Executed 29 tests, with 0 failures (0 unexpected) in 0.031 (0.031) seconds
+Test Suite 'All tests' passed at 2026-10-25 02:51:55.256
+	 Executed 29 tests, with 0 failures (0 unexpected) in 0.031 (0.031) seconds
+◇ Test run started.
+↳ Testing Library Version: 6.0.3 (18c42c19cac3faf)
+✔ Test run with 0 tests passed after 0.001 seconds.

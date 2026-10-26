@@ -1,0 +1,39 @@
+{
+  "workout": [
+    [
+      "synthetic-legacy-migration",
+      73.0,
+      3600.0,
+      1,
+      0
+    ]
+  ],
+  "history": [
+    [
+      73.0,
+      21.0,
+      33.0,
+      -12.0
+    ]
+  ],
+  "settings": [
+    [
+      240,
+      181,
+      1
+    ]
+  ],
+  "v2_estimates": [
+    [
+      1
+    ]
+  ],
+  "observation": [
+    [
+      "quads",
+      "left",
+      "soreness",
+      1
+    ]
+  ]
+}

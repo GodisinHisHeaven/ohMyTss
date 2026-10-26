@@ -24,9 +24,9 @@ struct MainTabView: View {
     var body: some View {
         TabView(selection: $selectedTab) {
             // Today Tab
-            TodayView(engine: engine, dataStore: dataStore)
+            V2TodayView(engine: engine, dataStore: dataStore)
                 .tabItem {
-                    Label("Today", systemImage: "battery.75")
+                    Label("Today", systemImage: "heart.text.square")
                 }
                 .tag(Tab.today)
 
@@ -51,7 +51,7 @@ struct MainTabView: View {
 
 #Preview {
     let config = ModelConfiguration(isStoredInMemoryOnly: true)
-    let container = try! ModelContainer(for: DayAggregate.self, UserThresholds.self, AppState.self, configurations: config)
+    let container = try! ModelContainer(for: DayAggregate.self, UserThresholds.self, AppState.self, Workout.self, StravaAuth.self, LocalObservation.self, StrengthSetRecord.self, StrengthTemplate.self, LoadEstimateRecord.self, configurations: config)
     let dataStore = DataStore(modelContainer: container)
 
     // Create sample data

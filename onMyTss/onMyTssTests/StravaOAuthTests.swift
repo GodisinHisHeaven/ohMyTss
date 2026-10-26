@@ -10,6 +10,7 @@ final class StravaOAuthTests: XCTestCase {
         XCTAssertTrue(schemes.contains("onmytss"))
         XCTAssertEqual(URL(string: StravaOAuth.redirectURI)?.host, AppIdentity.accountURL.host)
         XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String, AppIdentity.name)
+        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String, AppIdentity.name)
     }
 
     func testAuthorizationUsesMobileEndpointAndRoundTripsState() throws {

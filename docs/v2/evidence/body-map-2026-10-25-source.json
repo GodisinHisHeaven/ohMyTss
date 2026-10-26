@@ -1,0 +1,29 @@
+{
+  "base_pr": "https://github.com/GodisinHisHeaven/ohMyTss/pull/18",
+  "head": "8bb4973f6d7860ba4d5f7b54bb10c6e11c0bc26e",
+  "local_branch": "codex/v2-xcode-validation",
+  "validation": "10 focused tests, then 1 UI rerun after hiding decorative status icons from accessibility; see BODY_MAP_2026-10-25.md",
+  "source_files": {
+    "Tests/DomainTests/SignalTests.swift": "f9adb7c0b7228d76501ac83e5e694b04f2ad259f018d1e09a37fde8382adc351",
+    "docs/v2/fixtures/V2MigrationProbe.swift": "c4945e876d58d2492e1ebbee9b17c30c5585d2e7fee817bf4ee3c8721995d629",
+    "onMyTss/onMyTss/Models/V2Records.swift": "1b1260cde5efc20927f29214a67c9210fd0ee871194033679babe58077e3e0e2",
+    "onMyTss/onMyTss/Models/Workout.swift": "9bf67d27f7e835a5ef830617dfa4b79c03653fbff232f931a73790896d4aea19",
+    "onMyTss/onMyTss/Services/BodyBatteryEngine.swift": "b394cce0ccf8988f9a92f2254597ae9671ff47820ae4b68ec7734922d40ec73a",
+    "onMyTss/onMyTss/Services/DataStore.swift": "18ddde3b919a4c50a925185801e19308a76e181ab68d19fdab7a0e64685d6275",
+    "onMyTss/onMyTss/Services/V2Store.swift": "4cb530b2ce1a11e972302a94f46f8762c5ac02b4e5ed8aa46fb80300e46fca65",
+    "onMyTss/onMyTss/Services/WorkoutAggregator.swift": "91cde51f684b42a31a172b89f994db90cf49d9001c1be1fccc426f40cce86287",
+    "onMyTss/onMyTss/Views/V2/BodyMapArtwork.swift": "af016521c3664d5e742260150da7331794fed3ff02c0ba74855fa1e5869fa6e4",
+    "onMyTss/onMyTss/Views/V2/BodyMapReports.swift": "c02d278030dbdef12b865a38742b222b0d19ca16b15e5ae90a79b6960701e512",
+    "onMyTss/onMyTss/Views/V2/BodyMapView.swift": "911a7c5e82562f85a8756e29d00c46bc044598717b179a12fa75f505710acf1f",
+    "onMyTss/onMyTss/Views/V2/ObservationViews.swift": "17c7dd20541792ab919caf20b8300c778735c1532832c6fba5209907c9d52dc8",
+    "onMyTss/onMyTss/Views/V2/RegionDetailView.swift": "8c54d1bc89ab84155dcd1930b63a1e3f83f074414f6cfe156dec7464fce08e86",
+    "onMyTss/onMyTss/Views/V2/StrengthViews.swift": "2c5a9d72d5218b532b380413b766968a34dac05a5d1a6c3a5e64862b881cf4ac",
+    "onMyTss/onMyTss/Views/V2/V2ActivityDetailView.swift": "7aa79ea6dc0e14528f4b396a53d91532a89653826497f07ab2a20b2867a22616",
+    "onMyTss/onMyTss/Views/V2/V2TodayView.swift": "c1d1ef7df55ba99b5fae0dce33606ea961686e46716aedf79e09658bc00a4d18",
+    "onMyTss/onMyTssTests/BodyMapReportsTests.swift": "a6ee7026fb8210334f67761bb93a080d4fbd5840f98efe947e766a2a4e2a3728",
+    "onMyTss/onMyTssTests/HealthKitImportV2Tests.swift": "c6b2527d14aa67dcf49cc75118d1aa686f25c8a3fb1153715320807faf962c53",
+    "onMyTss/onMyTssTests/StravaSourceAvailabilityTests.swift": "0e37e5ebb978f9887a5b78e057ec1b565e94f56078057366a33e02f156445ed4",
+    "onMyTss/onMyTssTests/V2PersistenceTests.swift": "21f47212fa55f97a66613d54d47658f6c7e377ee82c1a14dbb89a3b24293aa92",
+    "onMyTss/onMyTssUITests/V2FlowTests.swift": "5ed3713c6e16b7ef195cf1c0cec9e5a09837e25c70b3a3a2ef08a546ca9c4879"
+  }
+}
