@@ -81,6 +81,10 @@ final class HealthKitImportV2Tests: XCTestCase {
 
 @MainActor
 private final class SyntheticHealthSource: HealthKitManaging {
+    func fetchWorkouts(ids: [String]) async throws -> [HKWorkout] { [] }
+    func fetchWorkoutChanges(anchor: HKQueryAnchor?) async throws -> (workouts: [HKWorkout], deletedIDs: [String], newAnchor: HKQueryAnchor) {
+        ([], [], HKQueryAnchor(fromValue: 0))
+    }
     var features = WorkoutFeatures()
     var sensorFails = false
     func fetchWorkouts(from startDate: Date, to endDate: Date) async throws -> [HKWorkout] { [] }

@@ -1,0 +1,37 @@
+{
+  "fixture": "persisted-build-30-synthetic-history",
+  "integrity": "ok",
+  "retained": {
+    "ZWORKOUT": {
+      "originalUnchanged": 1008,
+      "current": 1008
+    },
+    "ZLOADESTIMATERECORD": {
+      "originalUnchanged": 1000,
+      "current": 2008
+    },
+    "ZSTRENGTHSETRECORD": {
+      "originalUnchanged": 1,
+      "current": 1
+    },
+    "ZMUSCLERPERECORD": {
+      "originalUnchanged": 1,
+      "current": 3
+    },
+    "ZLOCALOBSERVATION": {
+      "originalUnchanged": 1,
+      "current": 1
+    }
+  },
+  "previousDayAggregatesRetained": 30,
+  "currentDayAggregates": 30,
+  "latestEstimates": 1008,
+  "latestMaximumHeartRate": 190,
+  "leftQuadRPE": 8,
+  "rightQuadRPE": 10,
+  "healthKitCursorSaved": false,
+  "healthKitSyncCompleted": false,
+  "recoverySyncCompleted": false,
+  "syncInProgress": false,
+  "syncMessage": "Sync unavailable. Saved data and manual recording remain available. Retry when connected."
+}

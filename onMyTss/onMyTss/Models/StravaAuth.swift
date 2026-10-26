@@ -39,6 +39,7 @@ final class StravaAuth {
 
     /// Last successful sync timestamp
     var lastSyncDate: Date?
+    var lastReconciliationDate: Date?
 
     /// Strava cursor for incremental syncs (last activity ID fetched)
     var syncCursor: Int?

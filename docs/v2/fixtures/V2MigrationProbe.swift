@@ -30,6 +30,11 @@ struct V2MigrationProbe {
         try check(settings[0].maxHeartRate == 181 && settings[0].hasCompletedOnboarding, "Legacy settings")
         let states = try context.fetch(FetchDescriptor<AppState>())
         try check(states.count == 1 && states[0].lastHealthKitSyncDate == workout.startTime, "Legacy sync metadata")
+        try check(states[0].lastHealthKitSampleRefreshDate == nil && states[0].lastRecoverySyncDate == nil,
+                  "New synchronization checkpoints start unset")
+        try check(states[0].pendingHealthKitWorkoutIDs.isEmpty, "New sensor retry queue starts empty")
+        try check(try context.fetch(FetchDescriptor<StravaAuth>()).first?.lastReconciliationDate == nil,
+                  "Strava reconciliation checkpoint starts unset")
         try check(try context.fetch(FetchDescriptor<StravaAuth>()).count == 1, "Legacy connection metadata")
         let observation = LocalObservation(regionRaw: "quads", sideRaw: "left", severity: 0,
                                            observedAt: workout.startTime, sessionID: workout.id)

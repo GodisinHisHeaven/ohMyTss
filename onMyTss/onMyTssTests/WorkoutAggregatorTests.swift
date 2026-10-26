@@ -62,6 +62,10 @@ final class WorkoutAggregatorTests: XCTestCase {
 
 @MainActor
 private final class MockHealthKitManager: HealthKitManaging {
+    func fetchWorkouts(ids: [String]) async throws -> [HKWorkout] { [] }
+    func fetchWorkoutChanges(anchor: HKQueryAnchor?) async throws -> (workouts: [HKWorkout], deletedIDs: [String], newAnchor: HKQueryAnchor) {
+        ([], [], HKQueryAnchor(fromValue: 0))
+    }
     func fetchWorkouts(from startDate: Date, to endDate: Date) async throws -> [HKWorkout] { [] }
     func fetchPowerSamples(for workout: HKWorkout) async throws -> [HKQuantitySample] { [] }
     func fetchHeartRateSamples(for workout: HKWorkout) async throws -> [HKQuantitySample] { [] }

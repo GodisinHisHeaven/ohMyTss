@@ -130,7 +130,11 @@ extension Workout {
             guard let data = featuresData else { return WorkoutFeatures() }
             return (try? JSONDecoder().decode(WorkoutFeatures.self, from: data)) ?? WorkoutFeatures()
         }
-        set { featuresData = try? JSONEncoder().encode(newValue) }
+        set {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            featuresData = try? encoder.encode(newValue)
+        }
     }
 }
 

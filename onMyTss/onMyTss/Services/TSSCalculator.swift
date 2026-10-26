@@ -82,7 +82,7 @@ struct TSSCalculator {
                                   restingHeartRate: restingHeartRate ?? 60).rounded(toPlaces: 1)
     }
 
-    static func legacyHeartRateTSS(intervals: [TimedValue], maxHeartRate: Int, restingHeartRate: Int) -> Double {
+    nonisolated static func legacyHeartRateTSS(intervals: [TimedValue], maxHeartRate: Int, restingHeartRate: Int) -> Double {
         let reserve = Double(maxHeartRate - restingHeartRate)
         guard reserve > 0 else { return 0 }
         let trimp = intervals.reduce(0.0) { sum, interval in

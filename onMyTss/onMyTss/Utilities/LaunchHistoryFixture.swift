@@ -14,6 +14,7 @@ enum LaunchHistoryFixture {
             let workout = Workout(id: "synthetic-launch-\(index)", date: start.startOfDay,
                                   startTime: start, duration: 3600, workoutType: "Run", tss: 50,
                                   calculationMethod: "duration", source: .healthKit)
+            workout.sessionGroupID = workout.id
             context.insert(workout)
             guard includeEstimates else { continue }
             let value = LoadModel.estimate(type: "Run", start: start, duration: 3600, distance: nil,

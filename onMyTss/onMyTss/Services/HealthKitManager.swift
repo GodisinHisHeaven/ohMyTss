@@ -63,6 +63,20 @@ class HealthKitManager {
 
     // MARK: - Fetch Workouts
 
+    func fetchWorkouts(ids: [String]) async throws -> [HKWorkout] {
+        guard isHealthKitAvailable else { throw HealthKitError.notAvailable }
+        let uuids = Set(ids.compactMap(UUID.init(uuidString:)))
+        guard !uuids.isEmpty else { return [] }
+        return try await withCheckedThrowingContinuation { continuation in
+            let query = HKSampleQuery(sampleType: .workoutType(), predicate: HKQuery.predicateForObjects(with: uuids),
+                                      limit: uuids.count, sortDescriptors: nil) { _, samples, error in
+                if let error { continuation.resume(throwing: error) }
+                else { continuation.resume(returning: samples as? [HKWorkout] ?? []) }
+            }
+            healthStore.execute(query)
+        }
+    }
+
     /// Fetch workouts within a date range
     func fetchWorkouts(from startDate: Date, to endDate: Date) async throws -> [HKWorkout] {
         guard isHealthKitAvailable else { throw HealthKitError.notAvailable }
@@ -219,7 +233,13 @@ class HealthKitManager {
         if workout.workoutActivityType == .running {
             do {
                 let locations = try await routeLocations(workout)
-                let terrain = Self.terrainFeatures(locations)
+                let calculation = Task.detached(priority: .utility) {
+                    try Task.checkCancellation()
+                    return Self.terrainFeatures(locations)
+                }
+                let terrain = try await withTaskCancellationHandler {
+                    try await calculation.value
+                } onCancel: { calculation.cancel() }
                 features.elevation = terrain.elevation
                 features.grade = terrain.grade
                 if locations.isEmpty { features.unavailableChannels.append("terrain") }
@@ -266,7 +286,7 @@ class HealthKitManager {
 
     /// Keep only altitude and grade, never retain location coordinates. Slope
     /// requires a valid accuracy estimate, a >=15 m baseline and <=30 s support.
-    private static func terrainFeatures(_ locations: [CLLocation]) -> (elevation: [TimedValue], grade: [TimedValue]) {
+    nonisolated private static func terrainFeatures(_ locations: [CLLocation]) -> (elevation: [TimedValue], grade: [TimedValue]) {
         let points = locations.filter {
             $0.horizontalAccuracy >= 0 && $0.horizontalAccuracy <= 20 &&
             $0.verticalAccuracy >= 0 && $0.verticalAccuracy <= 10 && $0.altitude.isFinite
