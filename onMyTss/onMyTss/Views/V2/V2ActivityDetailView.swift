@@ -188,8 +188,10 @@ struct V2ActivityDetailView: View {
         }
         .confirmationDialog("Remove this activity from totals? Your reports and recorded sets are retained.", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Remove activity", role: .destructive) {
-                do { try V2Store(context: context).deleteSession(workout); dismiss() }
-                catch { context.rollback(); self.error = error.localizedDescription }
+                Task {
+                    do { try await V2Store(context: context).deleteSession(workout); dismiss() }
+                    catch { self.error = error.localizedDescription }
+                }
             }
         }
     }

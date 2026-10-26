@@ -23,6 +23,12 @@
 - UI smoke tests live in `onMyTssUITests`; keep launch tests lightweight and avoid blocking permission alerts in automation.
 - Aim for coverage on calculation paths (BodyBatteryEngine, LoadCalculator, TSSCalculator) and persistence (DataStore). Add regression tests when fixing bugs.
 
+## Release Gates
+- Before every TestFlight or production release, review the final diff and run the complete unit/UI suite in real Xcode. Required tests must pass; a successful compile alone is insufficient.
+- Exercise the optimized Release app, including cold launch, saved-history upgrade, maximum-heart-rate save, navigation during recalculation, and the changed user flows. Use a persisted synthetic history of at least 1,000 workouts for history-related changes. Verify cancellation/restart, latest-input correctness, and retention of user data and previous estimates.
+- Run `scripts/check_v2_migration.sh` for persistence changes and record the simulator/device, OS, configuration, test counts, responsiveness measurements, and any unverified physical-device behavior in the PR. Inspect failures and crash/hang evidence; do not infer smooth rendering from a passing launch test.
+- Xcode Cloud's **Test - iOS** action must remain **Required To Pass**. Do not publish with failed, skipped required, or unfinished tests. After merging to `main`, verify that exact commit's Build, Test, Archive, and TestFlight post-action before claiming delivery.
+
 ## Commit & Pull Request Guidelines
 - Follow the repo’s history pattern: short, capitalized, imperative summaries (e.g., "Fix HealthKit permission flow", "Performance: Parallelize data fetching"). Keep to ~50 characters when possible.
 - PRs should include: what changed and why, testing done (simulator device/OS, commands), any screenshots for UI tweaks, and links to issues/notes. Call out configuration steps (e.g., Strava keys) or migration needs.

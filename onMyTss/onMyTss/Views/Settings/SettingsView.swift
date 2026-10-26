@@ -13,6 +13,7 @@ struct SettingsView: View {
     @Environment(\.modelContext) private var modelContext
     @State private var cardioHR = ""
     @State private var cardioMessage: String?
+    @State private var savingCardio = false
     @State private var viewModel: SettingsViewModel
     @State private var showingResetConfirmation = false
     @State private var showingFTPEditor = false
@@ -27,23 +28,13 @@ struct SettingsView: View {
                 Section {
                     TextField("Confirmed maximum heart rate (bpm)", text: $cardioHR)
                         .keyboardType(.numberPad)
-                    Button("Save Cardio Settings") {
-                        do {
-                            let store = DataStore(modelContext: modelContext)
-                            let thresholds = try store.fetchUserThresholds()
-                            let text = cardioHR.trimmingCharacters(in: .whitespaces)
-                            if text.isEmpty { thresholds.cardioMaxHeartRate = nil }
-                            else if let value = Int(text), (100...230).contains(value) {
-                                thresholds.cardioMaxHeartRate = value
-                            } else {
-                                cardioMessage = "Enter 100–230 bpm, or leave blank for unknown."
-                                return
-                            }
-                            try store.saveUserThresholds(thresholds)
-                            try V2Store(context: modelContext).refreshEstimates()
-                            cardioMessage = "Saved. New estimate snapshots created; previous versions retained."
-                        } catch { cardioMessage = error.localizedDescription }
+                        .accessibilityIdentifier("settings.cardioHR")
+                        .disabled(savingCardio)
+                    Button(savingCardio ? "Updating estimates…" : "Save Cardio Settings") {
+                        Task { await saveCardioSettings() }
                     }
+                    .disabled(savingCardio)
+                    .accessibilityIdentifier("settings.saveCardio")
                     if let cardioMessage { Text(cardioMessage).font(.caption) }
                 } header: { Text("Cardio Load") } footer: {
                     Text("Optional. Use a maximum heart rate you know; no age or FTP default is assumed. Leave blank for unknown. Changing this creates new estimates from saved inputs, retaining earlier snapshots.")
@@ -249,6 +240,31 @@ struct SettingsView: View {
                     errorBanner(message: errorMessage)
                 }
             }
+        }
+    }
+
+    @MainActor private func saveCardioSettings() async {
+        guard !savingCardio else { return }
+        let text = cardioHR.trimmingCharacters(in: .whitespaces)
+        guard text.isEmpty || Int(text).map({ (100...230).contains($0) }) == true else {
+            cardioMessage = "Enter 100–230 bpm, or leave blank for unknown."
+            return
+        }
+        savingCardio = true
+        cardioMessage = "Updating estimates. You can continue using the app."
+        defer { savingCardio = false }
+        do {
+            let store = DataStore(modelContext: modelContext)
+            let thresholds = try store.fetchUserThresholds()
+            let value = Int(text)
+            if thresholds.cardioMaxHeartRate != value {
+                thresholds.cardioMaxHeartRate = value
+                try store.saveUserThresholds(thresholds)
+            }
+            try await V2Store(context: modelContext).refreshEstimates()
+            cardioMessage = "Saved. Estimates updated; previous versions retained."
+        } catch {
+            cardioMessage = "Could not finish updating estimates. Tap Save Cardio Settings to retry. \(error.localizedDescription)"
         }
     }
 

@@ -108,7 +108,7 @@ final class V2Store {
         try DataStore(modelContext: context).rebuildLegacyLoadHistory(now: clock())
     }
 
-    func deleteSession(_ session: Workout) throws {
+    func deleteSession(_ session: Workout) async throws {
         // Delete the logical session, retaining source tombstones and all user records for audit.
         let all = try context.fetch(FetchDescriptor<Workout>())
         let ids = relatedIDs(to: session.id, in: all)
@@ -118,7 +118,7 @@ final class V2Store {
             row.isSuppressed = true
         }
         try DataStore(modelContext: context).rebuildLegacyLoadHistory(now: clock())
-        try refreshEstimates()
+        try await refreshEstimates()
         try context.save()
     }
 
@@ -142,107 +142,84 @@ final class V2Store {
         try recalculate(session)
     }
 
-    /// Recompute all active sessions after import. Historical snapshots are never overwritten.
-    func refreshEstimates() throws {
-        let all = try context.fetch(FetchDescriptor<Workout>())
-        // Resolve aliases after a later source arrives; retain old estimate snapshots under original IDs.
-        for canonical in all where !canonical.isTombstoned && !canonical.isSuppressed {
-            let ids = relatedIDs(to: canonical.id, in: all)
-            for row in try context.fetch(FetchDescriptor<StrengthSetRecord>()) where ids.contains(row.sessionID) {
-                row.sessionID = canonical.id
+    /// Recompute immutable inputs off the UI actor and persist bounded batches.
+    func refreshEstimates() async throws {
+        try await updateEstimates(onlyMissing: false)
+    }
+
+    func backfillEstimates() async throws {
+        try await updateEstimates(onlyMissing: true)
+    }
+
+    private func updateEstimates(onlyMissing: Bool) async throws {
+        processing: while true {
+            try Task.checkCancellation()
+            try await Task.sleep(for: .milliseconds(1))
+            if !onlyMissing { try resolveAliases() }
+            let snapshot = try V2EstimateBatch(context: context)
+            let now = clock()
+            let calculation = Task.detached(priority: .utility) {
+                try await V2EstimateCalculator.shared.calculate(snapshot, now: now, onlyMissing: onlyMissing)
             }
-            for row in try context.fetch(FetchDescriptor<LocalObservation>()) {
-                if let id = row.sessionID, ids.contains(id) { row.sessionID = canonical.id }
+            let pending = try await withTaskCancellationHandler {
+                try await calculation.value
+            } onCancel: { calculation.cancel() }
+            try Task.checkCancellation()
+            let afterCalculation = try V2EstimateBatch(context: context, includePrevious: false)
+            guard snapshot.hasSameInputs(as: afterCalculation) else { continue processing }
+            guard !pending.isEmpty else { return }
+            for offset in stride(from: 0, to: pending.count, by: 50) {
+                try Task.checkCancellation()
+                let current = try V2EstimateBatch(context: context, includePrevious: false)
+                // An edit, deletion or newer threshold made this calculation stale.
+                // Recompute from the new values before appending any more snapshots.
+                guard snapshot.hasSameInputs(as: current) else { continue processing }
+                let batch = pending[offset..<min(offset + 50, pending.count)]
+                let latest = try V2EstimateBatch.latestEstimates(context: context, sessionIDs: batch.map(\.sessionID))
+                for row in batch {
+                    // Another caller may have completed this same refresh while we
+                    // were suspended. Keep append-only history without duplicates.
+                    if latest[row.sessionID]?.inputData == row.inputData
+                        && latest[row.sessionID]?.version == row.value.version { continue }
+                    insert(row)
+                }
+                try context.save()
+                try await Task.sleep(for: .milliseconds(10))
             }
-            try recalculate(canonical)
+            return
         }
     }
 
-    /// Fill legacy/model-version gaps after launch without blocking the main actor
-    /// for the whole history. Imports and edits already refresh changed inputs.
-    func backfillEstimates() async throws {
-        // Give SwiftUI time to present the saved history before doing derived work.
-        try await Task.sleep(for: .milliseconds(1))
-        let snapshots = try context.fetch(FetchDescriptor<LoadEstimateRecord>(
-            sortBy: [SortDescriptor(\.computedAt, order: .reverse)]
-        ))
-        var latestVersions: [String: String] = [:]
-        for snapshot in snapshots where latestVersions[snapshot.sessionID] == nil {
-            latestVersions[snapshot.sessionID] = snapshot.version
+    private func resolveAliases() throws {
+        let all = try context.fetch(FetchDescriptor<Workout>())
+        let children = Dictionary(grouping: all.filter { $0.linkedSessionID != nil }, by: { $0.linkedSessionID! })
+        let sets = Dictionary(grouping: try context.fetch(FetchDescriptor<StrengthSetRecord>()), by: \.sessionID)
+        let observations = Dictionary(grouping: try context.fetch(FetchDescriptor<LocalObservation>()), by: \.sessionID)
+        for canonical in all where !canonical.isTombstoned && !canonical.isSuppressed {
+            var ids: Set<String> = [canonical.id]
+            var pending = [canonical.id]
+            while let id = pending.popLast() {
+                for child in children[id] ?? [] where ids.insert(child.id).inserted { pending.append(child.id) }
+            }
+            for id in ids where id != canonical.id {
+                for row in sets[id] ?? [] { row.sessionID = canonical.id }
+                for row in observations[id] ?? [] { row.sessionID = canonical.id }
+            }
         }
-        let sessions = try context.fetch(FetchDescriptor<Workout>(
-            sortBy: [SortDescriptor(\.startTime, order: .reverse)]
-        ))
-        for session in sessions where !session.isTombstoned && !session.isSuppressed {
-            guard latestVersions[session.id] != LoadModel.version else { continue }
-            // A real suspension lets the UI process input and cancellation between
-            // sessions. Each saved snapshot also makes an interrupted pass resumable.
-            try await Task.sleep(for: .milliseconds(1))
-            try recalculate(session)
-        }
+        if context.hasChanges { try context.save() }
     }
 
     func recalculate(_ session: Workout) throws {
         guard !session.isTombstoned, !session.isSuppressed else { try context.save(); return }
-        let all = try context.fetch(FetchDescriptor<Workout>())
-        let ids = relatedIDs(to: session.id, in: all)
-        let sources = all.filter { ids.contains($0.id) && !$0.isTombstoned }
-        var features = session.features
-        // Prefer valid time coverage, never sample count; sources can have radically different cadence.
-        let window = TimeRange(start: session.startTime, end: features.end ?? session.startTime.addingTimeInterval(session.duration))
-        func supported(_ values: [TimedValue], pauses: [TimeRange], range: ClosedRange<Double>) -> Double {
-            SignalProcessing.coveredSeconds(SignalProcessing.intervals(samples: values, window: window, pauses: pauses, validRange: range))
-        }
-        for source in sources where source.id != session.id {
-            let other = source.features
-            if supported(other.heartRate, pauses: other.pauses, range: 30...240) > supported(features.heartRate, pauses: features.pauses, range: 30...240) { features.heartRate = other.heartRate }
-            if supported(other.power, pauses: other.pauses, range: 0...2500) > supported(features.power, pauses: features.pauses, range: 0...2500) { features.power = other.power }
-            if supported(other.cadence, pauses: other.pauses, range: 0...250) > supported(features.cadence, pauses: features.pauses, range: 0...250) { features.cadence = other.cadence }
-            if supported(other.speed, pauses: other.pauses, range: 0...15) > supported(features.speed, pauses: features.pauses, range: 0...15) { features.speed = other.speed }
-            if supported(other.elevation, pauses: other.pauses, range: -500...9000) > supported(features.elevation, pauses: features.pauses, range: -500...9000) { features.elevation = other.elevation }
-            if supported(other.grade, pauses: other.pauses, range: -0.5...0.5) > supported(features.grade, pauses: features.pauses, range: -0.5...0.5) { features.grade = other.grade }
-            if features.ascentMeters == nil { features.ascentMeters = other.ascentMeters }
-            if features.descentMeters == nil { features.descentMeters = other.descentMeters }
-            if other.swimSegments.count > features.swimSegments.count { features.swimSegments = other.swimSegments }
-            if features.pauses.isEmpty { features.pauses = other.pauses }
-            if features.end == nil { features.end = other.end }
-            features.provenance = Array(Set(features.provenance + other.provenance)).sorted()
-        }
-        let setRecords = try context.fetch(FetchDescriptor<StrengthSetRecord>()).filter { ids.contains($0.sessionID) }
-            .sorted { $0.id.uuidString < $1.id.uuidString }
-        let sets = setRecords.map(input)
-        let thresholds = try DataStore(modelContext: context).fetchUserThresholds()
-        let priorRuns = all.filter {
-            !$0.isTombstoned && !$0.isSuppressed && $0.workoutType.lowercased().contains("run")
-                && $0.startTime < session.startTime && $0.startTime >= session.startTime.addingTimeInterval(-28 * 86400)
-                && ($0.features.end ?? $0.startTime.addingTimeInterval($0.duration)) <= session.startTime
-        }
-        let recentMinutes: Double? = priorRuns.isEmpty ? nil : priorRuns.reduce(0) { $0 + $1.duration / 60 }
-        let tags = session.userTags.sorted()
-        let snapshot = EstimateInput(type: session.workoutType, start: session.startTime, duration: session.duration,
-                                     distance: session.distance, features: features, sets: sets, tags: tags,
-                                     maxHeartRate: thresholds.cardioMaxHeartRate, recentRunningMinutes: recentMinutes,
-                                     setRevisions: setRecords.map { SetRevision(id: $0.id, recordedAt: $0.recordedAt, updatedAt: $0.updatedAt) },
-                                     thresholdsModifiedAt: thresholds.lastModified,
-                                     sourceIDs: sources.map { "\($0.source):\($0.id)" }.sorted())
-        let inputData = try encoder.encode(snapshot)
-        let sessionID = session.id
-        var previousQuery = FetchDescriptor<LoadEstimateRecord>(
-            predicate: #Predicate { $0.sessionID == sessionID },
-            sortBy: [SortDescriptor(\.computedAt, order: .reverse)]
-        )
-        previousQuery.fetchLimit = 1
-        let previous = try context.fetch(previousQuery).first
-        let now = clock()
-        let estimate = LoadModel.estimate(type: session.workoutType, start: session.startTime, duration: session.duration,
-                                          distance: session.distance, features: features, sets: sets, tags: tags,
-                                          maxHeartRate: thresholds.cardioMaxHeartRate, now: now, recentRunningMinutes: recentMinutes)
-        if previous?.inputData != inputData || previous?.version != estimate.version {
-            context.insert(LoadEstimateRecord(sessionID: session.id, version: estimate.version,
-                                             inputCutoff: estimate.inputCutoff, computedAt: now,
-                                             payloadData: try encoder.encode(estimate), inputData: inputData))
-        }
+        let batch = try V2EstimateBatch(context: context)
+        for row in try batch.calculate(now: clock(), sessionID: session.id) { insert(row) }
         try context.save()
+    }
+
+    private func insert(_ row: V2EstimateBatch.Pending) {
+        context.insert(LoadEstimateRecord(sessionID: row.sessionID, version: row.value.version,
+                                         inputCutoff: row.value.inputCutoff, computedAt: row.value.computedAt,
+                                         payloadData: row.payloadData, inputData: row.inputData))
     }
 
     private func workout(_ id: String) throws -> Workout? {
@@ -273,27 +250,6 @@ final class V2Store {
         encoder.outputFormatting = [.sortedKeys]
         return encoder
     }
-}
-
-private struct EstimateInput: Codable {
-    var type: String
-    var start: Date
-    var duration: Double
-    var distance: Double?
-    var features: WorkoutFeatures
-    var sets: [StrengthSetInput]
-    var tags: [String]
-    var maxHeartRate: Int?
-    var recentRunningMinutes: Double?
-    var setRevisions: [SetRevision]
-    var thresholdsModifiedAt: Date
-    var sourceIDs: [String]
-}
-
-private struct SetRevision: Codable {
-    var id: UUID
-    var recordedAt: Date
-    var updatedAt: Date
 }
 
 enum V2StoreError: LocalizedError {

@@ -2,7 +2,7 @@
 import Foundation
 import SwiftData
 
-/// Synthetic history for the isolated launch regression test. Never touches a disk store.
+/// Synthetic history for isolated in-memory or temporary-disk regression tests.
 @MainActor
 enum LaunchHistoryFixture {
     static func seed(in container: ModelContainer, includeEstimates: Bool = true) throws {
