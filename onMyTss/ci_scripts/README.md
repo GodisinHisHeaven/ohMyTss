@@ -20,7 +20,8 @@ to the Xcode project, validates them and creates the ignored
 `Config/Secrets.xcconfig` before Xcode reads the project. Values are never
 printed by this script. Both Debug and Release already reference this file.
 
-For a local build, create `onMyTss/Config/Secrets.xcconfig` with your own values:
+For a local build, copy `onMyTss/Config/Secrets.xcconfig.template` to
+`onMyTss/Config/Secrets.xcconfig` and replace the placeholders with your own values:
 
 ```xcconfig
 STRAVA_CLIENT_ID = <numeric client ID>
@@ -29,6 +30,12 @@ STRAVA_CLIENT_SECRET = <client secret>
 
 Do not commit that file or put credentials in the shared scheme. The app reads
 the generated Info.plist values when launched outside Xcode, including TestFlight.
+
+The app target also runs `validate_strava_credentials.sh` on every build.
+Missing, placeholder, or malformed values produce warnings in Debug and stop
+Release builds. This phase never prints credential values. Command-line build
+settings can override the local file; the file must still exist because the
+project references it.
 
 ## Verification
 
