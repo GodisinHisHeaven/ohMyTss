@@ -31,7 +31,7 @@ struct MainTabView: View {
                 .tag(Tab.today)
 
             // History Tab
-            HistoryView(dataStore: dataStore)
+            HistoryView()
                 .tabItem {
                     Label("History", systemImage: "chart.xyaxis.line")
                 }
@@ -51,7 +51,7 @@ struct MainTabView: View {
 
 #Preview {
     let config = ModelConfiguration(isStoredInMemoryOnly: true)
-    let container = try! ModelContainer(for: DayAggregate.self, UserThresholds.self, AppState.self, Workout.self, StravaAuth.self, LocalObservation.self, StrengthSetRecord.self, StrengthTemplate.self, LoadEstimateRecord.self, configurations: config)
+    let container = try! ModelContainer(for: Schema(AppSchema.models), configurations: config)
     let dataStore = DataStore(modelContainer: container)
 
     // Create sample data

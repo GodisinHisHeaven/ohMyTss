@@ -16,6 +16,22 @@ session is stored in the device Keychain. Signing out does not unsubscribe.
 Resubscription continues through the existing SMS `START` consent flow.
 This feature does not upload Apple Health data or send a text when refreshed.
 
+## Today and History
+
+Today shows the current day's saved training-readiness estimate, followed by
+muscle RPE for today and the previous six calendar days. Tap a muscle, choose
+an effort band, and adjust by one point if needed. Left/right ratings and dates
+remain separate. Missing effort stays unrated; opening this screen does not
+recalculate the full training history.
+
+History contains a readiness or training-load trend and up to six recent
+workouts. Each workout row shows its category; tap it for details. Older
+activities remain available through **Today → More → All activities**, and
+existing discomfort reports through **Today → More → Discomfort reports**.
+
+See the [RPE and readiness contract](docs/v2/MODEL.md) and
+[UI research and validation](docs/v2/evidence/RPE_DASHBOARD_2026-10-26.md).
+
 ## Repository layout
 
 - `onMyTss/`: iOS app, Xcode project, tests, and Xcode Cloud scripts.

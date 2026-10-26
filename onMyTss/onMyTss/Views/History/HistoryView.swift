@@ -1,439 +1,126 @@
-//
-//  HistoryView.swift
-//  onMyTss
-//
-//  Created by Claude Code
-//
-
 import SwiftUI
 import SwiftData
 import Charts
 
-/// History screen showing past Body Battery scores and metrics
 struct HistoryView: View {
-    @State private var viewModel: HistoryViewModel
-
-    init(dataStore: DataStore) {
-        _viewModel = State(initialValue: HistoryViewModel(dataStore: dataStore))
-    }
+    @State private var days = 30
+    @State private var appearedAt = Date()
 
     var body: some View {
         NavigationStack {
-            Group {
-                if viewModel.isLoading {
-                    loadingView
-                } else if viewModel.showEmptyState {
-                    emptyStateView
-                } else {
-                    contentView
+            VStack(spacing: 0) {
+                Picker("Time range", selection: $days) {
+                    Text("7 days").tag(7)
+                    Text("30 days").tag(30)
+                    Text("90 days").tag(90)
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 20).padding(.bottom, 8)
+                .accessibilityIdentifier("history.range")
+                TimelineView(.periodic(from: .now, by: 60)) { timeline in
+                    HistoryContent(days: days, now: max(timeline.date, appearedAt))
                 }
             }
-            .navigationTitle("Legacy TSS History")
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        Picker("Days", selection: Binding(
-                            get: { viewModel.selectedDays },
-                            set: { newValue in
-                                Task {
-                                    await viewModel.changeDaysSelection(newValue)
-                                }
-                            }
-                        )) {
-                            Text("7 Days").tag(7)
-                            Text("14 Days").tag(14)
-                            Text("30 Days").tag(30)
-                            Text("90 Days").tag(90)
-                        }
-                    } label: {
-                        Label("Filter", systemImage: "line.3.horizontal.decrease.circle")
-                    }
-                }
-            }
-            .task {
-                await viewModel.loadHistory()
-            }
+            .background(Color(uiColor: .systemGroupedBackground))
+            .navigationTitle("History")
+            .onAppear { appearedAt = Date() }
         }
-    }
-
-    // MARK: - Content Views
-
-    private var contentView: some View {
-        ScrollView {
-            VStack(spacing: 20) {
-                // Summary Cards
-                summarySection
-
-                // CTL/ATL/TSB Charts (shown for 14+ days)
-                if viewModel.selectedDays >= 14 {
-                    chartsSection
-                }
-
-                // History List
-                VStack(spacing: 0) {
-                    ForEach(viewModel.historyItems) { item in
-                        HistoryRowView(item: item)
-
-                        if item.id != viewModel.historyItems.last?.id {
-                            Divider()
-                                .padding(.leading, 16)
-                        }
-                    }
-                }
-                .background(
-                    RoundedRectangle(cornerRadius: 16)
-                        .fill(Color(uiColor: .systemBackground))
-                        .shadow(color: .black.opacity(0.1), radius: 10, y: 5)
-                )
-                .padding(.horizontal)
-            }
-            .padding(.vertical)
-        }
-        .background(Color(uiColor: .secondarySystemBackground))
-    }
-
-    private var summarySection: some View {
-        HStack(spacing: 12) {
-            SummaryCard(
-                title: "Legacy Score",
-                value: "\(viewModel.averageScore)",
-                icon: "battery.75"
-            )
-
-            SummaryCard(
-                title: "Avg CTL",
-                value: "\(viewModel.averageCTL)",
-                icon: "chart.line.uptrend.xyaxis"
-            )
-
-            SummaryCard(
-                title: "Total TSS",
-                value: "\(viewModel.totalTSS)",
-                icon: "bolt.fill"
-            )
-
-            SummaryCard(
-                title: "Workouts",
-                value: "\(viewModel.totalWorkouts)",
-                icon: "figure.run"
-            )
-        }
-        .padding(.horizontal)
-    }
-
-    private var chartsSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            // Section Header
-            Text("Training Load Trends")
-                .font(.headline)
-                .padding(.horizontal)
-
-            // CTL/ATL Chart
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Fitness & Fatigue (CTL/ATL)")
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal)
-
-                Chart {
-                    // Use linear interpolation for large datasets for better performance
-                    let interpolation: InterpolationMethod = viewModel.chartData.count > 30 ? .linear : .catmullRom
-
-                    // CTL (Fitness) line - shown in blue
-                    ForEach(viewModel.chartData) { point in
-                        LineMark(
-                            x: .value("Date", point.date),
-                            y: .value("Load", point.ctl),
-                            series: .value("Metric", "CTL (Fitness)")
-                        )
-                        .foregroundStyle(.blue)
-                        .lineStyle(StrokeStyle(lineWidth: 2))
-                        .interpolationMethod(interpolation)
-                        .symbol(Circle().strokeBorder(lineWidth: 1.5))
-                        .symbolSize(30)
-                    }
-
-                    // ATL (Fatigue) line - shown in orange
-                    ForEach(viewModel.chartData) { point in
-                        LineMark(
-                            x: .value("Date", point.date),
-                            y: .value("Load", point.atl),
-                            series: .value("Metric", "ATL (Fatigue)")
-                        )
-                        .foregroundStyle(.orange)
-                        .lineStyle(StrokeStyle(lineWidth: 2))
-                        .interpolationMethod(interpolation)
-                        .symbol(Circle().strokeBorder(lineWidth: 1.5))
-                        .symbolSize(30)
-                    }
-                }
-                .chartYAxisLabel("Load", alignment: .leading)
-                .chartLegend(position: .bottom)
-                .frame(height: 200)
-                .padding()
-                .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(Color(uiColor: .systemBackground))
-                )
-            }
-            .padding(.horizontal)
-
-            // TSB Chart
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Training Stress Balance (TSB)")
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal)
-
-                Chart(viewModel.chartData) { point in
-                    BarMark(
-                        x: .value("Date", point.date),
-                        y: .value("TSB", point.tsb)
-                    )
-                    .foregroundStyle(point.tsb >= 0 ? .green : .red)
-
-                    RuleMark(y: .value("Zero", 0))
-                        .foregroundStyle(.gray.opacity(0.5))
-                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [5, 5]))
-                }
-                .chartYAxisLabel("TSB", alignment: .leading)
-                .frame(height: 160)
-                .padding()
-                .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(Color(uiColor: .systemBackground))
-                )
-            }
-            .padding(.horizontal)
-
-            // Daily TSS Chart
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Daily Training Stress (TSS)")
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal)
-
-                Chart(viewModel.chartData) { point in
-                    BarMark(
-                        x: .value("Date", point.date),
-                        y: .value("TSS", point.tss)
-                    )
-                    .foregroundStyle(.purple.gradient)
-                }
-                .chartYAxisLabel("TSS", alignment: .leading)
-                .frame(height: 140)
-                .padding()
-                .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(Color(uiColor: .systemBackground))
-                )
-            }
-            .padding(.horizontal)
-        }
-    }
-
-    private var loadingView: some View {
-        VStack(spacing: 16) {
-            ProgressView()
-                .scaleEffect(1.5)
-
-            Text("Loading history...")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private var emptyStateView: some View {
-        VStack(spacing: 24) {
-            Image(systemName: "calendar.badge.clock")
-                .font(.system(size: 72))
-                .foregroundStyle(.blue.gradient)
-
-            VStack(spacing: 12) {
-                Text("No History Yet")
-                    .font(.title2.weight(.semibold))
-
-                Text("Complete workouts to see your Body Battery history.")
-                    .font(.body)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 32)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
-// MARK: - Summary Card
+private struct HistoryContent: View {
+    @Query private var aggregates: [DayAggregate]
+    @Query private var workouts: [Workout]
+    @State private var trend = TrendKind.readiness
+    private enum TrendKind: String, CaseIterable { case readiness = "Readiness", load = "Training load" }
 
-struct SummaryCard: View {
-    let title: String
-    let value: String
-    let icon: String
-
-    var body: some View {
-        VStack(spacing: 8) {
-            Image(systemName: icon)
-                .font(.title3)
-                .foregroundStyle(.blue)
-
-            Text(value)
-                .font(.title3.weight(.bold))
-                .foregroundStyle(.primary)
-
-            Text(title)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 16)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(uiColor: .systemBackground))
-                .shadow(color: .black.opacity(0.05), radius: 5, y: 2)
-        )
+    init(days: Int, now: Date) {
+        let cutoff = Calendar.current.date(byAdding: .day, value: -(days - 1),
+                                          to: Calendar.current.startOfDay(for: now)) ?? now
+        _aggregates = Query(filter: #Predicate<DayAggregate> { $0.date >= cutoff && $0.date <= now }, sort: \.date)
+        var recent = FetchDescriptor<Workout>(predicate: #Predicate {
+            $0.startTime >= cutoff && $0.startTime <= now && !$0.isTombstoned && !$0.isSuppressed
+        }, sortBy: [SortDescriptor(\.startTime, order: .reverse)])
+        recent.fetchLimit = 6
+        _workouts = Query(recent)
     }
-}
-
-// MARK: - History Row View
-
-struct HistoryRowView: View {
-    let item: HistoryItem
 
     var body: some View {
-        HStack(spacing: 16) {
-            // Date and Day
-            VStack(alignment: .leading, spacing: 4) {
-                Text(item.weekdayDisplay)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                Text(item.dateDisplay)
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.primary)
-
-                if item.isToday {
-                    Text("Today")
-                        .font(.caption2)
-                        .foregroundStyle(.blue)
-                }
-            }
-            .frame(width: 60, alignment: .leading)
-
-            // Score Gauge
-            ZStack {
-                Circle()
-                    .stroke(Color.gray.opacity(0.2), lineWidth: 4)
-                    .frame(width: 50, height: 50)
-
-                Circle()
-                    .trim(from: 0, to: CGFloat(item.score) / 100.0)
-                    .stroke(scoreColor(item.score), lineWidth: 4)
-                    .frame(width: 50, height: 50)
-                    .rotationEffect(.degrees(-90))
-
-                Text("\(item.score)")
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(scoreColor(item.score))
-            }
-
-            // Metrics
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 12) {
-                    MetricLabel(label: "TSB", value: item.tsbDisplay)
-                    MetricLabel(label: "CTL", value: "\(Int(item.ctl))")
-                    MetricLabel(label: "ATL", value: "\(Int(item.atl))")
-                }
-
-                HStack(spacing: 4) {
-                    if item.workoutCount > 0 {
-                        Image(systemName: "figure.run")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-
-                        Text("\(item.workoutCount) workout\(item.workoutCount > 1 ? "s" : ""), \(Int(item.tss)) TSS")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+        List {
+            Section("Trends") {
+                VStack(alignment: .leading, spacing: 18) {
+                    Picker("Trend", selection: $trend) {
+                        ForEach(TrendKind.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .accessibilityIdentifier("history.trend")
+                    if trend == .readiness {
+                        readinessChart
                     } else {
-                        Text("Rest day")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        loadChart
                     }
                 }
+                .padding(.vertical, 12)
             }
-
-            Spacer()
+            Section("Recent workouts") {
+                if workouts.isEmpty {
+                    Text("No workouts in this period").font(.subheadline).foregroundStyle(.secondary)
+                }
+                ForEach(workouts) { workout in
+                    NavigationLink { V2ActivityDetailView(workout: workout) } label: {
+                        WorkoutCategoryRow(type: workout.workoutType)
+                    }
+                    .accessibilityIdentifier("history.workout.\(workout.id)")
+                }
+            }
         }
-        .padding(16)
-        .background(item.isToday ? Color.blue.opacity(0.05) : Color.clear)
+        .listSectionSpacing(20)
     }
 
-    private func scoreColor(_ score: Int) -> Color {
-        let level = BodyBatteryCalculator.getReadinessLevel(score: score)
-        switch level {
-        case .veryLow: return Color(hex: "#E53E3E")
-        case .low: return Color(hex: "#DD6B20")
-        case .medium: return Color(hex: "#D69E2E")
-        case .good: return Color(hex: "#38A169")
-        case .excellent: return Color(hex: "#3182CE")
-        }
-    }
-}
-
-// MARK: - Metric Label
-
-struct MetricLabel: View {
-    let label: String
-    let value: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(label)
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-
-            Text(value)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
+    @ViewBuilder private var readinessChart: some View {
+        let readings = aggregates.filter { TodayReadiness.validScore($0) != nil }
+        if readings.isEmpty {
+            trendEmpty("Readiness appears when recovery data is available.")
+        } else {
+            Chart(readings, id: \.date) { day in
+                LineMark(x: .value("Date", day.date), y: .value("Readiness", day.bodyBatteryScore))
+                    .foregroundStyle(.teal).lineStyle(StrokeStyle(lineWidth: 2.5))
+                PointMark(x: .value("Date", day.date), y: .value("Readiness", day.bodyBatteryScore))
+                    .foregroundStyle(.teal).symbolSize(20)
+            }
+            .chartYScale(domain: 0...100)
+            .chartXAxis { AxisMarks(values: .automatic(desiredCount: 4)) { _ in AxisValueLabel(format: .dateTime.month(.abbreviated).day()) } }
+            .chartYAxis { AxisMarks(values: [0, 50, 100]) }
+            .frame(height: 190)
+            .accessibilityLabel("Readiness trend")
+            .accessibilityValue("\(readings.count) days with data")
         }
     }
-}
 
-// MARK: - Previews
-
-#Preview("With Data") {
-    let config = ModelConfiguration(isStoredInMemoryOnly: true)
-    let container = try! ModelContainer(for: DayAggregate.self, UserThresholds.self, AppState.self, configurations: config)
-    let dataStore = DataStore(modelContainer: container)
-
-    // Create sample data
-    let today = Date().startOfDay
-    for i in 0..<7 {
-        let date = today.addingTimeInterval(TimeInterval(-i * 86400))
-        let aggregate = DayAggregate(
-            date: date,
-            totalTSS: Double.random(in: 50...150),
-            ctl: 80 + Double(i) * 2,
-            atl: 90 - Double(i) * 1.5,
-            tsb: -10 + Double(i) * 3,
-            bodyBatteryScore: 45 + i * 5,
-            rampRate: 3.5,
-            workoutCount: i % 2 == 0 ? 1 : 0,
-            maxTSSWorkout: i % 2 == 0 ? 120 : nil
-        )
-        try! dataStore.saveDayAggregate(aggregate)
+    @ViewBuilder private var loadChart: some View {
+        let readings = aggregates.filter { $0.ctl.isFinite && $0.atl.isFinite }
+        if readings.isEmpty {
+            trendEmpty("Sync activities to see your training load trend.")
+        } else {
+            Chart(readings, id: \.date) { day in
+                LineMark(x: .value("Date", day.date), y: .value("Load", day.ctl), series: .value("Trend", "Fitness"))
+                    .foregroundStyle(by: .value("Trend", "Fitness")).lineStyle(StrokeStyle(lineWidth: 2))
+                LineMark(x: .value("Date", day.date), y: .value("Load", day.atl), series: .value("Trend", "Fatigue"))
+                    .foregroundStyle(by: .value("Trend", "Fatigue")).lineStyle(StrokeStyle(lineWidth: 2))
+            }
+            .chartForegroundStyleScale(["Fitness": Color.blue, "Fatigue": Color.orange])
+            .chartXAxis { AxisMarks(values: .automatic(desiredCount: 4)) { _ in AxisValueLabel(format: .dateTime.month(.abbreviated).day()) } }
+            .chartLegend(position: .bottom, alignment: .leading)
+            .frame(height: 190)
+            .accessibilityLabel("Training load trend")
+        }
     }
 
-    return HistoryView(dataStore: dataStore)
-        .modelContainer(container)
-}
-
-#Preview("Empty") {
-    let config = ModelConfiguration(isStoredInMemoryOnly: true)
-    let container = try! ModelContainer(for: DayAggregate.self, UserThresholds.self, AppState.self, configurations: config)
-    let dataStore = DataStore(modelContainer: container)
-
-    return HistoryView(dataStore: dataStore)
-        .modelContainer(container)
+    private func trendEmpty(_ message: String) -> some View {
+        VStack(spacing: 10) {
+            Image(systemName: "chart.xyaxis.line").font(.title).foregroundStyle(.tertiary)
+            Text(message).font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity, minHeight: 170)
+    }
 }

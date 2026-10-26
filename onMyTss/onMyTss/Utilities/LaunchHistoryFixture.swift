@@ -25,5 +25,37 @@ enum LaunchHistoryFixture {
         }
         try context.save()
     }
+
+    static func seedDashboard(in container: ModelContainer) throws {
+        let context = ModelContext(container)
+        let now = Date()
+        if try context.fetchCount(FetchDescriptor<UserThresholds>()) == 0 {
+            context.insert(UserThresholds(hasCompletedOnboarding: true))
+        }
+        let state = AppState(lastComputationDate: now)
+        context.insert(state)
+        for index in 0..<30 {
+            let date = Calendar.current.date(byAdding: .day, value: -index, to: now.startOfDay)!
+            context.insert(DayAggregate(date: date, totalTSS: index % 3 == 0 ? 48 : 0,
+                ctl: 42 + Double(index % 5), atl: 38 + Double(index % 9), bodyBatteryScore: 72 + index % 12,
+                avgHRV: 52, avgRHR: 54, hrvModifier: 4, rhrModifier: 2, sleepDuration: 7.6))
+        }
+        for (index, type) in ["Ride", "Run", "Strength", "Swim", "Walk", "Run", "Ride", "Run"].enumerated() {
+            let start = now.addingTimeInterval(-Double(index) * 86400 - 3600)
+            context.insert(Workout(id: "synthetic-dashboard-\(index)", date: start.startOfDay, startTime: start,
+                duration: 2700, workoutType: type, tss: 48, calculationMethod: "duration", source: .manual))
+        }
+        context.insert(StrengthSetRecord(sessionID: "synthetic-dashboard-2", exerciseID: "bench_press", reps: 8, rir: 2))
+        for (region, side, rpe, age) in [
+            ("quads", "left", 8, 0), ("quads", "right", 5, 0),
+            ("hamstrings", "both", 7, 1), ("glutes", "both", 8, 1),
+            ("calves", "both", 5, 0), ("chest", "both", 3, 1),
+            ("core", "both", 4, 2)
+        ] {
+            context.insert(MuscleRPERecord(regionRaw: region, sideRaw: side, rpe: rpe,
+                observedAt: now.addingTimeInterval(-Double(age) * 86400 - 1800)))
+        }
+        try context.save()
+    }
 }
 #endif

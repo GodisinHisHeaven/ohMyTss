@@ -34,6 +34,9 @@ struct ohMyTssApp: App {
             try LaunchHistoryFixture.seed(in: container, includeEstimates:
                 !ProcessInfo.processInfo.arguments.contains("--v2-missing-estimates"))
         }
+        if inMemory && ProcessInfo.processInfo.arguments.contains("--v2-rpe-demo") {
+            try LaunchHistoryFixture.seedDashboard(in: container)
+        }
         #endif
         return container
     }

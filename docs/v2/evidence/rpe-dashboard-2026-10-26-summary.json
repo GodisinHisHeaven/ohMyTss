@@ -1,0 +1,74 @@
+{
+  "date": "2026-10-26",
+  "source_base": "c5c598787432a1836c41d5ddfe912cefb7b044b9",
+  "xcode": "27.1",
+  "swift": "6.4",
+  "tests": [
+    {
+      "bundle": "ohmytss-rpe-full.xcresult",
+      "configuration": "Debug",
+      "os": "26.1",
+      "device": "iPhone 17 Pro",
+      "unique_tests": 117,
+      "executions": 120,
+      "failures": 0,
+      "skips": 0
+    },
+    {
+      "bundle": "ohmytss-rpe-release-unit.xcresult",
+      "configuration": "Release",
+      "enable_testability": true,
+      "os": "26.4",
+      "device": "iPhone 17 Pro",
+      "executions": 102,
+      "failures": 0,
+      "skips": 0
+    },
+    {
+      "bundle": "ohmytss-rpe-release-verified-ui.xcresult",
+      "configuration": "Release",
+      "enable_testability": false,
+      "os": "26.4",
+      "device": "iPhone 17 Pro",
+      "executions": 4,
+      "failures": 0,
+      "skips": 0
+    }
+  ],
+  "persisted_release": {
+    "workouts": 1008,
+    "workout_dates_tss_features_unchanged": true,
+    "snapshots": 2008,
+    "original_snapshots_retained_byte_for_byte": true,
+    "latest_estimates": 1008,
+    "all_latest_hr_190": true,
+    "old_workouts_each_keep_30_hr_intervals": true,
+    "saved_max_hr": 190,
+    "rpe_rows": 7,
+    "right_quad_rpe": 10,
+    "left_quad_rpe": 8,
+    "discomfort_rows": 1,
+    "sqlite_integrity": "ok"
+  },
+  "responsiveness": {
+    "debug_refresh_seconds": 2.2559070587158203,
+    "debug_max_main_gap_seconds": 0.11946511268615723,
+    "release_refresh_seconds": 2.38604998588562,
+    "release_max_main_gap_seconds": 0.14210999011993408,
+    "release_launch_samples_seconds": [
+      1.434105,
+      1.429182,
+      1.459208,
+      1.467487,
+      1.373142
+    ],
+    "release_launch_mean_seconds": 1.4326248
+  },
+  "migrations": {
+    "pre_v2": "passed",
+    "build_26": "passed"
+  },
+  "ci_configuration_tests": 9,
+  "xcode_cloud_test_required_to_pass": true,
+  "physical_device_verified": false
+}
