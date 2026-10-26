@@ -29,9 +29,9 @@
 	<key>MinimumOSVersion</key>
 	<string>$(IPHONEOS_DEPLOYMENT_TARGET)</string>
 	<key>NSHealthShareUsageDescription</key>
-	<string>Body Battery needs access to your workout data, heart rate, and HRV to calculate your daily readiness score and training load metrics.</string>
+	<string>ohMyTss needs access to your workout data, heart rate, and HRV to calculate your daily readiness score and training load metrics.</string>
 	<key>NSHealthUpdateUsageDescription</key>
-	<string>Body Battery does not write any data to HealthKit.</string>
+	<string>ohMyTss does not write any data to HealthKit.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
@@ -66,9 +66,10 @@
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>CFBundleURLName</key>
-			<string>com.onmytss.strava-auth</string>
+			<string>com.ohmytss.strava-auth</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
+				<string>ohmytss</string>
 				<string>onmytss</string>
 			</array>
 		</dict>

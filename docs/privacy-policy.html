@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Privacy Policy - onMyTss</title>
+    <title>Privacy Policy - ohMyTss</title>
     <style>
         * {
             margin: 0;
@@ -119,16 +119,16 @@
 </head>
 <body>
     <div class="container">
-        <h1>Privacy Policy for onMyTss</h1>
-        <p class="last-updated"><strong>Last Updated:</strong> November 8, 2025</p>
+        <h1>Privacy Policy for ohMyTss</h1>
+        <p class="last-updated"><strong>Last Updated:</strong> October 25, 2026</p>
 
         <h2>Introduction</h2>
-        <p>onMyTss ("we," "our," or "the app") is committed to protecting your privacy. This Privacy Policy explains how we collect, use, and safeguard your health and fitness data when you use our iOS application.</p>
+        <p>ohMyTss ("we," "our," or "the app") is committed to protecting your privacy. This Privacy Policy explains how we collect, use, and safeguard your health and fitness data when you use our iOS application.</p>
 
         <h2>Information We Collect</h2>
 
         <h3>HealthKit Data</h3>
-        <p>onMyTss requests access to the following types of health and fitness data from Apple HealthKit:</p>
+        <p>ohMyTss requests access to the following types of health and fitness data from Apple HealthKit:</p>
         <ul>
             <li><strong>Workout Data</strong>: Exercise sessions including type, duration, distance, and calories</li>
             <li><strong>Heart Rate Data</strong>: Heart rate measurements during workouts</li>
@@ -136,14 +136,10 @@
             <li><strong>Cycling Power Data</strong>: Power output measurements from cycling workouts (when available)</li>
         </ul>
 
-        <h3>Data We Do NOT Collect</h3>
-        <ul>
-            <li>Personal identifying information (name, email, phone number)</li>
-            <li>Location data</li>
-            <li>Contact information</li>
-            <li>Payment information</li>
-            <li>Device identifiers for advertising purposes</li>
-        </ul>
+        <h3>Optional Strava and Morning Status SMS</h3>
+        <p>If you connect Strava, the iOS app reads your authorized activity and athlete profile data and stores access credentials in the iOS Keychain. OAuth and API requests go to Strava.</p>
+        <p>Morning Status SMS is an optional web service for existing accounts. It uses account details, an opted-in phone number, and training/wellness data from Intervals.icu and optional Strava connections. The backend stores this data in Supabase and uses Twilio to deliver messages. Its <a href="https://coach-ota.fly.dev/privacy">service privacy notice</a> describes that processing. Opening its account link from iOS does not upload Apple Health data. Reply STOP to stop SMS. Coaching chat, plans, other alerts, and signup are currently paused.</p>
+        <p>We do not collect payment information or advertising identifiers.</p>
 
         <h2>How We Use Your Data</h2>
         <p>We use the health data you authorize solely for the following purposes:</p>
@@ -157,16 +153,16 @@
 
         <h2>Data Storage and Security</h2>
 
-        <h3>Local Storage Only</h3>
+        <h3>iOS HealthKit Storage</h3>
         <ul>
-            <li><strong>All data is stored locally on your device</strong> using Apple's SwiftData framework</li>
-            <li><strong>No data is transmitted to external servers</strong> or cloud services</li>
-            <li><strong>No data is shared with third parties</strong> under any circumstances</li>
+            <li>HealthKit data and calculated metrics are stored locally using Apple's SwiftData framework</li>
+            <li>This integration does not upload HealthKit data to the morning status service</li>
+            <li>Optional Strava and SMS services use the connections described above</li>
             <li>Data is protected by iOS sandboxing and encryption mechanisms</li>
         </ul>
 
         <h3>No Account Required</h3>
-        <p>onMyTss does not require you to create an account, log in, or provide any personal information.</p>
+        <p>The iOS HealthKit features do not require an account. Strava requires separate authorization; the morning status service requires an existing account and separate SMS opt-in.</p>
 
         <h2>Data You Control</h2>
 
@@ -175,7 +171,7 @@
         <ul>
             <li><strong>Access</strong>: View all calculated metrics within the app</li>
             <li><strong>Delete</strong>: Remove all calculated data using the "Reset All Data" option in Settings</li>
-            <li><strong>HealthKit Permissions</strong>: Revoke HealthKit access at any time through iOS Settings → Health → Data Access & Devices → onMyTss</li>
+            <li><strong>HealthKit Permissions</strong>: Revoke HealthKit access at any time through iOS Settings → Health → Data Access & Devices → ohMyTss</li>
         </ul>
 
         <h3>What Happens When You Delete Data</h3>
@@ -184,6 +180,7 @@
             <li>All calculated Body Battery scores, TSS, and training load metrics are permanently deleted</li>
             <li>Your original HealthKit data remains untouched in Apple Health</li>
             <li>You can recalculate metrics by syncing HealthKit data again</li>
+            <li>This reset does not delete your separate morning status account or change its SMS consent</li>
         </ul>
 
         <h2>HealthKit-Specific Disclosures</h2>
@@ -197,31 +194,31 @@
         </ul>
 
         <h3>Data You Write to HealthKit</h3>
-        <p>onMyTss is <strong>read-only</strong> and does not write any data to HealthKit. We only read workout and health data with your permission.</p>
+        <p>ohMyTss is <strong>read-only</strong> and does not write any data to HealthKit. We only read workout and health data with your permission.</p>
 
         <h2>Changes to Metrics and Thresholds</h2>
 
         <h3>User-Provided Data</h3>
-        <p>The only data you provide to the app is:</p>
+        <p>For local training calculations, you can provide:</p>
         <ul>
             <li><strong>Functional Threshold Power (FTP)</strong>: Used to calculate cycling TSS accurately</li>
             <li>This is stored locally and can be updated anytime in Settings</li>
         </ul>
 
         <h2>Children's Privacy</h2>
-        <p>onMyTss is intended for users aged 13 and older. We do not knowingly collect data from children under 13. If you are a parent or guardian and believe your child has provided data to our app, please contact us.</p>
+        <p>ohMyTss is intended for users aged 13 and older. We do not knowingly collect data from children under 13. If you are a parent or guardian and believe your child has provided data to our app, please contact us.</p>
 
         <h2>Changes to This Privacy Policy</h2>
         <p>We may update this Privacy Policy from time to time. Changes will be reflected in the "Last Updated" date at the top of this policy. Continued use of the app after changes constitutes acceptance of the updated policy.</p>
 
         <h2>Third-Party Services</h2>
-        <p>onMyTss does not integrate with any third-party analytics, advertising, or data collection services.</p>
+        <p>ohMyTss does not use third-party analytics or advertising. Optional Strava and morning status services process the data described above.</p>
 
         <h2>International Users</h2>
-        <p>onMyTss stores all data locally on your device. No data is transferred internationally or to external servers.</p>
+        <p>iOS HealthKit data stays on your device. The optional web service and its providers process account, training, and SMS data on their servers.</p>
 
         <h2>Your Consent</h2>
-        <p>By using onMyTss and granting HealthKit permissions, you consent to the collection and use of your health data as described in this Privacy Policy.</p>
+        <p>By using ohMyTss and granting HealthKit permissions, you consent to the collection and use of your health data as described in this Privacy Policy.</p>
 
         <h2>Contact Us</h2>
         <p>If you have questions, concerns, or requests regarding this Privacy Policy or your data, please contact us:</p>
@@ -233,11 +230,11 @@
         <div class="summary">
             <h2>Summary</h2>
             <p><strong>In Plain English:</strong></p>
-            <p>onMyTss reads your workout data from Apple Health to calculate how ready you are to train. All calculations happen on your device. We don't send your data anywhere, don't share it with anyone, and don't use it for advertising. You can delete all calculated data anytime, and your original Health data stays safe in Apple Health.</p>
+            <p>ohMyTss reads your workout data from Apple Health to calculate how ready you are to train. HealthKit calculations happen on your device. Optional Strava authorization and the separate morning SMS service use external providers as described above. HealthKit data is not uploaded by this integration or used for advertising. You can delete all calculated data anytime, and your original Health data stays safe in Apple Health.</p>
         </div>
 
         <div class="footer">
-            <p>© 2025 onMyTss. All rights reserved.</p>
+            <p>© 2026 ohMyTss. All rights reserved.</p>
         </div>
     </div>
 </body>

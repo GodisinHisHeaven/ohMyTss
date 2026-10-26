@@ -10,14 +10,22 @@ import SwiftData
 import AuthenticationServices
 import Combine
 
+@MainActor
+protocol StravaConnectionManaging {
+    func connectStrava() async throws
+    func disconnectStrava() async throws
+}
+
 /// Manages Strava OAuth flow and token lifecycle
 /// Coordinates between StravaAPI, Keychain, and SwiftData
 @MainActor
-final class StravaAuthManager: NSObject, ObservableObject {
+final class StravaAuthManager: NSObject, ObservableObject, StravaConnectionManaging {
 
     // MARK: - Dependencies
 
     private let dataStore: DataStore
+    private let tokenStore: any StravaTokenStoring
+    private let tokenRefresher: (String) async throws -> TokenResponse
 
     // MARK: - State
 
@@ -29,25 +37,37 @@ final class StravaAuthManager: NSObject, ObservableObject {
 
     // MARK: - Initialization
 
-    init(dataStore: DataStore) {
+    convenience init(dataStore: DataStore) {
+        self.init(dataStore: dataStore, tokenStore: KeychainStravaTokenStore())
+    }
+
+    init(
+        dataStore: DataStore,
+        tokenStore: any StravaTokenStoring,
+        tokenRefresher: @escaping (String) async throws -> TokenResponse = { try await StravaAPI.refreshToken($0) }
+    ) {
         self.dataStore = dataStore
+        self.tokenStore = tokenStore
+        self.tokenRefresher = tokenRefresher
     }
 
     // MARK: - Connection
 
     /// Initiate Strava OAuth flow
     func connectStrava() async throws {
-        let authURL = try StravaAPI.getAuthorizationURL()
-
         isAuthenticating = true
         authError = nil
+        defer {
+            isAuthenticating = false
+            authSession = nil
+        }
 
         do {
+            let state = UUID().uuidString
+            let authURL = try StravaAPI.getAuthorizationURL(state: state)
             let callbackURL = try await authenticate(with: authURL)
-            try await handleCallback(url: callbackURL)
-            isAuthenticating = false
+            try await handleCallback(url: callbackURL, expectedState: state)
         } catch {
-            isAuthenticating = false
             authError = error.localizedDescription
             throw error
         }
@@ -56,7 +76,7 @@ final class StravaAuthManager: NSObject, ObservableObject {
     /// Disconnect Strava (revoke tokens and clear data)
     func disconnectStrava() async throws {
         // Clear tokens from keychain
-        try KeychainHelper.deleteStravaTokens()
+        try tokenStore.deleteTokens()
 
         // Clear auth state from database
         if let auth = try dataStore.fetchStravaAuth() {
@@ -76,26 +96,47 @@ final class StravaAuthManager: NSObject, ObservableObject {
             throw StravaAPI.StravaAPIError.unauthorized
         }
 
-        // Check if token needs refresh
-        if auth.needsTokenRefresh {
-            try await refreshAccessToken()
+        if !auth.needsTokenRefresh {
+            do {
+                let token = try tokenStore.accessToken()
+                if !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    return token
+                }
+            } catch KeychainHelper.KeychainError.itemNotFound {
+                // Database state can outlive a keychain token. Recover with the refresh token.
+            } catch KeychainHelper.KeychainError.invalidData {
+                // An unreadable stored token also needs replacement.
+            }
         }
 
-        // Get token from keychain
-        return try KeychainHelper.getStravaAccessToken()
+        try await refreshAccessToken()
+        return try tokenStore.accessToken()
     }
 
     /// Refresh access token using refresh token
     private func refreshAccessToken() async throws {
-        // Get refresh token from keychain
-        let refreshToken = try KeychainHelper.getStravaRefreshToken()
+        let refreshToken: String
+        do {
+            refreshToken = try tokenStore.refreshToken()
+            guard !refreshToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw KeychainHelper.KeychainError.invalidData
+            }
+        } catch KeychainHelper.KeychainError.itemNotFound {
+            try requireReconnection()
+            throw StravaAPI.StravaAPIError.unauthorized
+        } catch KeychainHelper.KeychainError.invalidData {
+            try requireReconnection()
+            throw StravaAPI.StravaAPIError.unauthorized
+        }
 
-        // Call Strava API to refresh
-        let tokenResponse = try await StravaAPI.refreshToken(refreshToken)
-
-        // Save new tokens
-        try KeychainHelper.saveStravaAccessToken(tokenResponse.accessToken)
-        try KeychainHelper.saveStravaRefreshToken(tokenResponse.refreshToken)
+        let tokenResponse: TokenResponse
+        do {
+            tokenResponse = try await tokenRefresher(refreshToken)
+        } catch StravaAPI.StravaAPIError.unauthorized {
+            try requireReconnection()
+            throw StravaAPI.StravaAPIError.unauthorized
+        }
+        try saveTokens(tokenResponse)
 
         // Update auth state
         guard let auth = try dataStore.fetchStravaAuth() else {
@@ -109,6 +150,22 @@ final class StravaAuthManager: NSObject, ObservableObject {
         try dataStore.updateStravaAuth(auth)
     }
 
+    private func requireReconnection() throws {
+        guard let auth = try dataStore.fetchStravaAuth() else { return }
+        auth.isConnected = false
+        auth.hasAccessToken = false
+        auth.hasRefreshToken = false
+        try dataStore.updateStravaAuth(auth)
+    }
+
+    private func saveTokens(_ response: TokenResponse) throws {
+        guard !response.accessToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !response.refreshToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw StravaAPI.StravaAPIError.invalidResponse
+        }
+        try tokenStore.save(accessToken: response.accessToken, refreshToken: response.refreshToken)
+    }
+
     // MARK: - Private Helpers
 
     /// Present ASWebAuthenticationSession for OAuth
@@ -116,7 +173,7 @@ final class StravaAuthManager: NSObject, ObservableObject {
         return try await withCheckedThrowingContinuation { continuation in
             let session = ASWebAuthenticationSession(
                 url: url,
-                callbackURLScheme: "onmytss"
+                callbackURLScheme: StravaOAuth.callbackScheme
             ) { callbackURL, error in
                 if let error = error {
                     continuation.resume(throwing: error)
@@ -140,12 +197,8 @@ final class StravaAuthManager: NSObject, ObservableObject {
     }
 
     /// Handle OAuth callback and exchange code for tokens
-    private func handleCallback(url: URL) async throws {
-        // Extract authorization code from callback URL
-        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
-              let code = components.queryItems?.first(where: { $0.name == "code" })?.value else {
-            throw StravaAPI.StravaAPIError.invalidResponse
-        }
+    private func handleCallback(url: URL, expectedState: String) async throws {
+        let code = try StravaOAuth.authorizationCode(from: url, expectedState: expectedState)
 
         // Exchange code for tokens
         let tokenResponse = try await StravaAPI.exchangeToken(code: code)
@@ -154,8 +207,7 @@ final class StravaAuthManager: NSObject, ObservableObject {
         }
 
         // Save tokens to keychain
-        try KeychainHelper.saveStravaAccessToken(tokenResponse.accessToken)
-        try KeychainHelper.saveStravaRefreshToken(tokenResponse.refreshToken)
+        try saveTokens(tokenResponse)
 
         // Create or update StravaAuth
         let auth = StravaAuth(
