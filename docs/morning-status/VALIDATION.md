@@ -27,7 +27,7 @@ submodule; this repository contains no backend credentials or phone test codes.
   ownership, strict upload bounds, consent/STOP, current local dates, stale data,
   duplicate delivery and absence of Intervals reads/sync.
 - The new App summary table has RLS enabled and no anon/authenticated access.
-  Migration checks preserved the existing users, 506 activities and 438 wellness
+  Migration checks preserved the existing users and historical training
   records. Database fixture checks ran inside a rolled-back transaction.
 - [Exact-main deployment](https://github.com/GodisinHisHeaven/ohmytss-backend/actions/runs/40397242732)
   passed verification, Fly deployment and both health checks. Live privacy text
@@ -65,13 +65,9 @@ submodule; this repository contains no backend credentials or phone test codes.
 
 ## Live verification and release
 
-Live verification passed on the owner-provided phone: code verification and
-authenticated status both returned HTTP 200, with `data_source=app` and
-`app_summary_consent=false`. The existing SMS subscription remained active;
-this check did not enable or resume it and uploaded no health summary. The
-first code expired after its ten-minute window and returned 401; one explicitly
-authorized resend completed successfully. Test codes and sessions were kept
-outside Git and removed after verification.
+Live phone verification and authenticated status retrieval passed against the
+deployed backend. Personal verification details, codes and sessions are excluded
+from this report.
 
 Xcode Cloud is configured with Build, Test **Required to Pass**, Archive, and
 TestFlight Internal Testing. Release delivery is not complete until the merged
