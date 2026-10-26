@@ -120,7 +120,7 @@
 <body>
     <div class="container">
         <h1>Privacy Policy for ohMyTss</h1>
-        <p class="last-updated"><strong>Last Updated:</strong> October 25, 2026</p>
+        <p class="last-updated"><strong>Last Updated:</strong> October 26, 2026</p>
 
         <h2>Introduction</h2>
         <p>ohMyTss ("we," "our," or "the app") is committed to protecting your privacy. This Privacy Policy explains how we collect, use, and safeguard your health and fitness data when you use our iOS application.</p>
@@ -138,7 +138,7 @@
 
         <h3>Optional Strava and Morning Status SMS</h3>
         <p>If you connect Strava, the iOS app reads your authorized activity and athlete profile data and stores access credentials in the iOS Keychain. OAuth and API requests go to Strava.</p>
-        <p>Morning Status SMS is an optional service for existing accounts, managed in the app under Settings → Morning Status. It uses account details, an opted-in phone number, and training/wellness data from Intervals.icu and optional Strava connections. The backend stores this data in Supabase and uses Twilio to deliver messages. Sign-in sends your existing account email and password over HTTPS; the app saves only the signed session in this device's Keychain. Status, time zone settings, unsubscribe controls and privacy information are native app screens. The <a href="https://coach-ota.fly.dev/privacy">service privacy notice</a> also describes backend processing. This feature does not upload Apple Health data. Reply STOP to stop SMS or START to resubscribe. Signing out removes this device's session without changing SMS consent. Coaching chat, plans, other alerts, and signup are currently paused.</p>
+        <p>Morning Status SMS is an optional service for existing subscriptions, managed in the app under Settings → Morning Status. It uses your phone number, SMS consent, and training/wellness data from Intervals.icu and optional Strava connections. The backend stores this data in Supabase and uses Twilio to deliver messages. Enter your phone number and request a one-time code to verify ownership through Twilio; no email or password is needed. Your number and code are sent over HTTPS, and the app saves only the signed session in this device's Keychain. Verification does not subscribe you to morning texts or reverse an opt-out. Status, time zone settings, unsubscribe controls and privacy information are native app screens. The <a href="https://coach-ota.fly.dev/privacy">service privacy notice</a> also describes backend processing. This feature does not upload Apple Health data. Reply STOP to stop SMS or START to resubscribe. Disconnecting removes this device's session without changing SMS consent. Coaching chat, plans, other alerts, and signup are currently paused.</p>
         <p>We do not collect payment information or advertising identifiers.</p>
 
         <h2>How We Use Your Data</h2>
@@ -162,7 +162,7 @@
         </ul>
 
         <h3>No Account Required</h3>
-        <p>The iOS HealthKit features do not require an account. Strava requires separate authorization; the morning status service requires an existing account and separate SMS opt-in.</p>
+        <p>The iOS HealthKit features do not require an account. Strava requires separate authorization; morning status uses phone verification for an existing subscription and requires separate SMS opt-in.</p>
 
         <h2>Data You Control</h2>
 

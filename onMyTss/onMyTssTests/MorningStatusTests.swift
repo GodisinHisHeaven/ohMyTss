@@ -3,26 +3,34 @@ import XCTest
 
 final class MorningStatusTests: XCTestCase {
     @MainActor
-    func testAPIUsesJSONLoginAndHeaderSessionWithoutCookiesOrURLSecrets() async throws {
+    func testAPIUsesPhoneChallengeAndHeaderSessionWithoutCookiesOrURLSecrets() async throws {
         var calls: [URLRequest] = []
         let api = MorningStatusAPI { request in
             calls.append(request)
-            let json = request.url!.lastPathComponent == "session"
-                ? #"{"access_token":"fixture-session","token_type":"Bearer"}"# : morningFixtureJSON
+            let json: String
+            switch request.url!.lastPathComponent {
+            case "start": json = #"{"challenge":"fixture-challenge","phone_hint":"Ending in 0100","expires_in":600,"retry_after":60}"#
+            case "verify": json = #"{"access_token":"fixture-session","token_type":"Bearer"}"#
+            default: json = morningFixtureJSON
+            }
             return (Data(json.utf8), HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil,
                                                     headerFields: ["Content-Type": "application/json"])!)
         }
-        let token = try await api.signIn(email: "athlete@example.invalid", password: "fixture-password")
+        let challenge = try await api.requestCode(phone: "+12025550100")
+        let token = try await api.verifyCode(challenge: challenge.challenge, code: "123456")
         let status = try await api.fetchStatus(token: token)
         XCTAssertEqual(status.wellness?.sleepHours, 7.5)
         XCTAssertEqual(status.wellness?.restingHr, 55)
-        XCTAssertEqual(calls[0].url?.path, "/api/mobile/session")
+        XCTAssertEqual(calls[0].url?.path, "/api/mobile/phone/start")
         XCTAssertEqual(calls[0].httpMethod, "POST")
         XCTAssertEqual(calls[0].value(forHTTPHeaderField: "Content-Type"), "application/json")
         let body = try XCTUnwrap(JSONSerialization.jsonObject(with: calls[0].httpBody!) as? [String: String])
-        XCTAssertEqual(body, ["email": "athlete@example.invalid", "password": "fixture-password"])
-        XCTAssertEqual(calls[1].value(forHTTPHeaderField: "Authorization"), "Bearer fixture-session")
-        XCTAssertNil(calls[1].httpBody)
+        XCTAssertEqual(body, ["phone": "+12025550100"])
+        XCTAssertEqual(calls[1].url?.path, "/api/mobile/phone/verify")
+        XCTAssertEqual(try JSONSerialization.jsonObject(with: calls[1].httpBody!) as? [String: String],
+                       ["challenge": "fixture-challenge", "code": "123456"])
+        XCTAssertEqual(calls[2].value(forHTTPHeaderField: "Authorization"), "Bearer fixture-session")
+        XCTAssertNil(calls[2].httpBody)
         for request in calls {
             XCTAssertNil(request.url?.query)
             XCTAssertNil(request.value(forHTTPHeaderField: "Cookie"))
@@ -75,19 +83,24 @@ final class MorningStatusTests: XCTestCase {
             throw MorningStatusError.unavailable
         }
         do {
-            _ = try await api.signIn(email: "athlete@example.invalid", password: "fixture-password")
+            _ = try await api.requestCode(phone: "+12025550100")
             XCTFail("Expected HTTPS enforcement")
         } catch { XCTAssertEqual(error as? MorningStatusError, .invalidResponse) }
     }
 
     @MainActor
-    func testStoredSessionLoadsStatusAndSignInStoresOnlySession() async throws {
+    func testStoredSessionLoadsStatusAndPhoneVerificationStoresOnlySession() async throws {
         let api = MorningServiceStub()
         let store = MorningSessionStub()
         let model = MorningStatusViewModel(api: api, tokenStore: store)
-        await model.signIn(email: " athlete@example.invalid ", password: "fixture-password")
+        await model.requestCode(phone: " (202) 555-0100 ")
+        XCTAssertNil(store.token)
+        XCTAssertFalse(model.isSignedIn)
+        await model.verifyCode("123456")
         XCTAssertEqual(store.token, "fixture-session")
-        XCTAssertEqual(api.loginEmail, "athlete@example.invalid")
+        XCTAssertEqual(api.requestedPhone, "+12025550100")
+        XCTAssertEqual(api.verifiedChallenge, "fixture-challenge")
+        XCTAssertNil(model.verification)
         XCTAssertEqual(model.status?.displayName, "Fixture Athlete")
         let reopened = MorningStatusViewModel(api: api, tokenStore: store)
         await reopened.load()
@@ -174,11 +187,108 @@ final class MorningStatusTests: XCTestCase {
         let store = MorningSessionStub()
         store.failWrites = true
         let model = MorningStatusViewModel(api: api, tokenStore: store)
-        await model.signIn(email: "athlete@example.invalid", password: "fixture-password")
+        await model.requestCode(phone: "+12025550100")
+        await model.verifyCode("123456")
         XCTAssertFalse(model.isSignedIn)
         XCTAssertNil(model.status)
         XCTAssertEqual(api.fetchCalls, 0)
         XCTAssertNotNil(model.errorMessage)
+    }
+
+    @MainActor
+    func testCodeCooldownExpiryAndChangeNumberNeverCreateSession() async throws {
+        var now = Date(timeIntervalSince1970: 1000)
+        let api = MorningServiceStub()
+        let store = MorningSessionStub()
+        let model = MorningStatusViewModel(api: api, tokenStore: store, now: { now })
+        await model.requestCode(phone: "+12025550100")
+        await model.resendCode()
+        XCTAssertEqual(api.requestCalls, 1)
+        XCTAssertEqual(model.resendSeconds(at: now), 60)
+        now = now.addingTimeInterval(60)
+        await model.resendCode()
+        XCTAssertEqual(api.requestCalls, 2)
+        now = now.addingTimeInterval(601)
+        await model.verifyCode("123456")
+        XCTAssertNil(api.verifiedChallenge)
+        XCTAssertTrue(model.errorMessage?.contains("expired") == true)
+        XCTAssertNil(store.token)
+        model.changePhone()
+        XCTAssertNil(model.verification)
+        await model.verifyCode("123456")
+        XCTAssertNil(api.verifiedChallenge)
+        await model.requestCode(phone: "+12025550101")
+        XCTAssertEqual(api.requestedPhone, "+12025550101")
+    }
+
+    @MainActor
+    func testInvalidCodeAndNetworkFailureAllowRetryWithoutSavingSession() async throws {
+        let api = MorningServiceStub()
+        let store = MorningSessionStub()
+        let model = MorningStatusViewModel(api: api, tokenStore: store)
+        await model.requestCode(phone: "+12025550100")
+        api.error = MorningStatusError.unauthorized
+        await model.verifyCode("000000")
+        XCTAssertNotNil(model.verification)
+        XCTAssertNil(store.token)
+        XCTAssertTrue(model.errorMessage?.contains("code") == true)
+        api.error = URLError(.notConnectedToInternet)
+        await model.verifyCode("123456")
+        XCTAssertNotNil(model.verification)
+        XCTAssertFalse(model.isSignedIn)
+        api.error = nil
+        await model.verifyCode("123456")
+        XCTAssertTrue(model.isSignedIn)
+        XCTAssertEqual(store.token, "fixture-session")
+    }
+
+    @MainActor
+    func testPhoneAndCodeValidationRejectsAmbiguousOrUnicodeInput() async {
+        for value in ["2025550100", "1 (202) 555-0100", "+1.202.555.0100"] {
+            XCTAssertEqual(MorningPhoneInput.normalized(value), "+12025550100")
+        }
+        for value in ["+442025550100", "2025550100abc", "２０２５５５０１００", "202555010"] {
+            XCTAssertNil(MorningPhoneInput.normalized(value))
+        }
+        for value in ["12345", "1234567", "１２３４５６", "12345a"] {
+            XCTAssertFalse(MorningPhoneInput.validCode(value))
+        }
+        let api = MorningServiceStub()
+        let model = MorningStatusViewModel(api: api, tokenStore: MorningSessionStub())
+        await model.requestCode(phone: "bad phone")
+        XCTAssertEqual(api.requestCalls, 0)
+        await model.requestCode(phone: "+12025550100")
+        await model.verifyCode("123")
+        XCTAssertNil(api.verifiedChallenge)
+    }
+
+    @MainActor
+    func testMalformedChallengeResponseIsRejected() async {
+        for values in [("", 600, 60), ("challenge", 0, 60), ("challenge", 600, -1), ("challenge", 10000, 60)] {
+            let api = MorningStatusAPI { request in
+                let data = try JSONSerialization.data(withJSONObject: ["challenge": values.0, "phone_hint": "Ending in 0100",
+                    "expires_in": values.1, "retry_after": values.2])
+                return (data, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil,
+                                             headerFields: ["Content-Type": "application/json"])!)
+            }
+            do { _ = try await api.requestCode(phone: "+12025550100"); XCTFail("Malformed challenge accepted") }
+            catch { XCTAssertEqual(error as? MorningStatusError, .invalidResponse) }
+        }
+    }
+
+    @MainActor
+    func testVerifiedPhoneWithoutSubscriptionDoesNotClaimConnectedOrKeepConsumedCode() async {
+        let api = MorningServiceStub()
+        let store = MorningSessionStub()
+        let model = MorningStatusViewModel(api: api, tokenStore: store)
+        await model.requestCode(phone: "+12025550100")
+        api.error = MorningStatusError.noSubscription
+        await model.verifyCode("123456")
+        XCTAssertFalse(model.isSignedIn)
+        XCTAssertNil(model.verification)
+        XCTAssertNil(store.token)
+        XCTAssertEqual(model.errorMessage, MorningStatusError.noSubscription.localizedDescription)
+        XCTAssertEqual(api.fetchCalls, 0)
     }
 }
 
@@ -186,13 +296,21 @@ final class MorningStatusTests: XCTestCase {
 private final class MorningServiceStub: MorningStatusServing {
     var error: Error?
     var json = morningFixtureJSON
-    var loginEmail: String?
+    var requestedPhone: String?
+    var verifiedChallenge: String?
+    var requestCalls = 0
     var updatedTimezone: String?
     var unsubscribeCalls = 0
     var fetchCalls = 0
-    func signIn(email: String, password: String) async throws -> String {
+    func requestCode(phone: String) async throws -> MorningPhoneChallenge {
         if let error { throw error }
-        loginEmail = email
+        requestCalls += 1
+        requestedPhone = phone
+        return MorningPhoneChallenge(challenge: "fixture-challenge", phoneHint: "Ending in 0100", expiresIn: 600, retryAfter: 60)
+    }
+    func verifyCode(challenge: String, code: String) async throws -> String {
+        if let error { throw error }
+        verifiedChallenge = challenge
         return "fixture-session"
     }
     func fetchStatus(token: String) async throws -> MorningStatus {

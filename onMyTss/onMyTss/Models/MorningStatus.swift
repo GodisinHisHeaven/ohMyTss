@@ -29,7 +29,7 @@ struct MorningStatus: Decodable, Equatable {
         switch smsState {
         case "active": "Subscribed"
         case "not_subscribed": "Not subscribed"
-        case "no_phone": "No phone on this account"
+        case "no_phone": "No phone connected"
         case "paused": "Delivery paused"
         default: "Status unavailable"
         }
@@ -37,7 +37,7 @@ struct MorningStatus: Decodable, Equatable {
 
     var deliveryDescription: String {
         if sentToday { return "Today's message was submitted for delivery." }
-        if !smsEnabled { return "Morning texts are not enabled for this account." }
+        if !smsEnabled { return "Morning texts are not enabled." }
         if !hasTodayData { return "Waiting for today's wellness data." }
         if inDeliveryWindow { return "Today's data is available. The next scheduled check can send your message." }
         return "Outside the morning window. Messages are sent only with current-day data."

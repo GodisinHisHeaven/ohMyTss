@@ -7,8 +7,12 @@ final class MorningStatusUIFixture: MorningStatusServing {
     var timezone = "UTC"
     var subscribed = true
 
-    func signIn(email: String, password: String) async throws -> String {
-        guard email == "athlete@example.invalid", password == "fixture-password" else {
+    func requestCode(phone: String) async throws -> MorningPhoneChallenge {
+        guard phone == "+12025550100" else { throw MorningStatusError.invalidInput }
+        return MorningPhoneChallenge(challenge: "ui-fixture-challenge", phoneHint: "Ending in 0100", expiresIn: 600, retryAfter: 60)
+    }
+    func verifyCode(challenge: String, code: String) async throws -> String {
+        guard challenge == "ui-fixture-challenge", code == "123456" else {
             throw MorningStatusError.unauthorized
         }
         return "ui-fixture-session"

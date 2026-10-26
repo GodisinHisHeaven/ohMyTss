@@ -186,7 +186,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Morning Status SMS")
                 } footer: {
-                    Text("Manage your existing morning status account here. View today's status, set the delivery time zone and turn off texts without leaving the app.")
+                    Text("Connect with your phone number to view morning status, set the delivery time zone and manage your texts here.")
                 }
 
                 // App Information
