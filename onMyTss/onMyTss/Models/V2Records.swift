@@ -37,6 +37,27 @@ final class LocalObservation {
     }
 }
 
+/// Perceived muscle effort is separate from symptoms and calculated load.
+/// Adding an entity preserves existing observations and training snapshots.
+@Model
+final class MuscleRPERecord {
+    @Attribute(.unique) var id: UUID
+    var regionRaw: String
+    var sideRaw: String
+    var rpe: Int
+    var observedAt: Date
+    var updatedAt: Date
+
+    init(regionRaw: String, sideRaw: String, rpe: Int, observedAt: Date = Date()) {
+        self.id = UUID()
+        self.regionRaw = regionRaw
+        self.sideRaw = sideRaw
+        self.rpe = rpe
+        self.observedAt = observedAt
+        self.updatedAt = Date()
+    }
+}
+
 @Model
 final class StrengthSetRecord {
     @Attribute(.unique) var id: UUID
@@ -117,6 +138,6 @@ extension Workout {
 enum AppSchema {
     static var models: [any PersistentModel.Type] {
         [DayAggregate.self, UserThresholds.self, AppState.self, Workout.self, StravaAuth.self,
-         LocalObservation.self, StrengthSetRecord.self, StrengthTemplate.self, LoadEstimateRecord.self]
+         LocalObservation.self, MuscleRPERecord.self, StrengthSetRecord.self, StrengthTemplate.self, LoadEstimateRecord.self]
     }
 }

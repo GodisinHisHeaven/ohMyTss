@@ -65,8 +65,8 @@ struct ContentView: View {
             }
             #endif
 
-            // Open saved history immediately. Today backfills estimates cooperatively;
-            // recalculating the entire history here blocks launch on the main actor.
+            // Open saved data immediately. The dashboard reads a bounded window;
+            // Sync maintains derived training history when explicitly requested.
         } catch {
             // If error fetching, assume not completed
             hasCompletedOnboarding = false
