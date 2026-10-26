@@ -91,7 +91,7 @@ class BodyBatteryEngine {
             for day in Set(allRows.map(\.date)) { daily[day] = 0 }
             for row in stored { daily[row.date, default: 0] += row.tss }
             let first = (existing.map(\.date) + allRows.map(\.date) + [start]).min() ?? start
-            try await computeAndSaveMetrics(dailyTSSMap: daily, startDate: first, endDate: now, workouts: stored)
+            warnings += try await computeAndSaveMetrics(dailyTSSMap: daily, startDate: first, endDate: now, workouts: stored)
             try dataStore.refreshV2Estimates()
             try dataStore.updateHealthKitSyncDate(now, anchor: encodedAnchor)
             state.lastSyncMessage = warnings.isEmpty
@@ -241,7 +241,7 @@ class BodyBatteryEngine {
         startDate: Date,
         endDate: Date,
         workouts: [Workout]
-    ) async throws {
+    ) async throws -> [String] {
         // Group workouts by day for linking to aggregates
         var workoutsByDay: [Date: [Workout]] = [:]
         for workout in workouts where !workout.isSuppressed && !workout.isTombstoned {
@@ -269,9 +269,10 @@ class BodyBatteryEngine {
         async let physiologyMap = try? processPhysiologyData(from: startDate, to: endDate)
         async let sleepMap = try? processSleepData(from: startDate, to: endDate)
 
-        let (optionalPhysiology, optionalSleep) = await (physiologyMap, sleepMap)
-        let physiology = optionalPhysiology ?? [:]
-        let sleep = optionalSleep ?? [:]
+        let (physiology, sleep) = await (physiologyMap, sleepMap)
+        var warnings: [String] = []
+        if physiology == nil { warnings.append("HealthKit physiology unavailable. Saved HRV and resting heart rate retained; retry Sync.") }
+        if sleep == nil { warnings.append("HealthKit sleep unavailable. Saved sleep measurements retained; retry Sync.") }
 
         // Collect all aggregates for batch save (better performance)
         var aggregatesToSave: [DayAggregate] = []
@@ -282,11 +283,12 @@ class BodyBatteryEngine {
             let metrics = timeSeries[index]
 
             // Get physiological data for this day
-            let physiologyData = physiology[date]
-            let avgHRV = physiologyData?.hrv
-            let avgRHR = physiologyData?.rhr
-            let hrvModifier = physiologyData?.hrvMod
-            let rhrModifier = physiologyData?.rhrMod
+            let existing = try dataStore.fetchDayAggregate(for: date)
+            let physiologyData = physiology?[date]
+            let avgHRV = physiology == nil ? existing?.avgHRV : physiologyData?.hrv
+            let avgRHR = physiology == nil ? existing?.avgRHR : physiologyData?.rhr
+            let hrvModifier = physiology == nil ? existing?.hrvModifier : physiologyData?.hrvMod
+            let rhrModifier = physiology == nil ? existing?.rhrModifier : physiologyData?.rhrMod
 
             // Calculate Body Battery score with HRV/RHR modifiers. Even with zero TSS today, we still compute based on existing CTL/ATL.
             let bodyBatteryScore = BodyBatteryCalculator.calculateScoreWithModifiers(
@@ -296,16 +298,16 @@ class BodyBatteryEngine {
             )
 
             // Detect potential illness from HRV/RHR signals
-            let illnessLikelihood = PhysiologyModifier.detectIllness(
+            let illnessLikelihood = physiology == nil ? existing?.illnessLikelihood : PhysiologyModifier.detectIllness(
                 hrvModifier: hrvModifier,
                 rhrModifier: rhrModifier
             )
 
             // Get sleep data for this day
-            let sleepData = sleep[date]
-            let sleepDuration = sleepData?.durationHours
-            let sleepQualityScore = sleepData?.qualityScore
-            let deepSleepDuration = sleepData?.deepSleepHours
+            let sleepData = sleep?[date]
+            let sleepDuration = sleep == nil ? existing?.sleepDuration : sleepData?.durationHours
+            let sleepQualityScore = sleep == nil ? existing?.sleepQualityScore : sleepData?.qualityScore
+            let deepSleepDuration = sleep == nil ? existing?.deepSleepDuration : sleepData?.deepSleepHours
 
             // Calculate ramp rate if we have data from a week ago
             var rampRate: Double?
@@ -323,7 +325,7 @@ class BodyBatteryEngine {
             let maxTSS = dayWorkouts.map { $0.tss }.max()
 
             // Try to fetch existing aggregate or create new one
-            if let existing = try dataStore.fetchDayAggregate(for: date) {
+            if let existing {
                 // Update existing
                 existing.totalTSS = tss
                 if !dayWorkouts.isEmpty { existing.hasWorkoutDetails = true }
@@ -385,6 +387,7 @@ class BodyBatteryEngine {
         if !aggregatesToSave.isEmpty {
             try dataStore.saveDayAggregatesBatch(aggregatesToSave)
         }
+        return warnings
     }
 
     // MARK: - Utility Methods

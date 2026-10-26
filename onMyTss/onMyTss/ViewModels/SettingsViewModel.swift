@@ -185,6 +185,7 @@ class SettingsViewModel {
 
             do {
                 try await engine.recomputeAll()
+                lastSyncDate = try dataStore.fetchAppState().lastHealthKitSyncDate
             } catch {
                 errorMessage = "Strava connected, but workout sync failed: \(error.localizedDescription)"
             }

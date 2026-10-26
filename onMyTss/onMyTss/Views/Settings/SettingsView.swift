@@ -168,7 +168,7 @@ struct SettingsView: View {
                         }
                     } label: {
                         HStack {
-                            Label("Sync HealthKit Data", systemImage: "arrow.triangle.2.circlepath")
+                            Label("Sync Activities", systemImage: "arrow.triangle.2.circlepath")
                             Spacer()
                             if viewModel.isSaving {
                                 ProgressView()

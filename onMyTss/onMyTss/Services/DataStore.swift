@@ -13,6 +13,9 @@ import SwiftData
 class DataStore {
     private var modelContext: ModelContext
 
+    // Avoid the older Swift runtime's isolated-deinit crash (swiftlang/swift#88036).
+    nonisolated deinit {}
+
     init(modelContext: ModelContext) {
         self.modelContext = modelContext
     }
@@ -307,15 +310,7 @@ class DataStore {
     }
 
     private func sameSession(_ lhs: Workout, _ rhs: Workout) -> Bool {
-        func sport(_ value: String) -> String {
-            let s = value.lowercased()
-            if s.contains("ride") || s.contains("cycl") || s.contains("bike") { return "cycling" }
-            if s.contains("run") { return "running" }
-            if s.contains("swim") { return "swimming" }
-            if s.contains("strength") || s.contains("weight") { return "strength" }
-            return s
-        }
-        return sport(lhs.workoutType) == sport(rhs.workoutType)
+        return WorkoutAggregator.normalizeWorkoutType(lhs.workoutType) == WorkoutAggregator.normalizeWorkoutType(rhs.workoutType)
             && abs(lhs.startTime.timeIntervalSince(rhs.startTime)) < 60
             && abs(lhs.duration - rhs.duration) < 5
     }
@@ -406,6 +401,7 @@ class DataStore {
         var day = calendar.startOfDay(for: first)
         var ctl = 0.0
         var atl = 0.0
+        var ctlHistory: [Double] = []
         while day <= calendar.startOfDay(for: now) {
             let aggregate: DayAggregate
             if let existing = aggregates.first(where: { $0.date == day }) {
@@ -432,6 +428,13 @@ class DataStore {
             aggregate.ctl = ctl
             aggregate.atl = atl
             aggregate.tsb = LoadCalculator.calculateTSB(ctl: ctl, atl: atl)
+            aggregate.bodyBatteryScore = BodyBatteryCalculator.calculateScoreWithModifiers(
+                tsb: aggregate.tsb, hrvModifier: aggregate.hrvModifier, rhrModifier: aggregate.rhrModifier
+            )
+            ctlHistory.append(ctl)
+            aggregate.rampRate = ctlHistory.count >= 8
+                ? LoadCalculator.calculateCTLRampRate(currentCTL: ctl, ctlOneWeekAgo: ctlHistory[ctlHistory.count - 8])
+                : nil
             guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { break }
             day = next
         }

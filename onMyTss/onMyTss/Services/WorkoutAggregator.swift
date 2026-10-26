@@ -70,6 +70,9 @@ enum TSSMethod: String {
 @MainActor
 final class WorkoutAggregator {
 
+    // Avoid the older Swift runtime's isolated-deinit crash (swiftlang/swift#88036).
+    nonisolated deinit {}
+
     // MARK: - Dependencies
 
     private let healthKitManager: HealthKitManaging
@@ -340,7 +343,7 @@ final class WorkoutAggregator {
     /// - Durations within 5 seconds
     private func areDuplicates(workout1: Workout, workout2: Workout) -> Bool {
         // Check workout type match
-        guard normalizeWorkoutType(workout1.workoutType) == normalizeWorkoutType(workout2.workoutType) else {
+        guard Self.normalizeWorkoutType(workout1.workoutType) == Self.normalizeWorkoutType(workout2.workoutType) else {
             return false
         }
 
@@ -361,7 +364,7 @@ final class WorkoutAggregator {
 
     /// Normalize workout type for comparison
     /// Maps similar types to same value (e.g., "Ride" and "Cycling" both become "cycling")
-    private func normalizeWorkoutType(_ type: String) -> String {
+    static func normalizeWorkoutType(_ type: String) -> String {
         let lowercased = type.lowercased()
 
         if lowercased.contains("cycl") || lowercased.contains("bike") || lowercased.contains("ride") {
@@ -402,7 +405,7 @@ final class WorkoutAggregator {
     /// Calculate TSS from Strava activity data
     private func calculateTSSFromStrava(activity: StravaActivity, userFTP: Int?, userMaxHR: Int?) -> (value: Double, method: String) {
         // Prefer power-based if available
-        if normalizeWorkoutType(activity.sportType) == "cycling", activity.hasPowerData,
+        if Self.normalizeWorkoutType(activity.sportType) == "cycling", activity.hasPowerData,
            let np = activity.weightedAverageWatts, np >= 0,
            let userFTP = userFTP, userFTP > 0 {
             // Use Strava's weighted average watts (their NP equivalent)

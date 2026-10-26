@@ -227,6 +227,59 @@ final class V2PersistenceTests: XCTestCase {
         XCTAssertFalse(try latest(context, sessionID: next.id).value?.regions.isEmpty ?? true)
     }
 
+    func testWalkAliasesStayDeduplicatedAcrossRepeatedSyncs() throws {
+        let context = ModelContext(try container())
+        let dataStore = DataStore(modelContext: context)
+        for _ in 0..<2 {
+            let health = imported(id: "walk-hk", tss: 25)
+            health.workoutType = "Walking"
+            let strava = imported(id: "walk-strava", source: .strava, tss: 35)
+            strava.workoutType = "Walk"
+            try dataStore.saveWorkouts([health, strava])
+            try dataStore.rebuildLegacyLoadHistory(now: start.addingTimeInterval(600))
+        }
+        let rows = try dataStore.allWorkouts()
+        XCTAssertEqual(rows.count, 2)
+        XCTAssertEqual(Set(rows.compactMap(\.sessionGroupID)).count, 1)
+        XCTAssertEqual(rows.filter { !$0.isSuppressed && !$0.isTombstoned }.map(\.id), ["walk-strava"])
+        XCTAssertEqual(try dataStore.fetchDayAggregate(for: start)?.totalTSS, 35)
+        XCTAssertEqual(try dataStore.fetchDayAggregate(for: start)?.workoutCount, 1)
+    }
+
+    func testLocalDeletionRebuildsDependentScoresAndRampRates() throws {
+        let context = ModelContext(try container())
+        let dataStore = DataStore(modelContext: context)
+        let end = start.addingDays(10)
+        let store = V2Store(context: context, clock: { end })
+        let session = imported(tss: 1000)
+        try dataStore.saveWorkouts([session])
+        for offset in 0...10 {
+            try dataStore.saveDayAggregate(DayAggregate(
+                date: start.startOfDay.addingDays(offset), avgHRV: 45, avgRHR: 55,
+                hrvModifier: -8, rhrModifier: 2, sleepDuration: 7.5
+            ))
+        }
+        try dataStore.rebuildLegacyLoadHistory(now: end)
+        let oldLast = try XCTUnwrap(dataStore.fetchDayAggregate(for: end))
+        let oldScore = oldLast.bodyBatteryScore
+        let oldRampRate = oldLast.rampRate
+
+        try store.deleteSession(session)
+
+        let expectedScore = BodyBatteryCalculator.calculateScoreWithModifiers(tsb: 0, hrvModifier: -8, rhrModifier: 2)
+        XCTAssertNotEqual(oldScore, expectedScore)
+        XCTAssertNotEqual(oldRampRate, 0)
+        for (index, day) in try dataStore.fetchAllDayAggregates().enumerated() {
+            XCTAssertEqual(day.totalTSS, 0)
+            XCTAssertEqual(day.tsb, 0)
+            XCTAssertEqual(day.bodyBatteryScore, expectedScore)
+            XCTAssertEqual(day.rampRate, index >= 7 ? 0 : nil)
+            XCTAssertEqual(day.avgHRV, 45)
+            XCTAssertEqual(day.avgRHR, 55)
+            XCTAssertEqual(day.sleepDuration, 7.5)
+        }
+    }
+
     func testCorrectedWorkoutDateClearsPreviousDayContribution() throws {
         let context = ModelContext(try container())
         let dataStore = DataStore(modelContext: context)

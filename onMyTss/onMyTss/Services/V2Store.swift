@@ -6,6 +6,10 @@ import SwiftData
 final class V2Store {
     private let context: ModelContext
     private let clock: () -> Date
+
+    // Avoid the older Swift runtime's isolated-deinit crash (swiftlang/swift#88036).
+    nonisolated deinit {}
+
     init(context: ModelContext, clock: @escaping () -> Date = Date.init) {
         self.context = context
         self.clock = clock
