@@ -13,6 +13,8 @@ import HealthKit
 @MainActor
 protocol HealthKitManaging: AnyObject {
     func fetchWorkouts(from startDate: Date, to endDate: Date) async throws -> [HKWorkout]
+    func fetchWorkouts(ids: [String]) async throws -> [HKWorkout]
+    func fetchWorkoutChanges(anchor: HKQueryAnchor?) async throws -> (workouts: [HKWorkout], deletedIDs: [String], newAnchor: HKQueryAnchor)
     func fetchPowerSamples(for workout: HKWorkout) async throws -> [HKQuantitySample]
     func fetchHeartRateSamples(for workout: HKWorkout) async throws -> [HKQuantitySample]
     func fetchWorkoutFeatures(for workout: HKWorkout) async throws -> WorkoutFeatures
@@ -85,6 +87,10 @@ final class WorkoutAggregator {
     private(set) var successfulSources: Set<String> = []
     private(set) var warnings: [String] = []
     private(set) var latestDeletedStravaIDs: [String] = []
+    private(set) var latestDeletedHealthKitIDs: [String] = []
+    private(set) var latestHealthKitAnchor: HKQueryAnchor?
+    private(set) var refreshedHealthKitSamples = false
+    private(set) var latestHealthKitRetryIDs: Set<String> = []
 
     // MARK: - Initialization
 
@@ -105,17 +111,65 @@ final class WorkoutAggregator {
     /// Fetch all workouts from both sources (Strava + HealthKit)
     /// Returns deduplicated workouts with Strava priority
     func fetchWorkouts(from startDate: Date, to endDate: Date) async throws -> [Workout] {
+        try await fetchSources(from: startDate, to: endDate) {
+            try await self.fetchHealthKitWorkouts(from: startDate, to: endDate)
+        }
+    }
+
+    func fetchChanges(plan: ActivitySyncPlan, anchor: HKQueryAnchor?, now: Date) async throws {
+        latestHealthKitRetryIDs = Set(plan.healthKitRetryIDs)
+        _ = try await fetchSources(from: plan.stravaStart, to: now) {
+            let changes = try await self.healthKitManager.fetchWorkoutChanges(anchor: anchor)
+            var sources = changes.workouts
+            if !plan.healthKitRetryIDs.isEmpty {
+                do {
+                    let retry = try await self.healthKitManager.fetchWorkouts(ids: Array(plan.healthKitRetryIDs.prefix(20)))
+                    let changed = Set(sources.map(\.uuid))
+                    sources += retry.filter { !changed.contains($0.uuid) }
+                } catch {
+                    try Task.checkCancellation()
+                    self.warnings.append("HealthKit sample retry unavailable. Saved samples retained.")
+                }
+            }
+            self.refreshedHealthKitSamples = anchor == nil
+            if anchor != nil && plan.refreshHealthKitSamples {
+                do {
+                    // Some devices append sensor samples after saving the workout.
+                    // Refresh only two recent days, at most once every six hours.
+                    let recent = try await self.healthKitManager.fetchWorkouts(from: now.addingDays(-2), to: now)
+                    let changed = Set(sources.map(\.uuid))
+                    sources += recent.filter { !changed.contains($0.uuid) }
+                    self.refreshedHealthKitSamples = true
+                } catch {
+                    try Task.checkCancellation()
+                    self.warnings.append("Recent HealthKit samples could not refresh. Saved samples retained; retry sync.")
+                }
+            }
+            let rows = try await self.convertHealthKitWorkouts(sources)
+            self.latestDeletedHealthKitIDs = changes.deletedIDs
+            self.latestHealthKitRetryIDs.subtract(changes.deletedIDs)
+            self.latestHealthKitAnchor = changes.newAnchor
+            return rows
+        }
+    }
+
+    private func fetchSources(from startDate: Date, to endDate: Date,
+                              healthKit: () async throws -> [Workout]) async throws -> [Workout] {
         latestImportedWorkouts = []
         latestDeletedStravaIDs = []
+        latestDeletedHealthKitIDs = []
+        latestHealthKitAnchor = nil
+        refreshedHealthKitSamples = false
         successfulSources = []
         warnings = []
         var hkWorkouts: [Workout] = []
         var stravaWorkouts: [Workout] = []
         var sourceErrors: [Error] = []
         do {
-            hkWorkouts = try await fetchHealthKitWorkouts(from: startDate, to: endDate)
+            hkWorkouts = try await healthKit()
             successfulSources.insert(WorkoutSource.healthKit.rawValue)
         } catch {
+            try Task.checkCancellation()
             sourceErrors.append(error)
             warnings.append("HealthKit is unavailable or unreadable. Saved history is retained; retry sync.")
         }
@@ -125,6 +179,7 @@ final class WorkoutAggregator {
                 stravaWorkouts = try await fetchStravaWorkouts(from: startDate, to: endDate)
                 successfulSources.insert(WorkoutSource.strava.rawValue)
             } catch {
+                try Task.checkCancellation()
                 sourceErrors.append(error)
                 warnings.append("Strava could not sync. Saved history is retained; check your connection and retry.")
             }
@@ -146,44 +201,43 @@ final class WorkoutAggregator {
         let thresholds = try dataStore.fetchUserThresholds()
         var workouts: [Workout] = []
         for hkWorkout in source {
+            try Task.checkCancellation()
             var features: WorkoutFeatures
             do { features = try await healthKitManager.fetchWorkoutFeatures(for: hkWorkout) }
             catch {
+                try Task.checkCancellation()
                 features = WorkoutFeatures()
                 features.failedChannels = ["heartRate", "power", "cadence", "speed", "terrain"]
                 features.provenance = ["Sensor query failed; retry sync"]
             }
             features.end = hkWorkout.endDate
-            let window = TimeRange(start: hkWorkout.startDate, end: hkWorkout.endDate)
-            let power = SignalProcessing.intervals(samples: features.power, window: window, pauses: features.pauses, validRange: 0...2500)
-            let heartRate = SignalProcessing.intervals(samples: features.heartRate, window: window, pauses: features.pauses, validRange: 30...240)
-            let np = SignalProcessing.normalizedPower(power)
-            let tss: Double
-            let method: String
-            if hkWorkout.workoutActivityType == .cycling, let ftp = thresholds.cyclingFTP, ftp > 0, let np = np {
-                // Partial coverage contributes only its observed duration. It is
-                // never extrapolated through pauses or missing sensor intervals.
-                tss = SignalProcessing.coveredSeconds(power) / 3600 * pow(np / Double(ftp), 2) * 100
-                method = "power-time-v2"
-            } else if !heartRate.isEmpty, let maxHR = thresholds.maxHeartRate, maxHR > 60 {
-                tss = TSSCalculator.legacyHeartRateTSS(intervals: heartRate, maxHeartRate: maxHR, restingHeartRate: 60)
-                method = "hr-time-v2 (resting HR assumed 60)"
-            } else {
-                tss = max(0, hkWorkout.duration) / 3600 * 60
-                method = "duration estimate"
+            if features.failedChannels.isEmpty { latestHealthKitRetryIDs.remove(hkWorkout.uuid.uuidString) }
+            else { latestHealthKitRetryIDs.insert(hkWorkout.uuid.uuidString) }
+            let input = features
+            let start = hkWorkout.startDate, end = hkWorkout.endDate, duration = hkWorkout.duration
+            let cycling = hkWorkout.workoutActivityType == .cycling
+            let ftp = thresholds.cyclingFTP, maxHR = thresholds.maxHeartRate
+            let calculation = Task.detached(priority: .utility) {
+                try Task.checkCancellation()
+                return try WorkoutImportCalculation(features: input, start: start, end: end, duration: duration,
+                                                    cycling: cycling, ftp: ftp, maxHR: maxHR)
             }
+            let value = try await withTaskCancellationHandler {
+                try await calculation.value
+            } onCancel: { calculation.cancel() }
+            try Task.checkCancellation()
             let workout = Workout(
                 id: hkWorkout.uuid.uuidString, date: hkWorkout.startDate.startOfDay,
                 startTime: hkWorkout.startDate, duration: hkWorkout.duration,
                 workoutType: workoutTypeName(for: hkWorkout.workoutActivityType),
                 distance: hkWorkout.totalDistance?.doubleValue(for: .meter()),
-                tss: tss.isFinite ? tss : 0, calculationMethod: method, source: .healthKit,
+                tss: value.tss.isFinite ? value.tss : 0, calculationMethod: value.method, source: .healthKit,
                 healthKitUUID: hkWorkout.uuid.uuidString,
-                averagePower: SignalProcessing.weightedMean(power), normalizedPower: np,
-                averageHeartRate: SignalProcessing.weightedMean(heartRate), maxHeartRate: heartRate.map(\.value).max(),
+                averagePower: value.averagePower, normalizedPower: value.normalizedPower,
+                averageHeartRate: value.averageHeartRate, maxHeartRate: value.maxHeartRate,
                 deviceName: hkWorkout.device?.name
             )
-            workout.features = features
+            workout.featuresData = value.featuresData
             workouts.append(workout)
         }
         return workouts
@@ -207,6 +261,7 @@ final class WorkoutAggregator {
 
         // Paginate through activities
         while true {
+            try Task.checkCancellation()
             let activities = try await stravaClient.activities(
                 accessToken: accessToken,
                 after: startDate,
@@ -251,6 +306,7 @@ final class WorkoutAggregator {
                     unavailableSourceIDs.append(source.id)
                 }
             } catch {
+                try Task.checkCancellation()
                 warnings.append("A missing Strava activity could not be verified. Its saved source and your records are retained; retry sync.")
                 // Avoid repeated requests after a rate-limit, connection or
                 // authorization failure. Unchecked sources remain untouched.
@@ -274,6 +330,8 @@ final class WorkoutAggregator {
         var workouts: [Workout] = []
 
         for activity in allActivities {
+            try Task.checkCancellation()
+            if workouts.count % 25 == 0 { try await Task.sleep(for: .milliseconds(1)) }
             // Skip malformed activities (e.g., missing id/start time) to avoid decode crashes further downstream
             guard activity.id > 0, let startTime = activity.startDateTime else {
                 continue
@@ -325,13 +383,20 @@ final class WorkoutAggregator {
     /// Uses same criteria as HealthKit deduplication: time, duration, type
     func deduplicateWorkouts(healthKit: [Workout], strava: [Workout]) -> [Workout] {
         var result: [Workout] = []
+        var nearby: [String: [Workout]] = [:]
         // Reset incoming snapshots; persistence also reconciles against prior
         // imports and keeps manual associations separate from this heuristic.
         for workout in strava + healthKit { workout.isSuppressed = false }
         for workout in strava + healthKit {
-            if result.contains(where: { areDuplicates(workout1: workout, workout2: $0) }) {
+            let type = Self.normalizeWorkoutType(workout.workoutType)
+            let bucket = Int(floor(workout.startTime.timeIntervalSince1970 / 60))
+            let candidates = (-1...1).flatMap { nearby["\(type):\(bucket + $0)"] ?? [] }
+            if candidates.contains(where: { areDuplicates(workout1: workout, workout2: $0) }) {
                 workout.isSuppressed = true
-            } else { result.append(workout) }
+            } else {
+                result.append(workout)
+                nearby["\(type):\(bucket)", default: []].append(workout)
+            }
         }
         return result
     }

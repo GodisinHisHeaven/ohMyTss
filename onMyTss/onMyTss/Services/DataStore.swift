@@ -190,8 +190,16 @@ class DataStore {
         let appState = try fetchAppState()
         appState.lastHealthKitSyncDate = nil
         appState.healthKitAnchor = nil
+        appState.lastHealthKitSampleRefreshDate = nil
+        appState.pendingHealthKitWorkoutIDs = []
+        appState.lastRecoverySyncDate = nil
         appState.lastComputationDate = nil
         appState.isComputationInProgress = false
+        if let auth = try fetchStravaAuth() {
+            auth.lastSyncDate = nil
+            auth.lastReconciliationDate = nil
+            auth.syncCursor = nil
+        }
         try modelContext.save()
     }
 
@@ -201,118 +209,196 @@ class DataStore {
         try saveWorkouts([workout])
     }
 
-    /// Identity upserts preserve user data and deletion tombstones; a resync cannot resurrect a deleted row.
-    func saveWorkouts(_ workouts: [Workout]) throws {
+    /// Identity upserts preserve user data and deletion tombstones. Identical
+    /// source responses do not dirty a model or trigger history reconciliation.
+    @discardableResult
+    func saveWorkouts(_ workouts: [Workout]) throws -> WorkoutChanges {
+        var changes = WorkoutChanges()
         for workout in workouts {
             if let existing = try fetchWorkout(byId: workout.id) {
-                if existing.legacyTSS == nil {
-                    existing.legacyTSS = existing.tss
-                    existing.legacyCalculationMethod = existing.calculationMethod
-                }
-                if existing.date != workout.date, let oldDay = try fetchDayAggregate(for: existing.date) {
-                    oldDay.hasWorkoutDetails = true
-                    oldDay.totalTSS = 0 // Rebuilt from remaining records, never preserved as summary-only.
-                }
-                if existing.isTombstoned && existing.deletionOrigin == "source" {
-                    existing.isTombstoned = false
-                    existing.deletionOrigin = nil
-                }
-                existing.date = workout.date
-                existing.startTime = workout.startTime
-                existing.duration = workout.duration
-                existing.workoutType = workout.workoutType
-                existing.distance = workout.distance
-                let unreadable = Set(workout.features.failedChannels + workout.features.unavailableChannels)
-                let preserveTSS = (existing.calculationMethod.hasPrefix("power") && unreadable.contains("power"))
-                    || (existing.calculationMethod.hasPrefix("hr") && unreadable.contains("heartRate"))
-                if !preserveTSS {
-                    existing.tss = workout.tss
-                    existing.calculationMethod = workout.calculationMethod
-                }
-                existing.source = workout.source
-                existing.stravaId = workout.stravaId
-                existing.healthKitUUID = workout.healthKitUUID
-                if !unreadable.contains("power") {
-                    existing.averagePower = workout.averagePower
-                    existing.normalizedPower = workout.normalizedPower
-                }
-                if !unreadable.contains("heartRate") {
-                    existing.averageHeartRate = workout.averageHeartRate
-                    existing.maxHeartRate = workout.maxHeartRate
-                }
-                existing.deviceName = workout.deviceName
-                // Preserve unavailable channels individually. Explicit observed zero remains replaceable data.
-                if workout.featuresData != nil {
-                    var incoming = workout.features
-                    let prior = existing.features
-                    let unavailable = Set(incoming.failedChannels + incoming.unavailableChannels)
-                    if unavailable.contains("heartRate") { incoming.heartRate = prior.heartRate }
-                    if unavailable.contains("power") { incoming.power = prior.power }
-                    if unavailable.contains("cadence") { incoming.cadence = prior.cadence }
-                    if unavailable.contains("speed") { incoming.speed = prior.speed }
-                    if unavailable.contains("terrain") {
-                        incoming.elevation = prior.elevation
-                        incoming.grade = prior.grade
-                        incoming.ascentMeters = prior.ascentMeters
-                        incoming.descentMeters = prior.descentMeters
-                    }
-                    if !unavailable.isEmpty && existing.featuresData != nil {
-                        incoming.provenance += ["Previously saved samples retained for unreadable channels: " + unavailable.sorted().joined(separator: ", ")]
-                    }
-                    existing.features = incoming
-                }
+                let oldDate = existing.date
+                guard try merge(workout, into: existing) else { continue }
+                changes.include(existing)
+                changes.dates.insert(oldDate)
             } else {
                 modelContext.insert(workout)
+                changes.include(workout)
             }
         }
-        try reconcileWorkoutSources()
-        try modelContext.save()
+        if !changes.isEmpty {
+            changes.formUnion(try reconcileWorkoutSources())
+            try modelContext.save()
+        }
+        return changes
     }
 
-    /// Keep all source rows for audit, while only one canonical session contributes.
-    func reconcileWorkoutSources() throws {
-        let all = try modelContext.fetch(FetchDescriptor<Workout>())
-        let external = all.filter { $0.source != WorkoutSource.manual.rawValue }
-        // Durable logical groups survive which external source currently wins.
-        // Existing groups can join when a later source establishes a duplicate.
-        for row in external where row.sessionGroupID == nil { row.sessionGroupID = row.id }
-        for row in external {
-            if let match = external.first(where: { $0.id != row.id && sameSession($0, row) }),
-               let left = row.sessionGroupID, let right = match.sessionGroupID, left != right {
-                let chosen = min(left, right)
-                for member in external where member.sessionGroupID == left || member.sessionGroupID == right {
-                    member.sessionGroupID = chosen
-                }
+    private func merge(_ incoming: Workout, into existing: Workout) throws -> Bool {
+        if incoming.featuresData == existing.featuresData,
+           incoming.date == existing.date, incoming.startTime == existing.startTime,
+           incoming.duration == existing.duration, incoming.workoutType == existing.workoutType,
+           incoming.distance == existing.distance, incoming.tss == existing.tss,
+           incoming.calculationMethod == existing.calculationMethod, incoming.source == existing.source,
+           incoming.stravaId == existing.stravaId, incoming.healthKitUUID == existing.healthKitUUID,
+           incoming.averagePower == existing.averagePower, incoming.normalizedPower == existing.normalizedPower,
+           incoming.averageHeartRate == existing.averageHeartRate, incoming.maxHeartRate == existing.maxHeartRate,
+           incoming.deviceName == existing.deviceName,
+           !(existing.isTombstoned && existing.deletionOrigin == "source") { return false }
+        var features = incoming.features
+        let unreadable = Set(features.failedChannels + features.unavailableChannels)
+        var featuresData = incoming.featuresData ?? existing.featuresData
+        if let data = incoming.featuresData, data != existing.featuresData {
+            let prior = existing.features
+            if unreadable.contains("heartRate") { features.heartRate = prior.heartRate }
+            if unreadable.contains("power") { features.power = prior.power }
+            if unreadable.contains("cadence") { features.cadence = prior.cadence }
+            if unreadable.contains("speed") { features.speed = prior.speed }
+            if unreadable.contains("terrain") {
+                features.elevation = prior.elevation
+                features.grade = prior.grade
+                features.ascentMeters = prior.ascentMeters
+                features.descentMeters = prior.descentMeters
             }
+            if !unreadable.isEmpty && existing.featuresData != nil {
+                features.provenance = Array(Set(features.provenance + [
+                    "Previously saved samples retained for unreadable channels: " + unreadable.sorted().joined(separator: ", ")
+                ])).sorted()
+            }
+            if features == prior { featuresData = existing.featuresData }
+            else {
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.sortedKeys]
+                featuresData = try encoder.encode(features)
+            }
+        }
+        let preserveTSS = (existing.calculationMethod.hasPrefix("power") && unreadable.contains("power"))
+            || (existing.calculationMethod.hasPrefix("hr") && unreadable.contains("heartRate"))
+        let tss = preserveTSS ? existing.tss : incoming.tss
+        let method = preserveTSS ? existing.calculationMethod : incoming.calculationMethod
+        let averagePower = unreadable.contains("power") ? existing.averagePower : incoming.averagePower
+        let normalizedPower = unreadable.contains("power") ? existing.normalizedPower : incoming.normalizedPower
+        let averageHR = unreadable.contains("heartRate") ? existing.averageHeartRate : incoming.averageHeartRate
+        let maxHR = unreadable.contains("heartRate") ? existing.maxHeartRate : incoming.maxHeartRate
+        let restoresSource = existing.isTombstoned && existing.deletionOrigin == "source"
+        guard restoresSource || existing.date != incoming.date || existing.startTime != incoming.startTime
+            || existing.duration != incoming.duration || existing.workoutType != incoming.workoutType
+            || existing.distance != incoming.distance || existing.tss != tss || existing.calculationMethod != method
+            || existing.source != incoming.source || existing.stravaId != incoming.stravaId
+            || existing.healthKitUUID != incoming.healthKitUUID || existing.averagePower != averagePower
+            || existing.normalizedPower != normalizedPower || existing.averageHeartRate != averageHR
+            || existing.maxHeartRate != maxHR || existing.deviceName != incoming.deviceName
+            || existing.featuresData != featuresData else { return false }
+        if existing.legacyTSS == nil {
+            existing.legacyTSS = existing.tss
+            existing.legacyCalculationMethod = existing.calculationMethod
+        }
+        if existing.date != incoming.date, let oldDay = try fetchDayAggregate(for: existing.date) {
+            oldDay.hasWorkoutDetails = true
+            oldDay.totalTSS = 0
+        }
+        if restoresSource { existing.isTombstoned = false; existing.deletionOrigin = nil }
+        existing.date = incoming.date
+        existing.startTime = incoming.startTime
+        existing.duration = incoming.duration
+        existing.workoutType = incoming.workoutType
+        existing.distance = incoming.distance
+        existing.tss = tss
+        existing.calculationMethod = method
+        existing.source = incoming.source
+        existing.stravaId = incoming.stravaId
+        existing.healthKitUUID = incoming.healthKitUUID
+        existing.averagePower = averagePower
+        existing.normalizedPower = normalizedPower
+        existing.averageHeartRate = averageHR
+        existing.maxHeartRate = maxHR
+        existing.deviceName = incoming.deviceName
+        existing.featuresData = featuresData
+        return true
+    }
+
+    /// Bounded imports combine both sources. Reconcile before committing each
+    /// batch, so cancellation never leaves duplicate active source rows. Each yield
+    /// allows navigation and Settings to run during a large first import.
+    func applyImportedWorkouts(_ workouts: [Workout], deletedIDs: [String]) async throws -> WorkoutChanges {
+        var changes = WorkoutChanges()
+        for offset in stride(from: 0, to: workouts.count, by: 20) {
+            try Task.checkCancellation()
+            changes.formUnion(try saveWorkouts(Array(workouts[offset..<min(offset + 20, workouts.count)])))
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        for offset in stride(from: 0, to: deletedIDs.count, by: 20) {
+            try Task.checkCancellation()
+            let deleted = try applySourceDeletions(Array(deletedIDs[offset..<min(offset + 20, deletedIDs.count)]), rebuildHistory: false)
+            changes.formUnion(deleted)
+            if !deleted.isEmpty {
+                changes.formUnion(try reconcileWorkoutSources())
+                try modelContext.save()
+            }
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        return changes
+    }
+
+    /// Compare only temporally adjacent sources, instead of searching every
+    /// historical row for every activity. Existing logical groups stay durable.
+    @discardableResult
+    func reconcileWorkoutSources() throws -> WorkoutChanges {
+        let all = try allWorkouts()
+        let before = Dictionary(uniqueKeysWithValues: all.map { ($0.id, WorkoutCanonicalState($0)) })
+        let external = all.filter { $0.source != WorkoutSource.manual.rawValue }
+        var parents: [String: String] = [:]
+        func root(_ value: String) -> String {
+            var current = value
+            while let parent = parents[current], parent != current { current = parent }
+            return current
+        }
+        let types = external.map { WorkoutAggregator.normalizeWorkoutType($0.workoutType) }
+        for index in external.indices {
+            let row = external[index]
+            var candidate = index + 1
+            while candidate < external.count && external[candidate].startTime.timeIntervalSince(row.startTime) < 60 {
+                let other = external[candidate]
+                if types[index] == types[candidate] && abs(row.duration - other.duration) < 5 {
+                    let left = root(row.sessionGroupID ?? row.id)
+                    let right = root(other.sessionGroupID ?? other.id)
+                    if left != right { parents[max(left, right)] = min(left, right) }
+                }
+                candidate += 1
+            }
+        }
+        for row in external {
+            let group = root(row.sessionGroupID ?? row.id)
+            if row.sessionGroupID != group { row.sessionGroupID = group }
         }
         let groups = Dictionary(grouping: external) { $0.sessionGroupID ?? $0.id }
         for members in groups.values {
             if members.contains(where: { $0.deletionOrigin == "user" }) {
-                for row in members { row.isTombstoned = true; row.deletionOrigin = "user" }
+                for row in members where !row.isTombstoned || row.deletionOrigin != "user" {
+                    row.isTombstoned = true; row.deletionOrigin = "user"
+                }
             }
             let canonical = members.filter { !$0.isTombstoned }.sorted {
                 if $0.source != $1.source { return $0.source == WorkoutSource.strava.rawValue }
                 return $0.id < $1.id
             }.first
             if let canonical {
-                canonical.userTags = Array(Set(members.flatMap(\.userTags))).sorted()
-                for alias in members where alias.id != canonical.id { alias.userTags = [] }
+                let tags = Array(Set(members.flatMap(\.userTags))).sorted()
+                if canonical.userTags != tags { canonical.userTags = tags }
+                for alias in members where alias.id != canonical.id && !alias.userTags.isEmpty { alias.userTags = [] }
             }
             for row in members {
-                row.isSuppressed = row.isTombstoned || row.id != canonical?.id
-                row.linkedSessionID = row.id == canonical?.id ? nil : canonical?.id
+                let suppressed = row.isTombstoned || row.id != canonical?.id
+                let link = row.id == canonical?.id ? nil : canonical?.id
+                if row.isSuppressed != suppressed { row.isSuppressed = suppressed }
+                if row.linkedSessionID != link { row.linkedSessionID = link }
             }
         }
-        // Manual sessions are merged only by an explicit user action, never inferred from timing.
         for row in all where row.source == WorkoutSource.manual.rawValue {
-            row.isSuppressed = row.isTombstoned || row.linkedSessionID != nil
+            let suppressed = row.isTombstoned || row.linkedSessionID != nil
+            if row.isSuppressed != suppressed { row.isSuppressed = suppressed }
         }
-    }
-
-    private func sameSession(_ lhs: Workout, _ rhs: Workout) -> Bool {
-        return WorkoutAggregator.normalizeWorkoutType(lhs.workoutType) == WorkoutAggregator.normalizeWorkoutType(rhs.workoutType)
-            && abs(lhs.startTime.timeIntervalSince(rhs.startTime)) < 60
-            && abs(lhs.duration - rhs.duration) < 5
+        var changes = WorkoutChanges()
+        for row in all where before[row.id] != WorkoutCanonicalState(row) { changes.include(row) }
+        return changes
     }
 
     func allWorkouts() throws -> [Workout] {
@@ -368,17 +454,23 @@ class DataStore {
         try applySourceDeletions(ids)
     }
 
-    func applySourceDeletions(_ ids: [String]) throws {
+    @discardableResult
+    func applySourceDeletions(_ ids: [String], rebuildHistory: Bool = true) throws -> WorkoutChanges {
+        var changes = WorkoutChanges()
         for id in ids {
-            if let row = try fetchWorkout(byId: id) {
+            if let row = try fetchWorkout(byId: id), !row.isTombstoned {
                 row.isTombstoned = true
                 if row.deletionOrigin != "user" { row.deletionOrigin = "source" }
                 row.isSuppressed = true
+                changes.include(row)
             }
         }
-        try reconcileWorkoutSources()
-        try rebuildLegacyLoadHistory()
-        try modelContext.save()
+        if !changes.isEmpty && rebuildHistory {
+            changes.formUnion(try reconcileWorkoutSources())
+            try rebuildLegacyLoadHistory()
+        }
+        if modelContext.hasChanges { try modelContext.save() }
+        return changes
     }
 
     func deleteAllWorkouts() throws {
@@ -390,55 +482,66 @@ class DataStore {
         try modelContext.save()
     }
 
-    /// Rebuild from all persisted canonical sessions, not just this network response.
-    /// Summary-only legacy days stay intact; deleted/linked session days become zero if appropriate.
+    /// Summary-only legacy days stay intact; affected days and their dependent
+    /// CTL/ATL tail are rebuilt from persisted canonical sessions.
     func rebuildLegacyLoadHistory(now: Date = Date()) throws {
-        let rows = try allWorkouts()
-        var aggregates = try fetchAllDayAggregates()
-        let calendar = Calendar.current
-        guard let first = (aggregates.map(\.date) + rows.map(\.date)).min() else { return }
-        let grouped = Dictionary(grouping: rows) { calendar.startOfDay(for: $0.startTime) }
-        var day = calendar.startOfDay(for: first)
-        var ctl = 0.0
-        var atl = 0.0
-        var ctlHistory: [Double] = []
-        while day <= calendar.startOfDay(for: now) {
-            let aggregate: DayAggregate
-            if let existing = aggregates.first(where: { $0.date == day }) {
-                aggregate = existing
-            } else {
-                aggregate = DayAggregate(date: day)
-                modelContext.insert(aggregate)
-                aggregates.append(aggregate)
+        let rebuild = try LegacyHistoryRebuilder(context: modelContext, from: nil, now: now)
+        while try !rebuild.applyBatch() {}
+    }
+
+    func refreshLegacyLoadHistory(from start: Date?, now: Date) async throws {
+        let rebuild = try LegacyHistoryRebuilder(context: modelContext, from: start, now: now)
+        repeat {
+            try Task.checkCancellation()
+            let finished = try rebuild.applyBatch()
+            try await Task.sleep(for: .milliseconds(1))
+            if finished { return }
+        } while true
+    }
+
+    /// Threshold edits reuse saved samples and summaries; they do not redownload
+    /// the source history. Recheck input values after each off-actor calculation.
+    func refreshLegacyWorkoutTSS() async throws -> WorkoutChanges {
+        var changes = WorkoutChanges()
+        refresh: while true {
+            let thresholds = try fetchUserThresholds()
+            let revision = thresholds.lastModified
+            let ftp = thresholds.preferStravaFTP ? thresholds.stravaFTP ?? thresholds.cyclingFTP : thresholds.cyclingFTP
+            let maxHR = thresholds.maxHeartRate
+            let rows = try allWorkouts().filter { $0.source != WorkoutSource.manual.rawValue && !$0.isTombstoned }
+            for offset in stride(from: 0, to: rows.count, by: 20) {
+                try Task.checkCancellation()
+                let batch = Array(rows[offset..<min(offset + 20, rows.count)])
+                let inputs = batch.map(LegacyWorkoutInput.init)
+                let calculation = Task.detached(priority: .utility) {
+                    try inputs.map { input in
+                        try Task.checkCancellation()
+                        return try input.calculate(ftp: ftp, maxHR: maxHR)
+                    }
+                }
+                let result = try await withTaskCancellationHandler {
+                    try await calculation.value
+                } onCancel: { calculation.cancel() }
+                try Task.checkCancellation()
+                guard revision == thresholds.lastModified,
+                      inputs == batch.map(LegacyWorkoutInput.init) else { continue refresh }
+                for (row, value) in zip(batch, result) where row.tss != value.tss || row.calculationMethod != value.method {
+                    if row.legacyTSS == nil { row.legacyTSS = row.tss; row.legacyCalculationMethod = row.calculationMethod }
+                    row.tss = value.tss.isFinite ? value.tss : 0
+                    row.calculationMethod = value.method
+                    changes.include(row)
+                }
+                if modelContext.hasChanges { try modelContext.save() }
+                try await Task.sleep(for: .milliseconds(1))
             }
-            if let dayRows = grouped[day] {
-                aggregate.hasWorkoutDetails = true
-                let active = dayRows.filter { !$0.isSuppressed && !$0.isTombstoned }
-                aggregate.totalTSS = active.reduce(0) { $0 + $1.tss }
-                aggregate.workoutCount = active.count
-                aggregate.maxTSSWorkout = active.map(\.tss).max()
-                for row in dayRows { row.dayAggregate = aggregate }
-            } else if aggregate.hasWorkoutDetails {
-                aggregate.totalTSS = 0
-                aggregate.workoutCount = 0
-                aggregate.maxTSSWorkout = nil
-            }
-            ctl = LoadCalculator.calculateCTL(tssHistory: [aggregate.totalTSS], previousCTL: ctl)
-            atl = LoadCalculator.calculateATL(tssHistory: [aggregate.totalTSS], previousATL: atl)
-            aggregate.ctl = ctl
-            aggregate.atl = atl
-            aggregate.tsb = LoadCalculator.calculateTSB(ctl: ctl, atl: atl)
-            aggregate.bodyBatteryScore = BodyBatteryCalculator.calculateScoreWithModifiers(
-                tsb: aggregate.tsb, hrvModifier: aggregate.hrvModifier, rhrModifier: aggregate.rhrModifier
-            )
-            ctlHistory.append(ctl)
-            aggregate.rampRate = ctlHistory.count >= 8
-                ? LoadCalculator.calculateCTLRampRate(currentCTL: ctl, ctlOneWeekAgo: ctlHistory[ctlHistory.count - 8])
-                : nil
-            guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { break }
-            day = next
+            guard revision == thresholds.lastModified else { continue refresh }
+            return changes
         }
-        try modelContext.save()
+    }
+
+    func backfillV2Estimates() async throws {
+        guard modelContext.container.schema.entities.contains(where: { $0.name == "LoadEstimateRecord" }) else { return }
+        try await V2Store(context: modelContext).backfillEstimates()
     }
 
     func refreshV2Estimates() async throws {
@@ -472,5 +575,28 @@ class DataStore {
     func deleteStravaAuth(_ auth: StravaAuth) throws {
         modelContext.delete(auth)
         try modelContext.save()
+    }
+}
+
+
+struct WorkoutChanges {
+    var ids: Set<String> = []
+    var dates: Set<Date> = []
+    var isEmpty: Bool { ids.isEmpty }
+    mutating func include(_ row: Workout) { ids.insert(row.id); dates.insert(row.date) }
+    mutating func formUnion(_ other: Self) { ids.formUnion(other.ids); dates.formUnion(other.dates) }
+}
+
+private struct WorkoutCanonicalState: Equatable {
+    let suppressed: Bool
+    let deleted: Bool
+    let origin: String?
+    let link: String?
+    let group: String?
+    let tags: [String]
+    init(_ row: Workout) {
+        suppressed = row.isSuppressed; deleted = row.isTombstoned
+        origin = row.deletionOrigin; link = row.linkedSessionID
+        group = row.sessionGroupID; tags = row.userTags
     }
 }

@@ -1,0 +1,56 @@
+{
+  "devicesAndConfigurations" : [
+    {
+      "device" : {
+        "architecture" : "arm64",
+        "deviceId" : "AA97C9CB-3EA7-43AC-9C5E-71F190E78D8F",
+        "deviceName" : "ohMyTss Morning compact verification",
+        "modelName" : "iPhone SE (3rd generation)",
+        "osBuildNumber" : "23E244",
+        "osVersion" : "26.4",
+        "platform" : "iOS Simulator"
+      },
+      "expectedFailures" : 0,
+      "failedTests" : 0,
+      "passedTests" : 154,
+      "skippedTests" : 0,
+      "testPlanConfiguration" : {
+        "configurationId" : "1",
+        "configurationName" : "Test Scheme Action"
+      }
+    }
+  ],
+  "environmentDescription" : "onMyTss · Built with macOS 27.0.1",
+  "expectedFailures" : 0,
+  "failedTests" : 0,
+  "finishTime" : 1793055153.242,
+  "passedTests" : 151,
+  "result" : "Passed",
+  "runtimeWarnings" : [
+
+  ],
+  "skippedTests" : 0,
+  "startTime" : 1793054493.965,
+  "statistics" : [
+    {
+      "subtitle" : "4 test runs",
+      "title" : "1 test ran with dynamic parameters"
+    },
+    {
+      "subtitle" : "2 test runs",
+      "title" : "2 tests collected performance metrics"
+    }
+  ],
+  "testFailures" : [
+
+  ],
+  "title" : "Test - onMyTss",
+  "topInsights" : [
+    {
+      "category" : "Longest Test Runs",
+      "impact" : "53% of duration",
+      "text" : "3 longest test runs with outlier durations exceeding 1.62s (three standard deviations)"
+    }
+  ],
+  "totalTestCount" : 151
+}

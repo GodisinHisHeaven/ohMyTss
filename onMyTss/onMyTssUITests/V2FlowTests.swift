@@ -1,8 +1,40 @@
 import XCTest
 
-/// Runs against the app's DEBUG-only isolated SwiftData store; no fake imports or HealthKit mocks.
+/// Debug uses isolated synthetic stores; explicit sync fixtures mock the source only.
 /// These tests require a real Apple simulator and are not runnable on Linux.
 final class V2FlowTests: XCTestCase {
+    @MainActor
+    func testSyncWithThousandSavedActivitiesKeepsTabsUsable() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--v2-ui-tests", "--v2-large-history", "--v2-disk-history", "--v2-sync-fixture"]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Today"].waitForExistence(timeout: 10))
+        let sync = app.buttons["today.sync"]
+        sync.tap()
+        app.tabBars.buttons["Settings"].tap()
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5))
+        app.tabBars.buttons["History"].tap()
+        XCTAssertTrue(app.navigationBars["History"].waitForExistence(timeout: 5))
+        app.tabBars.buttons["Today"].tap()
+        let finished = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: sync)
+        XCTAssertEqual(XCTWaiter.wait(for: [finished], timeout: 30), .completed)
+        #if DEBUG
+        let message = app.staticTexts["Sync complete. Saved history remains available offline."]
+        reach(message, in: app)
+        XCTAssertTrue(message.exists)
+        #endif
+        sync.tap()
+        app.tabBars.buttons["History"].tap()
+        XCTAssertTrue(app.navigationBars["History"].waitForExistence(timeout: 5))
+        app.tabBars.buttons["Today"].tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: sync)], timeout: 30), .completed)
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "Saved history remains usable during incremental sync"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        XCTAssertEqual(app.state, .runningForeground)
+    }
+
     @MainActor
     override func setUpWithError() throws {
         continueAfterFailure = false

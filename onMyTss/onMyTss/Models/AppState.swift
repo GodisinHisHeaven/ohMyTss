@@ -15,6 +15,9 @@ final class AppState {
     // HealthKit sync state
     var lastHealthKitSyncDate: Date?
     var healthKitAnchor: Data? // HKQueryAnchor for anchored queries
+    var lastHealthKitSampleRefreshDate: Date?
+    var pendingHealthKitWorkoutIDs: [String] = []
+    var lastRecoverySyncDate: Date?
 
     var lastSyncMessage: String?
 

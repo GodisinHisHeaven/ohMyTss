@@ -49,7 +49,13 @@ struct ContentView: View {
         let store = DataStore(modelContext: modelContext)
         dataStore = store
 
-        let healthKitManager = HealthKitManager()
+        var healthKitManager = HealthKitManager()
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--v2-ui-tests")
+            && ProcessInfo.processInfo.arguments.contains("--v2-sync-fixture") {
+            healthKitManager = ActivitySyncUIFixture()
+        }
+        #endif
         let bodyBatteryEngine = BodyBatteryEngine(healthKitManager: healthKitManager, dataStore: store)
         engine = bodyBatteryEngine
 
