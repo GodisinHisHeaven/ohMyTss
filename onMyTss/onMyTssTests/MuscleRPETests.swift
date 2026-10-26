@@ -13,10 +13,11 @@ final class MuscleRPETests: XCTestCase {
         return record
     }
 
-    private func workout(age: TimeInterval = 3600) -> Workout {
+    private func workout(age: TimeInterval = 3600, type: String = "Strength", duration: Double = 1800,
+                         source: WorkoutSource = .manual) -> Workout {
         let start = now.addingTimeInterval(-age)
-        return Workout(id: UUID().uuidString, date: start.startOfDay, startTime: start, duration: 1800,
-                       workoutType: "Strength", tss: 0, calculationMethod: "unknown", source: .manual)
+        return Workout(id: UUID().uuidString, date: start.startOfDay, startTime: start, duration: duration,
+                       workoutType: type, tss: 0, calculationMethod: "unknown", source: source)
     }
 
     func testBandsKeepUnknownSeparateFromEasy() {
@@ -63,9 +64,102 @@ final class MuscleRPETests: XCTestCase {
         XCTAssertEqual(summary.reading(.glutes, side: .right)?.rpe, 10)
         XCTAssertNil(summary.reading(.chest, side: .left))
         set.rir = nil
-        XCTAssertTrue(MuscleRPESummary(records: [], workouts: [session], sets: [set], now: now).ratedRegions.isEmpty)
+        let withoutEffort = MuscleRPESummary(records: [], workouts: [session], sets: [set], now: now)
+        XCTAssertEqual(withoutEffort.reading(.quads, side: .left)?.grade, .easy)
+        XCTAssertEqual(withoutEffort.reading(.quads, side: .left)?.source, .history)
         set.rir = 8
+        XCTAssertEqual(MuscleRPESummary(records: [], workouts: [session], sets: [set], now: now)
+            .reading(.quads, side: .left)?.source, .history)
+    }
+
+    func testImportedWorkoutsFillMapWithoutRatingsSetsOrBackfill() {
+        let run = workout(type: "Run", source: .healthKit)
+        // Raw sensor data is intentionally undecodable: the dashboard needs
+        // only saved summary fields, even before an estimate has been built.
+        run.featuresData = Data("not decoded by the dashboard".utf8)
+        let running = MuscleRPESummary(records: [], workouts: [run], now: now)
+        XCTAssertEqual(Set(running.ratedRegions), Set([.quads, .hamstrings, .glutes, .calves, .core]))
+        XCTAssertEqual(running.reading(.quads, side: .left)?.grade, .moderate)
+        XCTAssertEqual(running.reading(.quads, side: .right)?.source, .history)
+        XCTAssertEqual(running.reading(.quads, side: .left)?.observedAt, run.startTime)
+
+        let ride = workout(type: "VirtualRide", duration: 600, source: .strava)
+        let cycling = MuscleRPESummary(records: [], workouts: [ride], now: now)
+        XCTAssertEqual(cycling.reading(.glutes, side: .left)?.grade, .easy)
+        XCTAssertNil(cycling.reading(.core, side: .left))
+        XCTAssertNil(cycling.reading(.chest, side: .left))
+
+        let swim = workout(age: 7200, type: "Swim", duration: 4200, source: .healthKit)
+        let swimming = MuscleRPESummary(records: [], workouts: [swim], now: now)
+        XCTAssertEqual(Set(swimming.ratedRegions), Set([.shoulders, .back, .arms, .core]))
+        XCTAssertEqual(swimming.reading(.shoulders, side: .right)?.grade, .hard)
+    }
+
+    func testWalkingHistoryAndUnknownActivityStaySeparate() {
+        for type in ["Walk", "Hiking"] {
+            let summary = MuscleRPESummary(records: [], workouts: [workout(type: type)], now: now)
+            XCTAssertEqual(summary.reading(.calves, side: .left)?.grade, .moderate)
+            XCTAssertNil(summary.reading(.shoulders, side: .left))
+        }
+        for type in ["Workout", "Strength"] {
+            XCTAssertTrue(MuscleRPESummary(records: [], workouts: [workout(type: type)], now: now).ratedRegions.isEmpty)
+        }
+    }
+
+    func testHistoryUsesLatestWorkoutAndKeepsSideAdjustment() {
+        let latest = workout(type: "Ride", duration: 600)
+        let oldHard = workout(age: 86400, type: "Run", duration: 7200)
+        let adjustment = record(8, side: "left", age: 3600)
+        for sessions in [[latest, oldHard], [oldHard, latest]] {
+            let summary = MuscleRPESummary(records: [adjustment], workouts: sessions, now: now)
+            XCTAssertEqual(summary.reading(.quads, side: .left)?.rpe, 8)
+            XCTAssertEqual(summary.reading(.quads, side: .left)?.source, .reported)
+            XCTAssertEqual(summary.reading(.quads, side: .right)?.grade, .easy)
+            XCTAssertEqual(summary.reading(.quads, side: .right)?.observedAt, latest.startTime)
+        }
+    }
+
+    func testHistoryHonorsLocalWindowAndExcludesInvalidOrDuplicateSources() {
+        let old = workout(age: 8 * 86400, type: "Run")
+        let deleted = workout(type: "Run"), suppressed = workout(type: "Ride")
+        deleted.isTombstoned = true
+        suppressed.isSuppressed = true
+        let invalid = [old, deleted, suppressed, workout(age: -60, type: "Swim"),
+                       workout(type: "Run", duration: 0), workout(type: "Ride", duration: .nan),
+                       workout(type: "Walk", duration: -.infinity)]
+        XCTAssertTrue(MuscleRPESummary(records: [], workouts: invalid, now: now).ratedRegions.isEmpty)
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: -5 * 3600)!
+        let edge = workout(type: "Run")
+        edge.startTime = MuscleRPESummary.cutoff(for: now, calendar: calendar)
+        XCTAssertFalse(MuscleRPESummary(records: [], workouts: [edge], now: now, calendar: calendar).ratedRegions.isEmpty)
+        edge.startTime = edge.startTime.addingTimeInterval(-1)
+        XCTAssertTrue(MuscleRPESummary(records: [], workouts: [edge], now: now, calendar: calendar).ratedRegions.isEmpty)
+    }
+
+    func testRecordedStrengthEffortWinsOverWorkoutStartingGrade() {
+        let session = workout()
+        let set = StrengthSetRecord(sessionID: session.id, exerciseID: "bench_press", reps: 8, effortRaw: "hard")
+        let summary = MuscleRPESummary(records: [], workouts: [session], sets: [set], now: now)
+        XCTAssertEqual(summary.reading(.chest, side: .left)?.grade, .hard)
+        XCTAssertEqual(summary.reading(.chest, side: .left)?.source, .sets)
+        XCTAssertNil(summary.reading(.quads, side: .left))
+        set.reps = 0
         XCTAssertTrue(MuscleRPESummary(records: [], workouts: [session], sets: [set], now: now).ratedRegions.isEmpty)
+    }
+
+    func testOpeningHistoryMapDoesNotWriteRatingsOrEstimates() throws {
+        let container = try ModelContainer(for: Schema(AppSchema.models),
+            configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let context = ModelContext(container)
+        let session = workout(type: "Run", source: .healthKit)
+        context.insert(session)
+        try context.save()
+        let summary = MuscleRPESummary(records: [], workouts: try context.fetch(FetchDescriptor<Workout>()), now: now)
+        XCTAssertEqual(summary.reading(.quads, side: .left)?.grade, .moderate)
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<MuscleRPERecord>()), 0)
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<LoadEstimateRecord>()), 0)
+        XCTAssertFalse(context.hasChanges)
     }
 
     func testExplicitRatingOverridesSameSessionReferenceWithoutChangingItsDate() {

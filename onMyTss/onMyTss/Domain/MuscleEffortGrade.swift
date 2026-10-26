@@ -1,6 +1,7 @@
 import Foundation
 
-/// Display bands for a reported 1–10 effort, not a recovery percentage.
+/// Shared display bands for perceived effort and recent workout exposure.
+/// Only explicit ratings are persisted as perceived RPE.
 nonisolated enum MuscleEffortGrade: Int, CaseIterable, Identifiable, Sendable {
     case easy, moderate, hard, veryHard
     var id: Int { rawValue }

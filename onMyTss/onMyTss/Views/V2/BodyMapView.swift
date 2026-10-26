@@ -37,8 +37,6 @@ struct BodyMapView: View {
                 } else {
                     HStack(alignment: .top, spacing: 12) { legend }
                 }
-                Text("Gray = not rated. Tap a muscle to adjust.")
-                    .font(.caption).foregroundStyle(.secondary)
             }
 
             DisclosureGroup("All muscles") {
@@ -160,18 +158,6 @@ struct BodyMapView: View {
                         .stroke(Color(uiColor: .systemBackground).opacity(0.45),
                                 style: StrokeStyle(lineWidth: 0.9, lineCap: .round))
                 }
-                .overlay(alignment: .topLeading) {
-                    if let reading {
-                        Text("\(reading.rpe)")
-                            .font(.system(size: 10, weight: .bold, design: .default))
-                            .foregroundStyle(Color.primary)
-                            .frame(width: 19, height: 19)
-                            .background(Color(uiColor: .systemBackground).opacity(0.94), in: Circle())
-                            .accessibilityHidden(true)
-                            .position(x: (zone.marker.x - zone.bounds.minX) * scale,
-                                      y: (zone.marker.y - zone.bounds.minY) * scale)
-                    }
-                }
                 .contentShape(shape)
         }
         .frame(width: width, height: height)
@@ -184,7 +170,8 @@ struct BodyMapView: View {
 
     private func readingLabel(_ reading: MuscleRPESummary.Reading?) -> String {
         guard let reading else { return "Not rated in the last 7 days" }
-        return "\(reading.grade.label), RPE \(reading.rpe), \(reading.observedAt.formatted(date: .abbreviated, time: .omitted)), \(reading.sourceLabel)"
+        let effort = reading.isReportedEffort ? ", RPE \(reading.rpe)" : ""
+        return "\(reading.grade.label)\(effort), \(reading.observedAt.formatted(date: .abbreviated, time: .omitted))"
     }
 }
 
