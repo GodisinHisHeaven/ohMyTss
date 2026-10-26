@@ -20,7 +20,9 @@ final class MorningStatusFlowTests: XCTestCase {
         password.tap()
         password.typeText("fixture-password")
         app.buttons["morning.signIn"].tap()
-        XCTAssertTrue(app.staticTexts["Name, Sample Athlete"].waitForExistence(timeout: 5))
+        let name = app.staticTexts["morning.name"]
+        XCTAssertTrue(name.waitForExistence(timeout: 5))
+        XCTAssertTrue(name.label.contains("Sample Athlete"))
         attach(app, "Native morning status with synthetic account")
 
         let timezone = app.buttons["morning.timezone"]
@@ -33,8 +35,13 @@ final class MorningStatusFlowTests: XCTestCase {
         app.buttons["morning.zone.Asia/Shanghai"].tap()
         let save = app.buttons["morning.saveTimezone"]
         reach(save, app: app)
+        XCTAssertTrue(save.isEnabled)
         save.tap()
-        XCTAssertTrue(app.staticTexts["Morning delivery time zone updated."].waitForExistence(timeout: 3))
+        XCTAssertFalse(save.isEnabled)
+        let saved = app.staticTexts["Morning delivery time zone updated."]
+        reach(saved, app: app)
+        XCTAssertTrue(saved.exists)
+        attach(app, "Native time zone save confirmation")
 
         let privacy = app.buttons["morning.privacy"]
         reach(privacy, app: app)
@@ -44,12 +51,12 @@ final class MorningStatusFlowTests: XCTestCase {
         app.navigationBars.buttons.element(boundBy: 0).tap()
 
         let unsubscribe = app.buttons["morning.unsubscribe"]
-        reach(unsubscribe, app: app)
+        reach(unsubscribe, app: app, towardTop: true)
         unsubscribe.tap()
         app.buttons["Turn Off Texts"].tap()
-        let stopped = app.staticTexts["SMS, Not subscribed"]
-        reach(stopped, app: app)
-        XCTAssertTrue(stopped.exists)
+        let stopped = app.staticTexts["morning.subscription"]
+        reach(stopped, app: app, towardTop: true)
+        XCTAssertTrue(stopped.label.contains("Not subscribed"))
         attach(app, "Native SMS unsubscribe state with synthetic account")
 
         let signOut = app.buttons["morning.signOut"]
@@ -60,16 +67,15 @@ final class MorningStatusFlowTests: XCTestCase {
     }
 
     @MainActor
-    private func reach(_ element: XCUIElement, app: XCUIApplication) {
-        for _ in 0..<9 {
-            if element.isHittable { return }
-            app.swipeUp()
-        }
+    private func reach(_ element: XCUIElement, app: XCUIApplication, towardTop: Bool = false) {
         for _ in 0..<12 {
-            if element.isHittable { return }
-            app.swipeDown()
+            let top = app.navigationBars.firstMatch.frame.maxY
+            let bottom = app.tabBars.firstMatch.frame.minY
+            if element.isHittable, element.frame.minY >= top, element.frame.maxY <= bottom { return }
+            if towardTop { app.swipeDown() }
+            else { app.swipeUp() }
         }
-        XCTAssertTrue(element.isHittable)
+        XCTFail("Could not fully reveal \(element.description)")
     }
 
     @MainActor
