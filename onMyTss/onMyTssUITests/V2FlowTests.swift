@@ -19,6 +19,33 @@ final class V2FlowTests: XCTestCase {
     }
 
     @MainActor
+    func testLaunchWithLargeSavedHistoryOpensUsableTabs() {
+        assertLargeHistoryOpensUsableTabs(missingEstimates: false)
+    }
+
+    @MainActor
+    func testLaunchWithLargeLegacyHistoryAllowsNavigationDuringBackfill() {
+        assertLargeHistoryOpensUsableTabs(missingEstimates: true)
+    }
+
+    @MainActor
+    private func assertLargeHistoryOpensUsableTabs(missingEstimates: Bool) {
+        let app = XCUIApplication()
+        app.launchArguments = ["--v2-ui-tests", "--v2-large-history"]
+        if missingEstimates { app.launchArguments.append("--v2-missing-estimates") }
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Today"].waitForExistence(timeout: 10))
+        // app.launch() includes XCTest's automation handshake and idle wait.
+        // Assert usable navigation here; the persistence test checks main-actor
+        // responsiveness during backfill without timing that external setup.
+        XCTAssertEqual(app.state, .runningForeground)
+        app.tabBars.buttons["Settings"].tap()
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5))
+        app.tabBars.buttons["Today"].tap()
+        XCTAssertTrue(app.buttons["bodyMap.front.quads"].firstMatch.waitForExistence(timeout: 5))
+    }
+
+    @MainActor
     private func reach(_ element: XCUIElement, in app: XCUIApplication,
                        file: StaticString = #filePath, line: UInt = #line) {
         for _ in 0..<8 {

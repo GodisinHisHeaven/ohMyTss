@@ -22,8 +22,12 @@ final class onMyTssUITestsLaunchTests: XCTestCase {
         let app = XCUIApplication()
         app.launch()
 
-        // Insert steps here to perform after app launch but before taking a screenshot,
-        // such as logging into a test account or navigating somewhere in the app
+        let ready = NSPredicate { _, _ in
+            app.navigationBars["Today"].exists || app.buttons["Get Started"].exists
+        }
+        expectation(for: ready, evaluatedWith: nil)
+        waitForExpectations(timeout: 10)
+        XCTAssertEqual(app.state, .runningForeground)
 
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = "Launch Screen"

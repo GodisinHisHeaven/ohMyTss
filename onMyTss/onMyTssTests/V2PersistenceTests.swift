@@ -190,6 +190,64 @@ final class V2PersistenceTests: XCTestCase {
         XCTAssertEqual(try context.fetch(FetchDescriptor<LoadEstimateRecord>()).count, before)
     }
 
+    func testBackfillKeepsCurrentSnapshotsAndUpgradesOnlyMissingOrOldEstimates() async throws {
+        let context = ModelContext(try container())
+        let store = V2Store(context: context)
+        let current = imported(id: "current")
+        let missing = imported(id: "missing")
+        let outdated = imported(id: "outdated")
+        let suppressed = imported(id: "suppressed")
+        suppressed.isSuppressed = true
+        let deleted = imported(id: "deleted")
+        deleted.isTombstoned = true
+        for row in [current, missing, outdated, suppressed, deleted] { context.insert(row) }
+        try store.recalculate(current)
+        let original = try latest(context, sessionID: current.id)
+        let originalPayload = original.payloadData
+        let old = LoadEstimateRecord(sessionID: outdated.id, version: "old-model", inputCutoff: start,
+                                     computedAt: start, payloadData: Data(), inputData: Data())
+        context.insert(old)
+        try context.save()
+
+        try await store.backfillEstimates()
+
+        let snapshots = try context.fetch(FetchDescriptor<LoadEstimateRecord>())
+        XCTAssertEqual(snapshots.count, 4)
+        XCTAssertEqual(try latest(context, sessionID: current.id).id, original.id)
+        XCTAssertEqual(original.payloadData, originalPayload)
+        XCTAssertEqual(try latest(context, sessionID: missing.id).version, LoadModel.version)
+        XCTAssertEqual(try latest(context, sessionID: outdated.id).version, LoadModel.version)
+        XCTAssertTrue(snapshots.contains { $0.id == old.id })
+        XCTAssertFalse(snapshots.contains { $0.sessionID == suppressed.id || $0.sessionID == deleted.id })
+        XCTAssertEqual(missing.tss, 25)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<Workout>()).count, 5)
+        try await store.backfillEstimates()
+        XCTAssertEqual(try context.fetch(FetchDescriptor<LoadEstimateRecord>()).count, 4)
+    }
+
+    func testBackfillAllowsMainActorCancellationAndResumesWithoutDuplicateSnapshots() async throws {
+        let context = ModelContext(try container())
+        let store = V2Store(context: context)
+        for index in 0..<30 { context.insert(imported(id: "cancel-\(index)")) }
+        try context.save()
+        let task = Task { try await store.backfillEstimates() }
+        // This main-actor continuation must run while backfill still has work.
+        try await Task.sleep(for: .milliseconds(20))
+        task.cancel()
+        do {
+            try await task.value
+            XCTFail("Backfill should yield before processing the entire history")
+        } catch is CancellationError {}
+        let saved = try context.fetch(FetchDescriptor<LoadEstimateRecord>())
+        XCTAssertLessThan(saved.count, 30)
+        let savedIDs = Set(saved.map(\.id))
+
+        try await store.backfillEstimates()
+        let resumed = try context.fetch(FetchDescriptor<LoadEstimateRecord>())
+        XCTAssertEqual(resumed.count, 30)
+        XCTAssertTrue(savedIDs.isSubset(of: Set(resumed.map(\.id))))
+    }
+
     func testCrossSourceDuplicateAndSourceDeletionKeepOneActiveContribution() throws {
         let context = ModelContext(try container())
         let dataStore = DataStore(modelContext: context)
