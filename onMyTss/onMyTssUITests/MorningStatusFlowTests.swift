@@ -24,7 +24,10 @@ final class MorningStatusFlowTests: XCTestCase {
         phone.typeText("50100")
         XCTAssertTrue(send.isEnabled)
         app.buttons["Done"].tap()
-        XCTAssertFalse(app.keyboards.firstMatch.exists)
+        let keyboardHidden = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: app.keyboards.firstMatch
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [keyboardHidden], timeout: 5), .completed)
         attach(app, "Morning status phone entry — no SMS requested")
         let privacy = app.buttons["morning.privacy"]
         reach(privacy, app: app)
@@ -136,7 +139,13 @@ final class MorningStatusFlowTests: XCTestCase {
         privacy.tap()
         XCTAssertTrue(app.navigationBars["Data and Privacy"].waitForExistence(timeout: 3))
         XCTAssertEqual(app.state, .runningForeground)
-        app.navigationBars.buttons.element(boundBy: 0).tap()
+        let sideBack = app.buttons["BackButton"]
+        if sideBack.exists {
+            sideBack.tap()
+        } else {
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+        }
+        XCTAssertTrue(app.navigationBars["Morning Status"].waitForExistence(timeout: 5))
 
         let unsubscribe = app.buttons["morning.unsubscribe"]
         reach(unsubscribe, app: app, towardTop: true)
