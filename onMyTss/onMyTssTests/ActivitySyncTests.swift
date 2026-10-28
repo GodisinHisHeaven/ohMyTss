@@ -202,9 +202,19 @@ final class ActivitySyncTests: XCTestCase {
     func testCancelledImportRetainsCursorAndCanResumeWithoutLosingRows() async throws {
         let fixture = try SyncFixture()
         for index in 0..<80 { _ = fixture.health.addWorkout(at: fixture.clock.now.addingTimeInterval(-Double(index + 1) * 7200)) }
-        let task = Task { try await fixture.engine.incrementalUpdate() }
-        while try fixture.store.allWorkouts().isEmpty { try await Task.sleep(for: .milliseconds(1)) }
+        var finished = false
+        let task = Task { defer { finished = true }; try Task.checkCancellation(); try await fixture.engine.incrementalUpdate() }
+        defer { task.cancel() }
+        try await waitForSyncTestCondition("first imported workout to be persisted", pollInterval: .milliseconds(1)) {
+            try !fixture.store.allWorkouts().isEmpty || finished
+        }
+        if finished {
+            try await task.value
+            XCTFail("Import completed before a persisted batch could be cancelled")
+            return
+        }
         task.cancel()
+        try await waitForSyncTestCondition("cancelled import to finish") { finished }
         do { try await task.value; XCTFail("Cancellation must propagate") } catch is CancellationError {} catch { throw error }
         let state = try fixture.store.fetchAppState()
         XCTAssertNil(state.healthKitAnchor)

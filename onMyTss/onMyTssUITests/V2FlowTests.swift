@@ -11,11 +11,11 @@ final class V2FlowTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Today"].waitForExistence(timeout: 10))
         let sync = app.buttons["today.sync"]
         sync.tap()
-        app.tabBars.buttons["Settings"].tap()
+        app.buttons["Settings"].firstMatch.tap()
         XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5))
-        app.tabBars.buttons["History"].tap()
+        app.buttons["History"].firstMatch.tap()
         XCTAssertTrue(app.navigationBars["History"].waitForExistence(timeout: 5))
-        app.tabBars.buttons["Today"].tap()
+        app.buttons["Today"].firstMatch.tap()
         let finished = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: sync)
         XCTAssertEqual(XCTWaiter.wait(for: [finished], timeout: 30), .completed)
         #if DEBUG
@@ -24,9 +24,9 @@ final class V2FlowTests: XCTestCase {
         XCTAssertTrue(message.exists)
         #endif
         sync.tap()
-        app.tabBars.buttons["History"].tap()
+        app.buttons["History"].firstMatch.tap()
         XCTAssertTrue(app.navigationBars["History"].waitForExistence(timeout: 5))
-        app.tabBars.buttons["Today"].tap()
+        app.buttons["Today"].firstMatch.tap()
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: sync)], timeout: 30), .completed)
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = "Saved history remains usable during incremental sync"
@@ -77,15 +77,15 @@ final class V2FlowTests: XCTestCase {
         app.launchArguments = ["--v2-ui-tests", "--v2-large-history", "--v2-disk-history"]
         app.launch()
         XCTAssertTrue(app.navigationBars["Today"].waitForExistence(timeout: 10))
-        app.tabBars.buttons["Settings"].tap()
+        app.buttons["Settings"].firstMatch.tap()
         let heartRate = app.textFields["settings.cardioHR"]
         XCTAssertTrue(heartRate.waitForExistence(timeout: 5))
         heartRate.tap()
         heartRate.typeText("190")
         app.buttons["settings.saveCardio"].tap()
-        app.tabBars.buttons["Today"].tap()
+        app.buttons["Today"].firstMatch.tap()
         XCTAssertTrue(app.navigationBars["Today"].waitForExistence(timeout: 5))
-        app.tabBars.buttons["Settings"].tap()
+        app.buttons["Settings"].firstMatch.tap()
         XCTAssertTrue(app.staticTexts["Saved. Estimates updated; previous versions retained."].waitForExistence(timeout: 30))
         XCTAssertEqual(heartRate.value as? String, "190")
         XCTAssertEqual(app.state, .runningForeground)
@@ -102,9 +102,9 @@ final class V2FlowTests: XCTestCase {
         // The dashboard no longer starts a full-history backfill. These stored
         // records must not prevent immediate use of readiness and muscle RPE.
         XCTAssertEqual(app.state, .runningForeground)
-        app.tabBars.buttons["Settings"].tap()
+        app.buttons["Settings"].firstMatch.tap()
         XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5))
-        app.tabBars.buttons["Today"].tap()
+        app.buttons["Today"].firstMatch.tap()
         XCTAssertTrue(app.buttons["bodyMap.front.quads"].firstMatch.waitForExistence(timeout: 5))
     }
 
@@ -172,7 +172,10 @@ final class V2FlowTests: XCTestCase {
         XCTAssertTrue(rir.waitForExistence(timeout: 3))
         rir.tap()
         rir.typeText("0")
-        app.buttons["strength.save"].tap()
+        dismissStrengthKeyboard(app)
+        let save = app.buttons["strength.save.form"]
+        reach(save, in: app)
+        save.tap()
         let zero = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "RIR 0")).firstMatch
         reach(zero, in: app)
         XCTAssertTrue(zero.exists)
@@ -180,7 +183,10 @@ final class V2FlowTests: XCTestCase {
         let editRIR = app.textFields["strength.rir"]
         editRIR.tap()
         editRIR.typeText(XCUIKeyboardKey.delete.rawValue)
-        app.buttons["strength.save"].tap()
+        dismissStrengthKeyboard(app)
+        let saveChanges = app.buttons["strength.save.form"]
+        reach(saveChanges, in: app)
+        saveChanges.tap()
         let unknown = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Effort unknown")).firstMatch
         reach(unknown, in: app)
         XCTAssertTrue(unknown.exists)
@@ -191,6 +197,15 @@ final class V2FlowTests: XCTestCase {
         let noSets = app.staticTexts["No sets recorded"]
         reach(noSets, in: app)
         XCTAssertTrue(noSets.exists)
+    }
+
+    @MainActor
+    private func dismissStrengthKeyboard(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
+        let done = app.buttons["strength.keyboardDone"]
+        XCTAssertTrue(done.waitForExistence(timeout: 5), "Strength keyboard Done is unavailable", file: file, line: line)
+        done.tap()
+        let hidden = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.keyboards.firstMatch)
+        XCTAssertEqual(XCTWaiter.wait(for: [hidden], timeout: 5), .completed, "Strength keyboard did not dismiss", file: file, line: line)
     }
 
     @MainActor
@@ -275,8 +290,8 @@ final class V2FlowTests: XCTestCase {
         reach(left, in: app)
         XCTAssertTrue((left.value as? String)?.contains("RPE 8") == true)
         XCTAssertEqual(right.value as? String, startingValue)
-        app.tabBars.buttons["History"].tap()
-        app.tabBars.buttons["Today"].tap()
+        app.buttons["History"].firstMatch.tap()
+        app.buttons["Today"].firstMatch.tap()
         reach(left, in: app)
         XCTAssertTrue((left.value as? String)?.contains("RPE 8") == true)
         XCTAssertEqual(right.value as? String, startingValue)
@@ -292,7 +307,7 @@ final class V2FlowTests: XCTestCase {
         XCTAssertEqual(app.staticTexts["readiness.score"].label, "72")
         XCTAssertFalse(app.staticTexts["Regional context"].exists)
         attachBodyMapScreenshot(app, name: "Today — readiness and seven-day muscle RPE")
-        app.tabBars.buttons["History"].tap()
+        app.buttons["History"].firstMatch.tap()
         XCTAssertTrue(app.navigationBars["History"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.segmentedControls["history.trend"].exists)
         XCTAssertFalse(app.staticTexts["Total TSS"].exists)
@@ -328,8 +343,8 @@ final class V2FlowTests: XCTestCase {
         app.buttons["rpe.save"].tap()
         reach(muscle, in: app)
         XCTAssertTrue((muscle.value as? String)?.contains("RPE 10") == true)
-        app.tabBars.buttons["History"].tap()
-        app.tabBars.buttons["Today"].tap()
+        app.buttons["History"].firstMatch.tap()
+        app.buttons["Today"].firstMatch.tap()
         reach(muscle, in: app)
         XCTAssertTrue((muscle.value as? String)?.contains("RPE 10") == true)
     }

@@ -1,0 +1,111 @@
+name: PR tests
+
+'on':
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-tests-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quick:
+    name: Quick checks
+    runs-on: xcode-27
+    timeout-minutes: 25
+    steps:
+      - name: Check out the proposed merge
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Run quick checks
+        run: python3 scripts/test.py quick --output-dir "$RUNNER_TEMP/ohmytss-quick"
+
+      - name: Verify quick report exists
+        run: test -s "$RUNNER_TEMP/ohmytss-quick/summary.json"
+
+      - name: Upload quick results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quick-test-results
+          path: ${{ runner.temp }}/ohmytss-quick
+          if-no-files-found: error
+          retention-days: 14
+
+  ios:
+    name: iOS unit and UI tests
+    runs-on: xcode-27
+    timeout-minutes: 75
+    steps:
+      - name: Check out the proposed merge
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Prepare synthetic build settings
+        shell: bash
+        run: |
+          set -euo pipefail
+          # CI checkouts have no local ignored credentials. These values only
+          # allow simulator builds and cannot authorize a Strava connection.
+          config=onMyTss/Config/Secrets.xcconfig
+          if [[ ! -e "$config" ]]; then
+            umask 077
+            printf '%s\n' 'STRAVA_CLIENT_ID = 123456' 'STRAVA_CLIENT_SECRET = CI_SYNTHETIC_ONLY' > "$config"
+          fi
+
+      - name: Select an available iPhone simulator
+        id: simulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          xcrun simctl list devices available --json > "$RUNNER_TEMP/ohmytss-simulators.json"
+          python3 - "$RUNNER_TEMP/ohmytss-simulators.json" >> "$GITHUB_OUTPUT" <<'PY'
+          import json
+          import re
+          import sys
+
+          data = json.load(open(sys.argv[1], encoding="utf-8"))
+          choices = []
+          for runtime, devices in data.get("devices", {}).items():
+              match = re.search(r"\.iOS-(\d+)-(\d+)$", runtime)
+              if not match:
+                  continue
+              version = tuple(map(int, match.groups()))
+              if version < (26, 1):
+                  continue
+              for device in devices:
+                  name, udid = device.get("name", ""), device.get("udid", "")
+                  if device.get("isAvailable") and name.startswith("iPhone") and re.fullmatch(r"[0-9A-Fa-f-]{36}", udid):
+                      choices.append((version, name == "iPhone 17 Pro", name, udid))
+          if not choices:
+              raise SystemExit("No available iPhone simulator with iOS 26.1 or later; see the runner's installed runtimes.")
+          version, _, name, udid = max(choices)
+          print(f"destination=platform=iOS Simulator,id={udid}")
+          print(f"Selected {name}, iOS {version[0]}.{version[1]} ({udid})", file=sys.stderr)
+          PY
+
+      - name: Run full simulator tests
+        env:
+          TEST_DESTINATION: ${{ steps.simulator.outputs.destination }}
+        run: python3 scripts/test.py full --destination "$TEST_DESTINATION" --output-dir "$RUNNER_TEMP/ohmytss-full"
+
+      - name: Verify simulator report exists
+        run: test -s "$RUNNER_TEMP/ohmytss-full/summary.json"
+
+      - name: Upload simulator results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-test-results
+          path: |
+            ${{ runner.temp }}/ohmytss-full
+            ${{ runner.temp }}/ohmytss-simulators.json
+          if-no-files-found: error
+          retention-days: 14

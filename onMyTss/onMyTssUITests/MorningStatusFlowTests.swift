@@ -7,8 +7,8 @@ final class MorningStatusFlowTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--v2-ui-tests", "--morning-status-ui-fixture"]
         app.launch()
-        XCTAssertTrue(app.tabBars.buttons["Settings"].waitForExistence(timeout: 10))
-        app.tabBars.buttons["Settings"].tap()
+        XCTAssertTrue(app.buttons["Settings"].firstMatch.waitForExistence(timeout: 10))
+        app.buttons["Settings"].firstMatch.tap()
         let entry = app.buttons["settings.morningStatus"]
         reach(entry, app: app)
         entry.tap()
@@ -24,7 +24,10 @@ final class MorningStatusFlowTests: XCTestCase {
         phone.typeText("50100")
         XCTAssertTrue(send.isEnabled)
         app.buttons["Done"].tap()
-        XCTAssertFalse(app.keyboards.firstMatch.exists)
+        let keyboardHidden = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: app.keyboards.firstMatch
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [keyboardHidden], timeout: 5), .completed)
         attach(app, "Morning status phone entry — no SMS requested")
         let privacy = app.buttons["morning.privacy"]
         reach(privacy, app: app)
@@ -42,8 +45,8 @@ final class MorningStatusFlowTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--v2-ui-tests", "--v2-rpe-demo", "--morning-status-ui-fixture", "--morning-new-user-fixture", "-AppleInterfaceStyle", "Light"]
         app.launch()
-        XCTAssertTrue(app.tabBars.buttons["Settings"].waitForExistence(timeout: 10))
-        app.tabBars.buttons["Settings"].tap()
+        XCTAssertTrue(app.buttons["Settings"].firstMatch.waitForExistence(timeout: 10))
+        app.buttons["Settings"].firstMatch.tap()
         let entry = app.buttons["settings.morningStatus"]
         reach(entry, app: app)
         entry.tap()
@@ -81,8 +84,8 @@ final class MorningStatusFlowTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--v2-ui-tests", "--morning-status-ui-fixture"]
         app.launch()
-        XCTAssertTrue(app.tabBars.buttons["Settings"].waitForExistence(timeout: 10))
-        app.tabBars.buttons["Settings"].tap()
+        XCTAssertTrue(app.buttons["Settings"].firstMatch.waitForExistence(timeout: 10))
+        app.buttons["Settings"].firstMatch.tap()
         let entry = app.buttons["settings.morningStatus"]
         reach(entry, app: app)
         entry.tap()
@@ -136,7 +139,13 @@ final class MorningStatusFlowTests: XCTestCase {
         privacy.tap()
         XCTAssertTrue(app.navigationBars["Data and Privacy"].waitForExistence(timeout: 3))
         XCTAssertEqual(app.state, .runningForeground)
-        app.navigationBars.buttons.element(boundBy: 0).tap()
+        let sideBack = app.buttons["BackButton"]
+        if sideBack.exists {
+            sideBack.tap()
+        } else {
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+        }
+        XCTAssertTrue(app.navigationBars["Morning Status"].waitForExistence(timeout: 5))
 
         let unsubscribe = app.buttons["morning.unsubscribe"]
         reach(unsubscribe, app: app, towardTop: true)
@@ -160,7 +169,14 @@ final class MorningStatusFlowTests: XCTestCase {
     private func reach(_ element: XCUIElement, app: XCUIApplication, towardTop: Bool = false) {
         for _ in 0..<12 {
             let top = app.navigationBars.firstMatch.frame.maxY
-            let bottom = app.tabBars.firstMatch.frame.minY
+            let viewport = app.frame
+            let tabBar = app.tabBars.firstMatch
+            let tabFrame = tabBar.exists ? tabBar.frame : .zero
+            // iOS can place the tab controls on the side without exposing a
+            // TabBar element. Only a bottom bar limits the vertical viewport.
+            let hasBottomBar = !tabFrame.isEmpty && tabFrame.minY > top
+                && tabFrame.width >= viewport.width * 0.5
+            let bottom = hasBottomBar ? min(viewport.maxY, tabFrame.minY) : viewport.maxY
             let frame = element.exists ? element.frame : .zero
             if element.isHittable, frame.minY >= top, frame.maxY <= bottom { return }
 

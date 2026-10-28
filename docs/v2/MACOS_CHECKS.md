@@ -18,16 +18,14 @@ xcrun simctl list devices available
 保留 app 原有 18.6 和 test target 原有 26.1 最低系统版本，选择满足测试 target 的实际模拟器 UDID。把下例 `SIMULATOR_UDID` 替换成上一步真实列出的 ID，不照抄设备名称：
 
 ```sh
-xcodebuild -project onMyTss/onMyTss.xcodeproj -scheme onMyTss \
-  -destination 'platform=iOS Simulator,id=SIMULATOR_UDID' \
-  -derivedDataPath /tmp/ohmytss-v2-derived \
-  -resultBundlePath /tmp/ohmytss-v2-regression.xcresult \
-  test -enableCodeCoverage YES
+python3 scripts/test.py full \
+  --destination 'platform=iOS Simulator,id=SIMULATOR_UDID' \
+  --output-dir /tmp/ohmytss-v2-regression
 ```
 
 若已有本地 Strava 私密配置，沿用现有配置；没有配置时应保持未连接并检查可用的手动/HealthKit 路径。不得提交个人健康记录、网络 token 或密钥。不要运行 Archive 或任何发布后操作。
 
-须保留命令输出、`.xcresult` 和 destination/SDK 版本。`V2PersistenceTests` 覆盖真实 SwiftData 写入、重读、磁盘重开、组次编辑删除、零与未知、补录时刻、来源重复、显式关联、用户删除、模板复用和估计快照幂等。每项失败单独追踪，不跳过失败测试以取得绿色结果。
+入口会保存分步骤日志、`summary.json` 和 `.xcresult`，并记录 destination、Xcode 版本和代码状态。输出目录须是新的或空的；检查前须保留这些文件。`V2PersistenceTests` 覆盖真实 SwiftData 写入、重读、磁盘重开、组次编辑删除、零与未知、补录时刻、来源重复、显式关联、用户删除、模板复用和估计快照幂等。每项失败单独追踪，不跳过失败测试以取得绿色结果。
 
 ## 真实旧库迁移
 

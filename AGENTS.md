@@ -10,9 +10,10 @@
 
 ## Build, Test, and Development Commands
 - Open in Xcode: `xed onMyTss/onMyTss.xcodeproj` (or open the workspace directly in Xcode and target the `onMyTss` scheme).
-- Build (CI/local): `xcodebuild -scheme onMyTss -destination "platform=iOS Simulator,name=iPhone 15" clean build`.
-- Unit/UI tests: `xcodebuild test -scheme onMyTss -destination "platform=iOS Simulator,name=iPhone 15" -enableCodeCoverage YES`.
-- Run from Xcode with an iOS 17+ simulator; ensure HealthKit/Strava permissions are granted when prompted.
+- Quick checks: `python3 scripts/test.py quick`.
+- Complete iOS simulator tests: `python3 scripts/test.py full --destination 'platform=iOS Simulator,id=SIMULATOR_UDID'`.
+- Automated release checks and remaining manual gates: `python3 scripts/test.py release --destination 'platform=iOS Simulator,id=SIMULATOR_UDID'`.
+- Select an available simulator that meets the test targets' deployment requirements. Test results are written to the output directory printed by the runner; `--output-dir` sets an explicit location. Simulator checks do not replace real-device HealthKit/Strava validation.
 
 ## Coding Style & Naming Conventions
 - Swift 5/SwiftUI defaults: 4-space indentation, `PascalCase` types, `camelCase` properties/functions, `SCREAMING_SNAKE_CASE` constants. Keep views `struct` + `View`, mark classes `final` when possible.
