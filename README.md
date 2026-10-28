@@ -97,12 +97,31 @@ secret injection. Do not print credentials or include them in shared schemes.
 
 ## Verification
 
+Run the same entry point locally and in pull-request checks:
+
 ```sh
-python3 -B -m unittest discover -s onMyTss/ci_scripts/tests -v
-xcodebuild test -project onMyTss/onMyTss.xcodeproj -scheme onMyTss \
-  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
-  -only-testing:onMyTssTests
+python3 scripts/test.py quick
+python3 scripts/test.py full --destination 'platform=iOS Simulator,id=SIMULATOR_UDID'
+python3 scripts/test.py release --destination 'platform=iOS Simulator,id=SIMULATOR_UDID'
 ```
+
+`quick` checks the shared Swift domain and CI scripts. `full` also runs the
+complete iOS unit and UI suite in Xcode. Choose an available simulator that
+meets the test targets' deployment requirements. `release` adds Release and
+migration checks; its output also lists the device, interaction, and cloud
+delivery checks that still require human verification. A compile or simulator
+test alone does not establish that a release is ready.
+
+The runner writes a summary, individual logs, and Xcode result bundles to its
+output directory; use `--output-dir` to choose where to keep them. Do not put
+credentials or personal HealthKit data in test artifacts. The runner redacts
+known Strava values in its text logs, but Xcode result bundles are not redacted;
+use synthetic test data and review bundles before sharing. See
+[Apple platform checks](docs/v2/MACOS_CHECKS.md) for the upgrade and manual
+validation procedures. The PR workflow tests changes but does not distribute an app.
+After the workflow is pushed and both checks have run successfully, configure the
+repository's branch rules to require `Quick checks` and `iOS unit and UI tests`
+before merging; the workflow file alone does not enforce that policy.
 
 Run `python -m scripts.verify` from the private `backend` checkout for its smoke
 suites. Production changes must pass those checks and the deployed `/health`
