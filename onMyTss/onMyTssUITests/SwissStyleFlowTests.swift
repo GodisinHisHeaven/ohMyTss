@@ -53,11 +53,11 @@ final class SwissStyleFlowTests: XCTestCase {
         XCTAssertTrue(app.buttons["rpe.save"].isEnabled)
         attach(app, "Swiss — opaque RPE controls")
         app.buttons["rpe.cancel"].tap()
-        app.tabBars.buttons["Settings"].tap()
+        app.buttons["Settings"].firstMatch.tap()
         XCTAssertTrue(app.textFields["settings.cardioHR"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["settings.saveCardio"].isHittable)
         attach(app, "Swiss — settings")
-        app.tabBars.buttons["History"].tap()
+        app.buttons["History"].firstMatch.tap()
         XCTAssertTrue(app.segmentedControls["history.trend"].waitForExistence(timeout: 5))
         attach(app, "Swiss — dark history")
     }

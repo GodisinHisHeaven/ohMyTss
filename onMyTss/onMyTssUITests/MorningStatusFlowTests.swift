@@ -7,8 +7,8 @@ final class MorningStatusFlowTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--v2-ui-tests", "--morning-status-ui-fixture"]
         app.launch()
-        XCTAssertTrue(app.tabBars.buttons["Settings"].waitForExistence(timeout: 10))
-        app.tabBars.buttons["Settings"].tap()
+        XCTAssertTrue(app.buttons["Settings"].firstMatch.waitForExistence(timeout: 10))
+        app.buttons["Settings"].firstMatch.tap()
         let entry = app.buttons["settings.morningStatus"]
         reach(entry, app: app)
         entry.tap()
@@ -42,8 +42,8 @@ final class MorningStatusFlowTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--v2-ui-tests", "--v2-rpe-demo", "--morning-status-ui-fixture", "--morning-new-user-fixture", "-AppleInterfaceStyle", "Light"]
         app.launch()
-        XCTAssertTrue(app.tabBars.buttons["Settings"].waitForExistence(timeout: 10))
-        app.tabBars.buttons["Settings"].tap()
+        XCTAssertTrue(app.buttons["Settings"].firstMatch.waitForExistence(timeout: 10))
+        app.buttons["Settings"].firstMatch.tap()
         let entry = app.buttons["settings.morningStatus"]
         reach(entry, app: app)
         entry.tap()
@@ -81,8 +81,8 @@ final class MorningStatusFlowTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--v2-ui-tests", "--morning-status-ui-fixture"]
         app.launch()
-        XCTAssertTrue(app.tabBars.buttons["Settings"].waitForExistence(timeout: 10))
-        app.tabBars.buttons["Settings"].tap()
+        XCTAssertTrue(app.buttons["Settings"].firstMatch.waitForExistence(timeout: 10))
+        app.buttons["Settings"].firstMatch.tap()
         let entry = app.buttons["settings.morningStatus"]
         reach(entry, app: app)
         entry.tap()
@@ -160,7 +160,14 @@ final class MorningStatusFlowTests: XCTestCase {
     private func reach(_ element: XCUIElement, app: XCUIApplication, towardTop: Bool = false) {
         for _ in 0..<12 {
             let top = app.navigationBars.firstMatch.frame.maxY
-            let bottom = app.tabBars.firstMatch.frame.minY
+            let viewport = app.frame
+            let tabBar = app.tabBars.firstMatch
+            let tabFrame = tabBar.exists ? tabBar.frame : .zero
+            // iOS can place the tab controls on the side without exposing a
+            // TabBar element. Only a bottom bar limits the vertical viewport.
+            let hasBottomBar = !tabFrame.isEmpty && tabFrame.minY > top
+                && tabFrame.width >= viewport.width * 0.5
+            let bottom = hasBottomBar ? min(viewport.maxY, tabFrame.minY) : viewport.maxY
             let frame = element.exists ? element.frame : .zero
             if element.isHittable, frame.minY >= top, frame.maxY <= bottom { return }
 

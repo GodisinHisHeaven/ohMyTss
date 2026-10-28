@@ -61,6 +61,9 @@ struct StrengthSetEditor: View {
     @State private var count = 1
     @State private var choosingExercise = false
     @State private var error: String?
+    @FocusState private var focusedField: NumericField?
+
+    private enum NumericField { case weight, rir }
 
     init(sessionID: String, existing: StrengthSetRecord? = nil) {
         self.sessionID = sessionID
@@ -94,10 +97,12 @@ struct StrengthSetEditor: View {
                     Stepper("Repetitions: \(reps)", value: $reps, in: 1...200)
                         .accessibilityIdentifier("strength.reps")
                     TextField("Weight in kg (optional)", text: $weight).keyboardType(.decimalPad)
+                        .focused($focusedField, equals: .weight)
                         .accessibilityIdentifier("strength.weight")
                     Text("Use external load in kilograms. Blank means unknown; 0 means no external load.")
                         .font(.caption).foregroundStyle(.secondary)
                     TextField("RIR (optional, 0 = no reps left)", text: $rir).keyboardType(.numberPad)
+                        .focused($focusedField, equals: .rir)
                         .accessibilityIdentifier("strength.rir")
                     Picker("Effort if RIR unknown", selection: $effort) {
                         Text("Not recorded").tag("unknown")
@@ -122,6 +127,10 @@ struct StrengthSetEditor: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 if let error { V2ErrorMessage(message: error) }
+                Section {
+                    Button(existing == nil ? "Save sets" : "Save changes") { save() }
+                        .accessibilityIdentifier("strength.save.form")
+                }
                 if existing != nil {
                     Section {
                         Button("Delete set", role: .destructive) {
@@ -138,6 +147,11 @@ struct StrengthSetEditor: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") { save() }.accessibilityIdentifier("strength.save")
+                }
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") { focusedField = nil }
+                        .accessibilityIdentifier("strength.keyboardDone")
                 }
             }
             .sheet(isPresented: $choosingExercise) { ExercisePickerView(selection: $exerciseID) }
