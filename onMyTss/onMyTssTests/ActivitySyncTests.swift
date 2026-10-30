@@ -106,6 +106,7 @@ final class ActivitySyncTests: XCTestCase {
         fixture.clock.now = first.addingTimeInterval(60)
         try await fixture.engine.incrementalUpdate()
         XCTAssertEqual(state.healthKitAnchor, anchor)
+        XCTAssertTrue(fixture.engine.lastSyncRequiresRetry)
         XCTAssertEqual(state.lastHealthKitSyncDate, first)
         XCTAssertEqual(try fixture.store.fetchStravaAuth()?.lastSyncDate, fixture.clock.now)
         let stravaCheckpoint = fixture.clock.now
@@ -127,6 +128,7 @@ final class ActivitySyncTests: XCTestCase {
         try await fixture.engine.incrementalUpdate()
         let state = try fixture.store.fetchAppState()
         XCTAssertEqual(state.pendingHealthKitWorkoutIDs, [old.uuid.uuidString])
+        XCTAssertTrue(fixture.engine.lastSyncRequiresRetry)
         XCTAssertNotNil(state.healthKitAnchor)
         fixture.health.failFeatures = []
         fixture.clock.now = fixture.clock.now.addingTimeInterval(60)
@@ -134,6 +136,7 @@ final class ActivitySyncTests: XCTestCase {
         XCTAssertEqual(fixture.health.identityRequests, [[old.uuid.uuidString]])
         XCTAssertTrue(fixture.health.rangeRequests.isEmpty)
         XCTAssertTrue(state.pendingHealthKitWorkoutIDs.isEmpty)
+        XCTAssertFalse(fixture.engine.lastSyncRequiresRetry)
         XCTAssertFalse(try XCTUnwrap(fixture.store.fetchWorkout(byId: old.uuid.uuidString)).features.heartRate.isEmpty)
     }
 
@@ -226,6 +229,55 @@ final class ActivitySyncTests: XCTestCase {
         XCTAssertNotNil(state.healthKitAnchor)
         XCTAssertFalse(state.isComputationInProgress)
         XCTAssertEqual(try fixture.context.fetchCount(FetchDescriptor<LoadEstimateRecord>()), 80)
+    }
+
+    func testManualSyncWaitsForRunningAutomaticSyncAndFetchesNewChanges() async throws {
+        let fixture = try SyncFixture()
+        let firstWorkout = fixture.health.addWorkout(at: fixture.clock.now.addingTimeInterval(-1800))
+        fixture.health.pauseNextChange = true
+        var automaticFinished = false
+        let automatic = Task { defer { automaticFinished = true }; try Task.checkCancellation(); try await fixture.engine.incrementalUpdate() }
+        defer {
+            fixture.health.pauseNextChange = false
+            fixture.health.changesGate?.release()
+            automatic.cancel()
+        }
+        try await waitForSyncTestCondition("automatic import to reach its source gate") {
+            fixture.health.changesGate?.isWaiting == true || automaticFinished
+        }
+        if automaticFinished {
+            try await automatic.value
+            XCTFail("Automatic sync completed without reaching its source gate")
+            return
+        }
+
+        let laterWorkout = fixture.health.addWorkout(at: fixture.clock.now.addingTimeInterval(-900))
+        var manualStarted = false
+        var manualCompleted = false
+        var manualFinished = false
+        let manual = Task {
+            defer { manualFinished = true }
+            try Task.checkCancellation()
+            manualStarted = true
+            try await fixture.engine.recomputeAll()
+            manualCompleted = true
+        }
+        defer { manual.cancel() }
+        try await waitForSyncTestCondition("manual sync request to start") { manualStarted }
+        await Task.yield()
+        XCTAssertFalse(manualCompleted)
+        XCTAssertEqual(fixture.health.anchors.count, 1)
+        fixture.health.changesGate?.release()
+        try await waitForSyncTestCondition("automatic and manual sync requests to finish") {
+            automaticFinished && manualFinished
+        }
+        try await automatic.value
+        try await manual.value
+
+        XCTAssertEqual(fixture.health.anchors.count, 2)
+        XCTAssertNotNil(fixture.health.anchors.last!)
+        XCTAssertNotNil(try fixture.store.fetchWorkout(byId: firstWorkout.uuid.uuidString))
+        XCTAssertNotNil(try fixture.store.fetchWorkout(byId: laterWorkout.uuid.uuidString))
     }
 
     func testThousandDiskRecordsStayResponsiveDuringSyncAndRepeatedSyncDoesNoWork() async throws {
@@ -349,6 +401,8 @@ final class ActivitySyncTests: XCTestCase {
     var failFeatures: Set<String> = []
     var sampleCount = 1
     var onRecoveryRead: (() -> Void)?
+    var pauseNextChange = false
+    var changesGate: SyncTestGate?
 
     func addWorkout(at start: Date, duration: Double = 600) -> HKWorkout {
         let row = HKWorkout(activityType: .running, start: start, end: start.addingTimeInterval(duration))
@@ -360,6 +414,13 @@ final class ActivitySyncTests: XCTestCase {
         anchors.append(anchor)
         let result = anchor == nil ? all : delta
         delta = []
+        if pauseNextChange {
+            pauseNextChange = false
+            let gate = SyncTestGate()
+            changesGate = gate
+            await gate.wait()
+            changesGate = nil
+        }
         return (result, deleted, HKQueryAnchor(fromValue: anchors.count))
     }
     override func fetchWorkouts(from startDate: Date, to endDate: Date) async throws -> [HKWorkout] {

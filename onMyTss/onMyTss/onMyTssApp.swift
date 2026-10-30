@@ -7,13 +7,15 @@
 
 import SwiftUI
 import SwiftData
+import UIKit
 
 @main
 struct ohMyTssApp: App {
+    @UIApplicationDelegateAdaptor(AppBackgroundDelegate.self) private var appDelegate
     @State private var storage: Result<ModelContainer, Error>?
     @State private var hasAttemptedOpen = false
 
-    private static func makeModelContainer() throws -> ModelContainer {
+    static func makeModelContainer() throws -> ModelContainer {
         let schema = Schema(AppSchema.models)
         var inMemory = false
         var testStoreURL: URL?
@@ -49,7 +51,8 @@ struct ohMyTssApp: App {
             Group {
                 switch storage {
                 case .success(let container):
-                    ContentView().modelContainer(container)
+                    ContentView(engine: AppSyncRuntime.shared, dataStore: AppSyncRuntime.shared.dataStore)
+                        .modelContainer(container)
                 case .failure:
                     ContentUnavailableView {
                         Label("Saved data could not be opened", systemImage: "externaldrive.badge.exclamationmark")
@@ -83,6 +86,6 @@ struct ohMyTssApp: App {
         }
         #endif
         hasAttemptedOpen = true
-        storage = Result { try Self.makeModelContainer() }
+        storage = Result { try AppSyncRuntime.shared.open() }
     }
 }

@@ -2,6 +2,12 @@ import XCTest
 
 final class MorningStatusFlowTests: XCTestCase {
     @MainActor
+    override func setUpWithError() throws {
+        continueAfterFailure = false
+        XCUIDevice.shared.orientation = .portrait
+    }
+
+    @MainActor
     func testMorningPhoneEntryAndPrivacyWithoutSendingSMS() {
         continueAfterFailure = false
         let app = XCUIApplication()
@@ -57,7 +63,7 @@ final class MorningStatusFlowTests: XCTestCase {
         let code = app.textFields["morning.code"]
         XCTAssertTrue(code.waitForExistence(timeout: 5))
         code.tap(); code.typeText("123456")
-        app.buttons["morning.verify"].tap()
+        dismissKeyboardAndVerify(app)
         let enable = app.buttons["morning.enable"]
         XCTAssertTrue(enable.waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["morning.subscription"].label.contains("Not subscribed"))
@@ -103,14 +109,14 @@ final class MorningStatusFlowTests: XCTestCase {
         attach(app, "Morning status one-time verification code")
         code.tap()
         code.typeText("000000")
-        app.buttons["morning.verify"].tap()
+        dismissKeyboardAndVerify(app)
         let error = app.staticTexts["The code is incorrect or expired. Check it or request a new code."]
         XCTAssertTrue(error.waitForExistence(timeout: 5))
         XCTAssertTrue(error.isHittable)
         XCTAssertFalse(app.keyboards.firstMatch.exists)
         code.tap()
         code.typeText("123456")
-        app.buttons["morning.verify"].tap()
+        dismissKeyboardAndVerify(app)
         let connected = app.staticTexts["morning.connectedPhone"]
         XCTAssertTrue(connected.waitForExistence(timeout: 5))
         XCTAssertTrue(connected.label.contains("0100"))
@@ -164,6 +170,21 @@ final class MorningStatusFlowTests: XCTestCase {
         XCTAssertEqual(app.state, .runningForeground)
     }
     #endif
+
+    @MainActor
+    private func dismissKeyboardAndVerify(_ app: XCUIApplication) {
+        let done = app.buttons["Done"]
+        XCTAssertTrue(done.waitForExistence(timeout: 5))
+        done.tap()
+        let hidden = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: app.keyboards.firstMatch
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [hidden], timeout: 5), .completed)
+        let verify = app.buttons["morning.verify"]
+        reach(verify, app: app)
+        XCTAssertTrue(verify.isEnabled)
+        verify.tap()
+    }
 
     @MainActor
     private func reach(_ element: XCUIElement, app: XCUIApplication, towardTop: Bool = false) {

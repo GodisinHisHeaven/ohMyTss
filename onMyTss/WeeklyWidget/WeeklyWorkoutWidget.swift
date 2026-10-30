@@ -19,7 +19,7 @@ private struct WeeklyWorkoutProvider: TimelineProvider {
             return WeeklyWorkoutRecord(date: day, workoutType: type)
         }
         return WeeklyWorkoutEntry(date: now, snapshot: WeeklyWorkoutSnapshot(
-            weekStart: week.start, weekEnd: week.end, generatedAt: now, records: records
+            weekStart: week.start, weekEnd: week.end, generatedAt: now, sourceSyncedAt: now, records: records
         ))
     }
 
@@ -32,11 +32,20 @@ private struct WeeklyWorkoutProvider: TimelineProvider {
         let snapshot = WeeklyWorkoutSnapshot.load()
         let nextDay = Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: now))
             ?? now.addingTimeInterval(3600)
-        // The second entry switches the highlighted day even if a reload is delayed.
-        completion(Timeline(entries: [
-            WeeklyWorkoutEntry(date: now, snapshot: snapshot),
-            WeeklyWorkoutEntry(date: nextDay, snapshot: snapshot)
-        ], policy: .after(nextDay)))
+        // Future entries keep day and stale-state changes available if a reload is delayed.
+        var dates = [now]
+        if let expiry = snapshot?.sourceSyncedAt?.addingTimeInterval(WeeklyWorkoutSnapshot.freshnessInterval),
+           expiry > now && expiry < nextDay {
+            dates.append(expiry)
+        }
+        for offset in 0..<7 {
+            if let date = Calendar.current.date(byAdding: .day, value: offset, to: nextDay) {
+                dates.append(date)
+            }
+        }
+        let reloadAt = dates.dropFirst().first ?? nextDay
+        completion(Timeline(entries: dates.map { WeeklyWorkoutEntry(date: $0, snapshot: snapshot) },
+                            policy: .after(reloadAt)))
     }
 }
 
@@ -76,8 +85,8 @@ private struct WorkoutDay: Identifiable {
     var accessibilityDescription: String {
         let day = date.formatted(.dateTime.weekday(.wide).month(.abbreviated).day())
         let status: String
-        if !isCovered { status = "Not synced" }
-        else if activities.isEmpty { status = isFuture ? "Upcoming" : "No workouts" }
+        if !isCovered { status = activities.isEmpty ? "Not synced" : activities.map(\.label).joined(separator: ", ") + ", not recently synced" }
+        else if activities.isEmpty { status = isFuture ? "Upcoming" : "No workouts in app" }
         else { status = activities.map(\.label).joined(separator: ", ") }
         return "\(day), \(status)\(isToday ? ", today" : "")"
     }
@@ -158,10 +167,10 @@ private struct WeeklyWorkoutView: View {
 
     @ViewBuilder
     private func dayContents(_ day: WorkoutDay, compact: Bool) -> some View {
-        if !day.isCovered {
-            Text("–").font(.system(size: compact ? 11 : 12)).foregroundStyle(.secondary)
-        } else if day.activities.isEmpty {
-            if day.isFuture {
+        if day.activities.isEmpty {
+            if !day.isCovered {
+                Text("–").font(.system(size: compact ? 11 : 12)).foregroundStyle(.secondary)
+            } else if day.isFuture {
                 Text("·").font(.system(size: 11)).foregroundStyle(.tertiary)
             } else {
                 Circle().fill(.secondary.opacity(0.5)).frame(width: 4, height: 4)
@@ -186,10 +195,10 @@ private struct WeeklyWorkoutView: View {
     private var inline: some View {
         let content = days.reduce(Text("Week ")) { text, day in
             let mark: Text
-            if !day.isCovered { mark = Text("–") }
-            else if let first = day.activities.first {
+            if let first = day.activities.first {
                 mark = Text(Image(systemName: first.symbol)) + (day.activities.count > 1 ? Text("+") : Text(""))
-            } else { mark = Text("·") }
+            } else if !day.isCovered { mark = Text("–") }
+            else { mark = Text("·") }
             return text + mark + Text(" ")
         }
         return content

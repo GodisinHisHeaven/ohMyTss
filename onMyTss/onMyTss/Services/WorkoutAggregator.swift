@@ -86,6 +86,7 @@ final class WorkoutAggregator {
     private(set) var latestImportedWorkouts: [Workout] = []
     private(set) var successfulSources: Set<String> = []
     private(set) var warnings: [String] = []
+    private(set) var hasRetryableFailures = false
     private(set) var latestDeletedStravaIDs: [String] = []
     private(set) var latestDeletedHealthKitIDs: [String] = []
     private(set) var latestHealthKitAnchor: HKQueryAnchor?
@@ -128,7 +129,7 @@ final class WorkoutAggregator {
                     sources += retry.filter { !changed.contains($0.uuid) }
                 } catch {
                     try Task.checkCancellation()
-                    self.warnings.append("HealthKit sample retry unavailable. Saved samples retained.")
+                    self.recordRetryableWarning("HealthKit sample retry unavailable. Saved samples retained.")
                 }
             }
             self.refreshedHealthKitSamples = anchor == nil
@@ -142,15 +143,21 @@ final class WorkoutAggregator {
                     self.refreshedHealthKitSamples = true
                 } catch {
                     try Task.checkCancellation()
-                    self.warnings.append("Recent HealthKit samples could not refresh. Saved samples retained; retry sync.")
+                    self.recordRetryableWarning("Recent HealthKit samples could not refresh. Saved samples retained; retry sync.")
                 }
             }
             let rows = try await self.convertHealthKitWorkouts(sources)
             self.latestDeletedHealthKitIDs = changes.deletedIDs
             self.latestHealthKitRetryIDs.subtract(changes.deletedIDs)
+            if !self.latestHealthKitRetryIDs.isEmpty { self.hasRetryableFailures = true }
             self.latestHealthKitAnchor = changes.newAnchor
             return rows
         }
+    }
+
+    private func recordRetryableWarning(_ message: String) {
+        warnings.append(message)
+        hasRetryableFailures = true
     }
 
     private func fetchSources(from startDate: Date, to endDate: Date,
@@ -162,6 +169,7 @@ final class WorkoutAggregator {
         refreshedHealthKitSamples = false
         successfulSources = []
         warnings = []
+        hasRetryableFailures = false
         var hkWorkouts: [Workout] = []
         var stravaWorkouts: [Workout] = []
         var sourceErrors: [Error] = []
@@ -171,7 +179,7 @@ final class WorkoutAggregator {
         } catch {
             try Task.checkCancellation()
             sourceErrors.append(error)
-            warnings.append("HealthKit is unavailable or unreadable. Saved history is retained; retry sync.")
+            recordRetryableWarning("HealthKit is unavailable or unreadable. Saved history is retained; retry sync.")
         }
         let stravaConnected = try dataStore.fetchStravaAuth()?.isConnected == true
         if stravaConnected {
@@ -181,7 +189,7 @@ final class WorkoutAggregator {
             } catch {
                 try Task.checkCancellation()
                 sourceErrors.append(error)
-                warnings.append("Strava could not sync. Saved history is retained; check your connection and retry.")
+                recordRetryableWarning("Strava could not sync. Saved history is retained; check your connection and retry.")
             }
         }
         if successfulSources.isEmpty, let error = sourceErrors.first { throw error }
@@ -307,7 +315,7 @@ final class WorkoutAggregator {
                 }
             } catch {
                 try Task.checkCancellation()
-                warnings.append("A missing Strava activity could not be verified. Its saved source and your records are retained; retry sync.")
+                recordRetryableWarning("A missing Strava activity could not be verified. Its saved source and your records are retained; retry sync.")
                 // Avoid repeated requests after a rate-limit, connection or
                 // authorization failure. Unchecked sources remain untouched.
                 break

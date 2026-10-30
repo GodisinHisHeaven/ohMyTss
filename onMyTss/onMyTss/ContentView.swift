@@ -15,6 +15,11 @@ struct ContentView: View {
     @State private var engine: (any BodyBatteryEngineProtocol)?
     @State private var dataStore: DataStore?
 
+    init(engine: (any BodyBatteryEngineProtocol)? = nil, dataStore: DataStore? = nil) {
+        _engine = State(initialValue: engine)
+        _dataStore = State(initialValue: dataStore)
+    }
+
     var body: some View {
         Group {
             if isLoading {
@@ -46,7 +51,7 @@ struct ContentView: View {
 
     private func initializeApp() async {
         // Initialize services
-        let store = DataStore(modelContext: modelContext)
+        let store = dataStore ?? DataStore(modelContext: modelContext)
         dataStore = store
 
         var healthKitManager = HealthKitManager()
@@ -56,8 +61,9 @@ struct ContentView: View {
             healthKitManager = ActivitySyncUIFixture()
         }
         #endif
-        let bodyBatteryEngine = BodyBatteryEngine(healthKitManager: healthKitManager, dataStore: store)
-        engine = bodyBatteryEngine
+        if engine == nil {
+            engine = BodyBatteryEngine(healthKitManager: healthKitManager, dataStore: store)
+        }
 
         // Check onboarding status
         do {
