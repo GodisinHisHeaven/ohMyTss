@@ -67,13 +67,14 @@ class HealthKitManager {
         guard isHealthKitAvailable else { throw HealthKitError.notAvailable }
         let uuids = Set(ids.compactMap(UUID.init(uuidString:)))
         guard !uuids.isEmpty else { return [] }
-        return try await withCheckedThrowingContinuation { continuation in
+        return try await HealthQueryExecution.run { finish in
             let query = HKSampleQuery(sampleType: .workoutType(), predicate: HKQuery.predicateForObjects(with: uuids),
                                       limit: uuids.count, sortDescriptors: nil) { _, samples, error in
-                if let error { continuation.resume(throwing: error) }
-                else { continuation.resume(returning: samples as? [HKWorkout] ?? []) }
+                if let error { finish(.failure(error)) }
+                else { finish(.success(samples as? [HKWorkout] ?? [])) }
             }
             healthStore.execute(query)
+            return { Task { @MainActor in self.healthStore.stop(query) } }
         }
     }
 
@@ -83,7 +84,7 @@ class HealthKitManager {
         let workoutType = HKObjectType.workoutType()
         let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
 
-        return try await withCheckedThrowingContinuation { continuation in
+        return try await HealthQueryExecution.run { finish in
             let query = HKSampleQuery(
                 sampleType: workoutType,
                 predicate: predicate,
@@ -91,17 +92,18 @@ class HealthKitManager {
                 sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)]
             ) { _, samples, error in
                 if let error = error {
-                    continuation.resume(throwing: error)
+                    finish(.failure(error))
                     return
                 }
 
                 let workouts = samples as? [HKWorkout] ?? []
 
                 // Keep every source UUID. Canonicalization belongs to persistence.
-                continuation.resume(returning: workouts)
+                finish(.success(workouts))
             }
 
             healthStore.execute(query)
+            return { Task { @MainActor in self.healthStore.stop(query) } }
         }
     }
 
@@ -109,14 +111,15 @@ class HealthKitManager {
     /// query can also mean unreadable data; it must never erase local history.
     func fetchWorkoutChanges(anchor: HKQueryAnchor?) async throws -> (workouts: [HKWorkout], deletedIDs: [String], newAnchor: HKQueryAnchor) {
         guard isHealthKitAvailable else { throw HealthKitError.notAvailable }
-        return try await withCheckedThrowingContinuation { continuation in
+        return try await HealthQueryExecution.run { finish in
             let query = HKAnchoredObjectQuery(type: .workoutType(), predicate: nil, anchor: anchor, limit: HKObjectQueryNoLimit) {
                 _, samples, deleted, newAnchor, error in
-                if let error = error { continuation.resume(throwing: error); return }
-                guard let newAnchor = newAnchor else { continuation.resume(throwing: HealthKitError.noData); return }
-                continuation.resume(returning: (samples as? [HKWorkout] ?? [], deleted?.map { $0.uuid.uuidString } ?? [], newAnchor))
+                if let error = error { finish(.failure(error)); return }
+                guard let newAnchor = newAnchor else { finish(.failure(HealthKitError.noData)); return }
+                finish(.success((samples as? [HKWorkout] ?? [], deleted?.map { $0.uuid.uuidString } ?? [], newAnchor)))
             }
             healthStore.execute(query)
+            return { Task { @MainActor in self.healthStore.stop(query) } }
         }
     }
 
@@ -145,13 +148,14 @@ class HealthKitManager {
     }
 
     private func quantitySamples(_ type: HKQuantityType, predicate: NSPredicate) async throws -> [HKQuantitySample] {
-        try await withCheckedThrowingContinuation { continuation in
+        try await HealthQueryExecution.run { finish in
             let query = HKSampleQuery(sampleType: type, predicate: predicate, limit: HKObjectQueryNoLimit,
                                       sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)]) { _, samples, error in
-                if let error = error { continuation.resume(throwing: error); return }
-                continuation.resume(returning: samples as? [HKQuantitySample] ?? [])
+                if let error = error { finish(.failure(error)); return }
+                finish(.success(samples as? [HKQuantitySample] ?? []))
             }
             healthStore.execute(query)
+            return { Task { @MainActor in self.healthStore.stop(query) } }
         }
     }
 
@@ -176,19 +180,23 @@ class HealthKitManager {
     }
 
     private func quantitySeries(_ type: HKQuantityType, unit: HKUnit, predicate: NSPredicate) async throws -> [TimedValue] {
-        try await withCheckedThrowingContinuation { continuation in
+        try await HealthQueryExecution.run { finish in
             let buffer = HealthQueryBuffer<TimedValue>()
             let query = HKQuantitySeriesSampleQuery(quantityType: type, predicate: predicate) { _, quantity, interval, _, done, error in
                 if let error = error {
-                    if buffer.finish() != nil { continuation.resume(throwing: error) }
+                    if buffer.finish() != nil { finish(.failure(error)) }
                     return
                 }
                 if let quantity = quantity, let interval = interval {
                     buffer.append([TimedValue(start: interval.start, end: interval.end, value: quantity.doubleValue(for: unit))])
                 }
-                if done, let values = buffer.finish() { continuation.resume(returning: values) }
+                if done, let values = buffer.finish() { finish(.success(values)) }
             }
             healthStore.execute(query)
+            return {
+                _ = buffer.finish()
+                Task { @MainActor in self.healthStore.stop(query) }
+            }
         }
     }
 
@@ -205,6 +213,7 @@ class HealthKitManager {
             (.runningSpeed, .meter().unitDivided(by: .second()))
         ]
         for (identifier, unit) in channels {
+            try Task.checkCancellation()
             let channel: String
             switch identifier {
             case .heartRate: channel = "heartRate"
@@ -226,6 +235,8 @@ class HealthKitManager {
                 features.provenance.append(result.provenance)
                 if result.values.isEmpty { features.unavailableChannels.append(channel) }
             } catch {
+                if error is CancellationError { throw error }
+                try Task.checkCancellation()
                 features.failedChannels.append(channel)
                 features.provenance.append("\(identifier.rawValue): sensor query failed; retry sync")
             }
@@ -245,6 +256,8 @@ class HealthKitManager {
                 if locations.isEmpty { features.unavailableChannels.append("terrain") }
                 features.provenance.append(locations.isEmpty ? "No readable route; slope unknown" : "Workout-associated route; accuracy filter, median5 altitude and 15 m grade baseline")
             } catch {
+                if error is CancellationError { throw error }
+                try Task.checkCancellation()
                 features.failedChannels.append("terrain")
                 features.provenance.append("Route query failed; slope unknown")
             }
@@ -253,31 +266,38 @@ class HealthKitManager {
             features.swimSegments = Self.swimSegments(workout)
             features.provenance.append(features.swimSegments.isEmpty ? "Swim stroke and equipment unknown" : "Swim stroke metadata; equipment unknown")
         }
+        try Task.checkCancellation()
         return features
     }
 
     private func routeLocations(_ workout: HKWorkout) async throws -> [CLLocation] {
-        let routes: [HKWorkoutRoute] = try await withCheckedThrowingContinuation { continuation in
+        let routes: [HKWorkoutRoute] = try await HealthQueryExecution.run { finish in
             let query = HKSampleQuery(sampleType: HKSeriesType.workoutRoute(), predicate: HKQuery.predicateForObjects(from: workout),
                                       limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, error in
-                if let error = error { continuation.resume(throwing: error); return }
-                continuation.resume(returning: samples as? [HKWorkoutRoute] ?? [])
+                if let error = error { finish(.failure(error)); return }
+                finish(.success(samples as? [HKWorkoutRoute] ?? []))
             }
             healthStore.execute(query)
+            return { Task { @MainActor in self.healthStore.stop(query) } }
         }
         var locations: [CLLocation] = []
         for route in routes {
-            let batch: [CLLocation] = try await withCheckedThrowingContinuation { continuation in
+            try Task.checkCancellation()
+            let batch: [CLLocation] = try await HealthQueryExecution.run { finish in
                 let buffer = HealthQueryBuffer<CLLocation>()
                 let query = HKWorkoutRouteQuery(route: route) { _, values, done, error in
                     if let error = error {
-                        if buffer.finish() != nil { continuation.resume(throwing: error) }
+                        if buffer.finish() != nil { finish(.failure(error)) }
                         return
                     }
                     buffer.append(values ?? [])
-                    if done, let result = buffer.finish() { continuation.resume(returning: result) }
+                    if done, let result = buffer.finish() { finish(.success(result)) }
                 }
                 healthStore.execute(query)
+                return {
+                    _ = buffer.finish()
+                    Task { @MainActor in self.healthStore.stop(query) }
+                }
             }
             locations.append(contentsOf: batch)
         }
@@ -356,14 +376,15 @@ class HealthKitManager {
     }
 
     func fetchWorkoutStatistics(for workout: HKWorkout, quantityType: HKQuantityType) async throws -> HKStatistics? {
-        try await withCheckedThrowingContinuation { continuation in
+        try await HealthQueryExecution.run { finish in
             let query = HKStatisticsQuery(quantityType: quantityType,
                 quantitySamplePredicate: HKQuery.predicateForObjects(from: workout),
                 options: [.discreteAverage, .discreteMin, .discreteMax]) { _, statistics, error in
-                if let error = error { continuation.resume(throwing: error); return }
-                continuation.resume(returning: statistics)
+                if let error = error { finish(.failure(error)); return }
+                finish(.success(statistics))
             }
             healthStore.execute(query)
+            return { Task { @MainActor in self.healthStore.stop(query) } }
         }
     }
 
@@ -378,7 +399,7 @@ class HealthKitManager {
         let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
 
 
-        return try await withCheckedThrowingContinuation { continuation in
+        return try await HealthQueryExecution.run { finish in
             let query = HKSampleQuery(
                 sampleType: hrvType,
                 predicate: predicate,
@@ -386,15 +407,16 @@ class HealthKitManager {
                 sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)]
             ) { _, samples, error in
                 if let error = error {
-                    continuation.resume(throwing: error)
+                    finish(.failure(error))
                     return
                 }
 
                 let hrvSamples = samples as? [HKQuantitySample] ?? []
-                continuation.resume(returning: hrvSamples)
+                finish(.success(hrvSamples))
             }
 
             healthStore.execute(query)
+            return { Task { @MainActor in self.healthStore.stop(query) } }
         }
     }
 
@@ -407,7 +429,7 @@ class HealthKitManager {
         let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
 
 
-        return try await withCheckedThrowingContinuation { continuation in
+        return try await HealthQueryExecution.run { finish in
             let query = HKSampleQuery(
                 sampleType: rhrType,
                 predicate: predicate,
@@ -415,15 +437,16 @@ class HealthKitManager {
                 sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)]
             ) { _, samples, error in
                 if let error = error {
-                    continuation.resume(throwing: error)
+                    finish(.failure(error))
                     return
                 }
 
                 let rhrSamples = samples as? [HKQuantitySample] ?? []
-                continuation.resume(returning: rhrSamples)
+                finish(.success(rhrSamples))
             }
 
             healthStore.execute(query)
+            return { Task { @MainActor in self.healthStore.stop(query) } }
         }
     }
 
@@ -437,7 +460,7 @@ class HealthKitManager {
 
         let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
 
-        return try await withCheckedThrowingContinuation { continuation in
+        return try await HealthQueryExecution.run { finish in
             let query = HKSampleQuery(
                 sampleType: sleepType,
                 predicate: predicate,
@@ -445,15 +468,16 @@ class HealthKitManager {
                 sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)]
             ) { _, samples, error in
                 if let error = error {
-                    continuation.resume(throwing: error)
+                    finish(.failure(error))
                     return
                 }
 
                 let sleepSamples = samples as? [HKCategorySample] ?? []
-                continuation.resume(returning: sleepSamples)
+                finish(.success(sleepSamples))
             }
 
             healthStore.execute(query)
+            return { Task { @MainActor in self.healthStore.stop(query) } }
         }
     }
 

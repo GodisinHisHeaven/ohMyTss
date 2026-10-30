@@ -13,6 +13,21 @@ import HealthKit
 @MainActor
 final class BodyBatteryEngineNoWorkoutTests: XCTestCase {
 
+    func testRecoveryCancellationDoesNotAdvanceHealthKitAnchor() async throws {
+        let schema = Schema(AppSchema.models)
+        let container = try ModelContainer(for: schema, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let store = DataStore(modelContainer: container)
+        let thresholds = try store.fetchUserThresholds()
+        thresholds.hasCompletedOnboarding = true
+        try store.saveUserThresholds(thresholds)
+        let engine = BodyBatteryEngine(healthKitManager: CancelledRecoveryQueries(), dataStore: store)
+        do { try await engine.recomputeAll(); XCTFail("Cancellation must propagate") }
+        catch is CancellationError { } catch { throw error }
+        let state = try store.fetchAppState()
+        XCTAssertNil(state.healthKitAnchor)
+        XCTAssertNil(state.lastHealthKitSyncDate)
+    }
+
     func testFailedHealthQueriesRetainOnlyTheAffectedSavedMeasurements() async throws {
         for (failPhysiology, failSleep) in [(true, true), (true, false), (false, true), (false, false)] {
             let schema = Schema(AppSchema.models)
@@ -155,6 +170,16 @@ final class BodyBatteryEngineNoWorkoutTests: XCTestCase {
 }
 
 // MARK: - Fakes
+
+@MainActor
+private final class CancelledRecoveryQueries: HealthKitManager {
+    override func fetchWorkoutChanges(anchor: HKQueryAnchor?) async throws -> (workouts: [HKWorkout], deletedIDs: [String], newAnchor: HKQueryAnchor) {
+        ([], [], HKQueryAnchor(fromValue: 1))
+    }
+    override func fetchHRVSamples(from startDate: Date, to endDate: Date) async throws -> [HKQuantitySample] { throw CancellationError() }
+    override func fetchRestingHeartRateSamples(from startDate: Date, to endDate: Date) async throws -> [HKQuantitySample] { [] }
+    override func fetchSleepSamples(from startDate: Date, to endDate: Date) async throws -> [HKCategorySample] { [] }
+}
 
 @MainActor
 private final class FakeHealthKitManager: HealthKitManager {

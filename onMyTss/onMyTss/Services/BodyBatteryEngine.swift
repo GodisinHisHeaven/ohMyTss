@@ -149,18 +149,35 @@ class BodyBatteryEngine {
 
     // MARK: - Private Helper Methods
 
+    /// Keep independent channel failures while never converting cancellation to no data.
+    private func captureHealthRead<Value>(_ operation: () async throws -> Value) async -> Result<Value, Error> {
+        do { return .success(try await operation()) }
+        catch { return .failure(error) }
+    }
+
+    private func healthValue<Value>(_ result: Result<Value, Error>) throws -> Value? {
+        switch result {
+        case .success(let value): return value
+        case .failure(let error):
+            if error is CancellationError { throw error }
+            return nil
+        }
+    }
+
     /// Fetch and process HRV/RHR data for a date range
     private func processPhysiologyData(from startDate: Date, to endDate: Date) async throws -> (days: [Date: (hrv: Double?, rhr: Double?, hrvMod: Double?, rhrMod: Double?)], hrvAvailable: Bool, rhrAvailable: Bool) {
         var physiologyMap: [Date: (hrv: Double?, rhr: Double?, hrvMod: Double?, rhrMod: Double?)] = [:]
 
         // Fetch all HRV and RHR samples in parallel
-        async let hrvSamples = try? healthKitManager.fetchHRVSamples(from: startDate.addingDays(-14), to: endDate)
-        async let rhrSamples = try? healthKitManager.fetchRestingHeartRateSamples(from: startDate.addingDays(-14), to: endDate)
+        async let hrvSamples = captureHealthRead { try await self.healthKitManager.fetchHRVSamples(from: startDate.addingDays(-14), to: endDate) }
+        async let rhrSamples = captureHealthRead { try await self.healthKitManager.fetchRestingHeartRateSamples(from: startDate.addingDays(-14), to: endDate) }
 
         let (hrvResult, rhrResult) = await (hrvSamples, rhrSamples)
         try Task.checkCancellation()
-        let hrv = hrvResult ?? []
-        let rhr = rhrResult ?? []
+        let hrvValue = try healthValue(hrvResult)
+        let rhrValue = try healthValue(rhrResult)
+        let hrv = hrvValue ?? []
+        let rhr = rhrValue ?? []
 
         // Group samples by day
         var dailyHRVSamples: [Date: [HKQuantitySample]] = [:]
@@ -208,7 +225,7 @@ class BodyBatteryEngine {
             currentDate = currentDate.addingDays(1)
         }
 
-        return (physiologyMap, hrvResult != nil, rhrResult != nil)
+        return (physiologyMap, hrvValue != nil, rhrValue != nil)
     }
 
     /// Fetch and process sleep data for a date range
@@ -217,6 +234,7 @@ class BodyBatteryEngine {
 
         // Fetch all sleep samples for the range
         let sleepSamples = try await healthKitManager.fetchSleepSamples(from: startDate, to: endDate)
+        try Task.checkCancellation()
 
         // Group samples by day (sleep belongs to the day it ends, not starts)
         var dailySleepSamples: [Date: [HKCategorySample]] = [:]
@@ -238,10 +256,12 @@ class BodyBatteryEngine {
     }
 
     private func updateRecoveryMetrics(from start: Date, to end: Date) async throws -> (warnings: [String], needsRetry: Bool) {
-        async let physiologyMap = try? processPhysiologyData(from: start, to: end)
-        async let sleepMap = try? processSleepData(from: start, to: end)
-        let (physiology, sleep) = await (physiologyMap, sleepMap)
+        async let physiologyMap = captureHealthRead { try await self.processPhysiologyData(from: start, to: end) }
+        async let sleepMap = captureHealthRead { try await self.processSleepData(from: start, to: end) }
+        let (physiologyResult, sleepResult) = await (physiologyMap, sleepMap)
         try Task.checkCancellation()
+        let physiology = try healthValue(physiologyResult)
+        let sleep = try healthValue(sleepResult)
         var warnings: [String] = []
         if physiology == nil || physiology?.hrvAvailable == false {
             warnings.append("HealthKit HRV unavailable. Saved HRV retained; retry Sync.")

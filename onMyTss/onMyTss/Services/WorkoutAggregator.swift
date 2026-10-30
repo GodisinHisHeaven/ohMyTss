@@ -128,6 +128,7 @@ final class WorkoutAggregator {
                     let changed = Set(sources.map(\.uuid))
                     sources += retry.filter { !changed.contains($0.uuid) }
                 } catch {
+                    if error is CancellationError { throw error }
                     try Task.checkCancellation()
                     self.recordRetryableWarning("HealthKit sample retry unavailable. Saved samples retained.")
                 }
@@ -142,6 +143,7 @@ final class WorkoutAggregator {
                     sources += recent.filter { !changed.contains($0.uuid) }
                     self.refreshedHealthKitSamples = true
                 } catch {
+                    if error is CancellationError { throw error }
                     try Task.checkCancellation()
                     self.recordRetryableWarning("Recent HealthKit samples could not refresh. Saved samples retained; retry sync.")
                 }
@@ -177,6 +179,7 @@ final class WorkoutAggregator {
             hkWorkouts = try await healthKit()
             successfulSources.insert(WorkoutSource.healthKit.rawValue)
         } catch {
+            if error is CancellationError { throw error }
             try Task.checkCancellation()
             sourceErrors.append(error)
             recordRetryableWarning("HealthKit is unavailable or unreadable. Saved history is retained; retry sync.")
@@ -187,6 +190,7 @@ final class WorkoutAggregator {
                 stravaWorkouts = try await fetchStravaWorkouts(from: startDate, to: endDate)
                 successfulSources.insert(WorkoutSource.strava.rawValue)
             } catch {
+                if error is CancellationError { throw error }
                 try Task.checkCancellation()
                 sourceErrors.append(error)
                 recordRetryableWarning("Strava could not sync. Saved history is retained; check your connection and retry.")
@@ -213,6 +217,7 @@ final class WorkoutAggregator {
             var features: WorkoutFeatures
             do { features = try await healthKitManager.fetchWorkoutFeatures(for: hkWorkout) }
             catch {
+                if error is CancellationError { throw error }
                 try Task.checkCancellation()
                 features = WorkoutFeatures()
                 features.failedChannels = ["heartRate", "power", "cadence", "speed", "terrain"]
@@ -314,6 +319,7 @@ final class WorkoutAggregator {
                     unavailableSourceIDs.append(source.id)
                 }
             } catch {
+                if error is CancellationError { throw error }
                 try Task.checkCancellation()
                 recordRetryableWarning("A missing Strava activity could not be verified. Its saved source and your records are retained; retry sync.")
                 // Avoid repeated requests after a rate-limit, connection or
