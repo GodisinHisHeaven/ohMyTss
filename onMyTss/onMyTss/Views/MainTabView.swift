@@ -47,6 +47,7 @@ struct MainTabView: View {
                 }
                 .tag(Tab.settings)
         }
+        .background(WeeklyWorkoutObserver())
         .task(id: MorningSyncTrigger(isActive: scenePhase == .active, computedAt: appStates.first?.lastComputationDate)) {
             await syncMorningSummaryIfActive()
         }
