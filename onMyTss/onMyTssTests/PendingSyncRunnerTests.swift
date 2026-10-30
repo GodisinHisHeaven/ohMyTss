@@ -4,6 +4,130 @@ import XCTest
 
 @MainActor
 final class PendingSyncRunnerTests: XCTestCase {
+    func testManualRevisionDrainedByActiveRunAvoidsThirdPass() async throws {
+        try await withStore { store in
+            let firstGate = SyncTestGate()
+            let secondGate = SyncTestGate()
+            var passes = 0
+            let runner = PendingSyncRunner(store: store) {
+                passes += 1
+                if passes == 1 { await firstGate.wait() }
+                if passes == 2 { await secondGate.wait() }
+                return true
+            }
+            let automatic = Task { try await runner.markAndRun() }
+            defer { automatic.cancel(); firstGate.release(); secondGate.release() }
+            try await waitForSyncTestCondition("automatic pass") { firstGate.isWaiting }
+            let requested = try store.markPending()
+            let manual = Task { try await runner.run(through: requested) }
+            defer { manual.cancel() }
+            firstGate.release()
+            try await waitForSyncTestCondition("manual revision pass") { secondGate.isWaiting }
+            XCTAssertEqual(passes, 2)
+            secondGate.release()
+            try await automatic.value
+            try await manual.value
+            XCTAssertEqual(passes, 2)
+            XCTAssertNil(try store.pendingRevision())
+        }
+    }
+
+    func testManualRequestRetriesAfterActivePassFails() async throws {
+        try await withStore { store in
+            let gate = SyncTestGate()
+            var passes = 0
+            let runner = PendingSyncRunner(store: store) {
+                passes += 1
+                if passes == 1 { await gate.wait(); throw ProbeError.failed }
+                return true
+            }
+            let automatic = Task { try await runner.markAndRun() }
+            defer { automatic.cancel(); gate.release() }
+            try await waitForSyncTestCondition("failing automatic pass") { gate.isWaiting }
+            let requested = try store.markPending()
+            let manual = Task { try await runner.run(through: requested) }
+            defer { manual.cancel() }
+            gate.release()
+            do { try await automatic.value; XCTFail("The automatic failure must propagate") }
+            catch ProbeError.failed { } catch { throw error }
+            try await manual.value
+            XCTAssertEqual(passes, 2)
+            XCTAssertNil(try store.pendingRevision())
+        }
+    }
+
+    func testManualRevisionWaitsForChangedThresholdToBeApplied() async throws {
+        try await withStore { store in
+            let gate = SyncTestGate()
+            var threshold = 100
+            var applied: [Int] = []
+            let runner = PendingSyncRunner(store: store) {
+                let captured = threshold
+                if applied.isEmpty { await gate.wait() }
+                applied.append(captured)
+                return true
+            }
+            let automatic = Task { try await runner.markAndRun() }
+            defer { automatic.cancel(); gate.release() }
+            try await waitForSyncTestCondition("old threshold pass") { gate.isWaiting }
+            threshold = 200
+            let requested = try store.markPending()
+            let manual = Task { try await runner.run(through: requested) }
+            defer { manual.cancel() }
+            gate.release()
+            try await automatic.value
+            try await manual.value
+            XCTAssertEqual(applied, [100, 200])
+            XCTAssertNil(try store.pendingRevision())
+        }
+    }
+
+    func testManualRequestNeverReusesAnotherEpoch() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("manual-epoch-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("state.json")
+        let store = PendingSyncStore(url: url)
+        var passes = 0
+        let runner = PendingSyncRunner(store: store) { passes += 1; return true }
+        let requested = try store.markPending()
+        try await runner.run(through: requested)
+        try Data("corrupt".utf8).write(to: url)
+        let recovered = try XCTUnwrap(store.pendingRevision())
+        XCTAssertNotEqual(requested.epoch, recovered.epoch)
+        try await runner.run(through: requested)
+        XCTAssertEqual(passes, 2)
+        XCTAssertNil(try store.pendingRevision())
+    }
+
+    func testManualRequestWithoutActivePassRunsAndIncompleteRetainsPending() async throws {
+        try await withStore { store in
+            var passes = 0
+            let runner = PendingSyncRunner(store: store) { passes += 1; return false }
+            let requested = try store.markPending()
+            do { try await runner.run(through: requested); XCTFail("Incomplete source must propagate") }
+            catch PendingSyncRunner.RunnerError.incomplete { } catch { throw error }
+            XCTAssertEqual(passes, 1)
+            XCTAssertEqual(try store.pendingRevision(), requested)
+        }
+    }
+
+    func testCancelledManualPassRetainsItsRevision() async throws {
+        try await withStore { store in
+            let gate = SyncTestGate()
+            let runner = PendingSyncRunner(store: store) { await gate.wait(); return true }
+            let requested = try store.markPending()
+            let manual = Task { try await runner.run(through: requested) }
+            defer { manual.cancel(); gate.release() }
+            try await waitForSyncTestCondition("manual cancellation gate") { gate.isWaiting }
+            manual.cancel()
+            gate.release()
+            do { try await manual.value; XCTFail("Cancellation must propagate") }
+            catch is CancellationError { } catch { throw error }
+            XCTAssertEqual(try store.pendingRevision(), requested)
+        }
+    }
+
     func testRecoveryDuringPassDrainsNewEpochBeforeCompletion() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("pending-epoch-\(UUID().uuidString)")

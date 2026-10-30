@@ -76,18 +76,17 @@ final class AppSyncRuntime: BodyBatteryEngineProtocol {
     func recomputeAll() async throws {
         // Manual work must still run after any in-flight pass, and its failure
         // needs a durable retry even if there was no HealthKit event.
-        let markerAvailable: Bool
+        let requested: PendingSyncStore.Revision?
         do {
-            try pending.markPending()
+            requested = try pending.markPending()
             volatilePending = false
-            markerAvailable = true
         } catch {
             volatilePending = true
             logger.error("Could not save sync retry marker; manual sync will proceed")
-            markerAvailable = false
+            requested = nil
         }
         do {
-            if markerAvailable { try await runner.run() }
+            if let requested { try await runner.run(through: requested) }
             else { try await runner.runWithoutStore() }
         }
         catch PendingSyncRunner.RunnerError.incomplete { /* Show source warnings from the engine. */ }

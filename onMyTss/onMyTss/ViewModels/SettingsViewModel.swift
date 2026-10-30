@@ -127,7 +127,10 @@ class SettingsViewModel {
             let appState = try dataStore.fetchAppState()
             lastSyncDate = appState.lastHealthKitSyncDate
 
-            successMessage = "Data synced successfully"
+            let message = appState.lastSyncMessage
+            successMessage = message.flatMap {
+                $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0
+            } ?? "Data synced successfully"
 
             // Clear success message after 3 seconds
             Task {

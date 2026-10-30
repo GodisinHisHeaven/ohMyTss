@@ -12,6 +12,7 @@ final class PendingSyncRunner {
     private let sync: () async throws -> Bool
     private let onDrained: () -> Bool
     private var running = false
+    private var lastSuccessfulDrain: PendingSyncStore.Revision?
     private let maximumPasses = 3
 
     init(store: PendingSyncStore, onDrained: @escaping () -> Bool = { true },
@@ -38,7 +39,23 @@ final class PendingSyncRunner {
     func run() async throws {
         try await acquire()
         defer { running = false }
+        try await drain()
+    }
 
+    /// A manual request can reuse a pass that processed its own revision while
+    /// it waited. Failures and later pending work still require another pass.
+    func run(through requested: PendingSyncStore.Revision) async throws {
+        try await acquire()
+        defer { running = false }
+        if let drained = lastSuccessfulDrain,
+           drained.epoch == requested.epoch, drained.value >= requested.value,
+           try store.isAcknowledged(requested), try store.pendingRevision() == nil {
+            return
+        }
+        try await drain()
+    }
+
+    private func drain() async throws {
         for _ in 0..<maximumPasses {
             try Task.checkCancellation()
             let revision = try store.pendingRevision()
@@ -54,6 +71,7 @@ final class PendingSyncRunner {
                     try store.markPending()
                     throw RunnerError.incomplete
                 }
+                lastSuccessfulDrain = revision
                 return
             }
         }

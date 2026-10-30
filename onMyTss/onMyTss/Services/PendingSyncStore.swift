@@ -48,6 +48,11 @@ final class PendingSyncStore {
         return state.revision > state.acknowledged ? Revision(epoch: state.epoch!, value: state.revision) : nil
     }
 
+    func isAcknowledged(_ revision: Revision) throws -> Bool {
+        let state = try read()
+        return state.epoch == revision.epoch && revision.value <= state.acknowledged
+    }
+
     func acknowledge(through revision: Revision) throws {
         var state = try read()
         // A pass from a quarantined generation cannot acknowledge recovered work.
