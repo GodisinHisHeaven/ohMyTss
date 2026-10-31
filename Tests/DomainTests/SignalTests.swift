@@ -8,6 +8,10 @@ final class SignalTests: XCTestCase {
         TimedValue(start: origin.addingTimeInterval(start), end: origin.addingTimeInterval(end), value: value)
     }
     func window(_ seconds: Double) -> TimeRange { TimeRange(start: origin, end: origin.addingTimeInterval(seconds)) }
+    func source(_ workout: IntensityWorkout) -> IntensitySource {
+        IntensitySource(id: "canonical", linkedID: nil, isGarmin: false, isSuppressed: false,
+                        isDeleted: false, workout: workout)
+    }
 
     func testRegularAndIrregularSamplingOfSameSignalAgree() throws {
         // A known constant 200 W signal sampled at 1s and irregular 2/7/11s.
@@ -113,4 +117,91 @@ final class SignalTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(SignalProcessing.normalizedPower(samples)), 180, accuracy: 0.001)
     }
 
+    func testIntensityDistributionWeightsTimeAndThresholdBoundaries() throws {
+        let workout = IntensityWorkout(start: origin, end: origin.addingTimeInterval(100),
+            heartRate: [value(0, 10, 139), value(10, 40, 140), value(40, 100, 170)], pauses: [])
+        let result = try XCTUnwrap(IntensityDistribution.calculate(sources: [source(workout)], lt1: 140, lt2: 170, window: window(100)))
+        XCTAssertEqual(result.lowSeconds, 10)
+        XCTAssertEqual(result.moderateSeconds, 30)
+        XCTAssertEqual(result.highSeconds, 60)
+        XCTAssertEqual(result.totalSeconds, 100)
+    }
+
+    func testIntensityDistributionClipsWorkoutAndWindowAndRemovesPauses() throws {
+        let workout = IntensityWorkout(start: origin.addingTimeInterval(10), end: origin.addingTimeInterval(90),
+            heartRate: [value(0, 50, 100), value(50, 100, 180)],
+            pauses: [.init(start: origin.addingTimeInterval(30), end: origin.addingTimeInterval(40))])
+        let period = TimeRange(start: origin.addingTimeInterval(20), end: origin.addingTimeInterval(80))
+        let result = try XCTUnwrap(IntensityDistribution.calculate(sources: [source(workout)], lt1: 140, lt2: 170, window: period))
+        XCTAssertEqual(result.lowSeconds, 20)
+        XCTAssertEqual(result.moderateSeconds, 0)
+        XCTAssertEqual(result.highSeconds, 30)
+        XCTAssertEqual(result.totalSeconds, 50)
+    }
+
+    func testIntensityDistributionDoesNotCountMissingOrInvalidSamples() throws {
+        let points = [value(0, 0, 120), value(5, 5, 120), value(60, 60, 180), value(65, 65, 180),
+                      value(70, 80, 300)]
+        let workout = IntensityWorkout(start: origin, end: origin.addingTimeInterval(100), heartRate: points, pauses: [])
+        let result = try XCTUnwrap(IntensityDistribution.calculate(sources: [source(workout)], lt1: 140, lt2: 170, window: window(100)))
+        XCTAssertEqual(result.lowSeconds, 5)
+        XCTAssertEqual(result.highSeconds, 5)
+        XCTAssertEqual(result.totalSeconds, 10)
+        XCTAssertNil(IntensityDistribution.calculate(sources: [], lt1: 140, lt2: 170, window: window(100)))
+        XCTAssertNil(IntensityDistribution.calculate(sources: [source(workout)], lt1: 170, lt2: 140, window: window(100)))
+        XCTAssertNil(IntensityDistribution.calculate(sources: [source(workout)], lt1: 140, lt2: 140, window: window(100)))
+        XCTAssertNil(IntensityDistribution.calculate(sources: [source(workout)], lt1: 29, lt2: 170, window: window(100)))
+    }
+
+    func testIntensityUsesLinkedHealthSamplesWhenCanonicalStravaHasNone() throws {
+        let canonical = IntensitySource(id: "strava", linkedID: nil, isGarmin: false, isSuppressed: false, isDeleted: false,
+            workout: .init(start: origin, end: origin.addingTimeInterval(100), heartRate: [], pauses: []))
+        let health = IntensitySource(id: "health", linkedID: "strava", isGarmin: false, isSuppressed: true, isDeleted: false,
+            workout: .init(start: origin, end: origin.addingTimeInterval(100), heartRate: [value(0, 40, 130), value(40, 100, 180)], pauses: []))
+        let result = try XCTUnwrap(IntensityDistribution.calculate(sources: [canonical, health], lt1: 140, lt2: 170, window: window(100)))
+        XCTAssertEqual(result.lowSeconds, 40)
+        XCTAssertEqual(result.highSeconds, 60)
+        XCTAssertEqual(result.totalSeconds, 100)
+    }
+
+    func testIntensityGarminWinsOverlapsAndOtherSourceFillsOnlyGaps() throws {
+        let garmin = IntensitySource(id: "garmin", linkedID: nil, isGarmin: true, isSuppressed: false, isDeleted: false,
+            workout: .init(start: origin, end: origin.addingTimeInterval(100), heartRate: [value(20, 60, 130)],
+                pauses: [.init(start: origin.addingTimeInterval(70), end: origin.addingTimeInterval(80))]))
+        let other = IntensitySource(id: "other", linkedID: "garmin", isGarmin: false, isSuppressed: true, isDeleted: false,
+            workout: .init(start: origin, end: origin.addingTimeInterval(100), heartRate: [value(0, 100, 180)], pauses: []))
+        let result = try XCTUnwrap(IntensityDistribution.calculate(sources: [other, garmin], lt1: 140, lt2: 170, window: window(100)))
+        XCTAssertEqual(result.lowSeconds, 40)
+        XCTAssertEqual(result.highSeconds, 50)
+        XCTAssertEqual(result.totalSeconds, 90)
+    }
+
+    func testIntensityExcludesDeletedAliasesAndUnlinkedSuppressedSources() throws {
+        let root = IntensitySource(id: "root", linkedID: nil, isGarmin: false, isSuppressed: false, isDeleted: false,
+            workout: .init(start: origin, end: origin.addingTimeInterval(100), heartRate: [value(0, 10, 130)], pauses: []))
+        let deleted = IntensitySource(id: "deleted", linkedID: "root", isGarmin: false, isSuppressed: true, isDeleted: true,
+            workout: .init(start: origin, end: origin.addingTimeInterval(100), heartRate: [value(0, 100, 180)], pauses: []))
+        let orphan = IntensitySource(id: "orphan", linkedID: "missing", isGarmin: false, isSuppressed: true, isDeleted: false,
+            workout: .init(start: origin, end: origin.addingTimeInterval(100), heartRate: [value(0, 100, 180)], pauses: []))
+        let result = try XCTUnwrap(IntensityDistribution.calculate(sources: [root, deleted, orphan], lt1: 140, lt2: 170, window: window(100)))
+        XCTAssertEqual(result.lowSeconds, 10)
+        XCTAssertEqual(result.highSeconds, 0)
+    }
+
+    func testIntensityIncludesActiveWorkoutWithLinkToUnavailableParent() throws {
+        let active = IntensitySource(id: "active", linkedID: "missing", isGarmin: false, isSuppressed: false, isDeleted: false,
+            workout: .init(start: origin, end: origin.addingTimeInterval(100), heartRate: [value(0, 20, 150)], pauses: []))
+        let result = try XCTUnwrap(IntensityDistribution.calculate(sources: [active], lt1: 140, lt2: 170, window: window(100)))
+        XCTAssertEqual(result.moderateSeconds, 20)
+    }
+
+    func testIntensityPrefersCanonicalOnEqualNonGarminCoverage() throws {
+        let canonical = IntensitySource(id: "z-canonical", linkedID: nil, isGarmin: false, isSuppressed: false, isDeleted: false,
+            workout: .init(start: origin, end: origin.addingTimeInterval(100), heartRate: [value(0, 20, 130)], pauses: []))
+        let alias = IntensitySource(id: "a-alias", linkedID: "z-canonical", isGarmin: false, isSuppressed: true, isDeleted: false,
+            workout: .init(start: origin, end: origin.addingTimeInterval(100), heartRate: [value(0, 20, 180)], pauses: []))
+        let result = try XCTUnwrap(IntensityDistribution.calculate(sources: [canonical, alias], lt1: 140, lt2: 170, window: window(100)))
+        XCTAssertEqual(result.lowSeconds, 20)
+        XCTAssertEqual(result.highSeconds, 0)
+    }
 }

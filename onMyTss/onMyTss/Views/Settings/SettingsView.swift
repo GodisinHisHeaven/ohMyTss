@@ -10,6 +10,7 @@ import SwiftData
 
 /// Settings screen for managing user preferences and app configuration
 struct SettingsView: View {
+    private enum IntensityField: Hashable { case lt1, lt2 }
     private let dataStore: DataStore
     @Environment(\.modelContext) private var modelContext
     @State private var cardioHR = ""
@@ -18,6 +19,12 @@ struct SettingsView: View {
     @State private var viewModel: SettingsViewModel
     @State private var showingResetConfirmation = false
     @State private var showingFTPEditor = false
+    @AppStorage("intensityLT1HeartRate") private var intensityLT1HeartRate = 0
+    @AppStorage("intensityLT2HeartRate") private var intensityLT2HeartRate = 0
+    @State private var lt1Input = ""
+    @State private var lt2Input = ""
+    @State private var intensityMessage: String?
+    @FocusState private var focusedIntensity: IntensityField?
 
     init(dataStore: DataStore, engine: any BodyBatteryEngineProtocol) {
         self.dataStore = dataStore
@@ -46,6 +53,29 @@ struct SettingsView: View {
                     if let value = try? DataStore(modelContext: modelContext).fetchUserThresholds().cardioMaxHeartRate {
                         cardioHR = String(value)
                     }
+                }
+
+                Section {
+                    TextField("LT1 heart rate (bpm)", text: $lt1Input)
+                        .keyboardType(.numberPad)
+                        .focused($focusedIntensity, equals: .lt1)
+                        .accessibilityIdentifier("settings.lt1HeartRate")
+                    TextField("LT2 heart rate (bpm)", text: $lt2Input)
+                        .keyboardType(.numberPad)
+                        .focused($focusedIntensity, equals: .lt2)
+                        .accessibilityIdentifier("settings.lt2HeartRate")
+                    Button("Save intensity thresholds") { saveIntensityThresholds() }
+                        .swissAction()
+                        .accessibilityIdentifier("settings.saveIntensityThresholds")
+                    if let intensityMessage { Text(intensityMessage).font(.caption) }
+                } header: {
+                    Text("Training intensity")
+                } footer: {
+                    Text("Enter your personal LT1 and LT2 heart rates to see your training distribution. Both values must be 30–240 bpm, with LT1 below LT2. Leave both blank to clear them.")
+                }
+                .onAppear {
+                    lt1Input = intensityLT1HeartRate > 0 ? String(intensityLT1HeartRate) : ""
+                    lt2Input = intensityLT2HeartRate > 0 ? String(intensityLT2HeartRate) : ""
                 }
 
                 // Cycling Settings
@@ -220,6 +250,15 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("Settings")
+            .toolbar {
+                ToolbarItemGroup(placement: .keyboard) {
+                    if focusedIntensity != nil {
+                        Spacer()
+                        Button("Done") { focusedIntensity = nil }
+                            .accessibilityIdentifier("settings.intensityDone")
+                    }
+                }
+            }
             .task {
                 await viewModel.loadSettings()
             }
@@ -244,6 +283,28 @@ struct SettingsView: View {
                 }
             }
         }
+    }
+
+    private func saveIntensityThresholds() {
+        focusedIntensity = nil
+        let first = lt1Input.trimmingCharacters(in: .whitespacesAndNewlines)
+        let second = lt2Input.trimmingCharacters(in: .whitespacesAndNewlines)
+        if first.isEmpty && second.isEmpty {
+            intensityLT1HeartRate = 0
+            intensityLT2HeartRate = 0
+            intensityMessage = "Intensity thresholds cleared."
+            return
+        }
+        guard let lt1 = Int(first), let lt2 = Int(second),
+              (30...240).contains(lt1), (30...240).contains(lt2), lt1 < lt2 else {
+            intensityMessage = "Enter both values from 30–240 bpm, with LT1 below LT2."
+            return
+        }
+        intensityLT1HeartRate = lt1
+        intensityLT2HeartRate = lt2
+        lt1Input = String(lt1)
+        lt2Input = String(lt2)
+        intensityMessage = "Intensity thresholds saved."
     }
 
     @MainActor private func saveCardioSettings() async {

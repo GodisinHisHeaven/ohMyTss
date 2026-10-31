@@ -35,6 +35,11 @@ enum LaunchHistoryFixture {
                               includeStrengthSets: Bool = true) throws {
         let context = ModelContext(container)
         let now = Date()
+        let intensityFixture = ProcessInfo.processInfo.arguments.contains("--v2-intensity-fixture")
+        if intensityFixture {
+            UserDefaults.standard.set(0, forKey: "intensityLT1HeartRate")
+            UserDefaults.standard.set(0, forKey: "intensityLT2HeartRate")
+        }
         if try context.fetchCount(FetchDescriptor<UserThresholds>()) == 0 {
             context.insert(UserThresholds(hasCompletedOnboarding: true))
         }
@@ -48,8 +53,18 @@ enum LaunchHistoryFixture {
         }
         for (index, type) in ["Ride", "Run", "Strength", "Swim", "Walk", "Run", "Ride", "Run"].enumerated() {
             let start = now.addingTimeInterval(-Double(index) * 86400 - 3600)
-            context.insert(Workout(id: "synthetic-dashboard-\(index)", date: start.startOfDay, startTime: start,
-                duration: 2700, workoutType: type, tss: 48, calculationMethod: "duration", source: .manual))
+            let workout = Workout(id: "synthetic-dashboard-\(index)", date: start.startOfDay, startTime: start,
+                duration: 2700, workoutType: type, tss: 48, calculationMethod: "duration", source: .manual)
+            if intensityFixture && index == 0 {
+                var features = WorkoutFeatures()
+                features.heartRate = [
+                    TimedValue(start: start, end: start.addingTimeInterval(72), value: 120),
+                    TimedValue(start: start.addingTimeInterval(72), end: start.addingTimeInterval(92), value: 150),
+                    TimedValue(start: start.addingTimeInterval(92), end: start.addingTimeInterval(100), value: 180)
+                ]
+                workout.features = features
+            }
+            context.insert(workout)
         }
         if includeStrengthSets {
             context.insert(StrengthSetRecord(sessionID: "synthetic-dashboard-2", exerciseID: "bench_press", reps: 8, rir: 2))
