@@ -89,5 +89,9 @@ this GitHub check observes it and does not replace those gates. The API check
 establishes the resulting build and group state; it does not independently
 establish which post-action or person added that build to the group, or prove
 that a particular tester received an invitation or installed it.
+The verifier does not distinguish Xcode Cloud workflows for the same main
+commit or prove that Branch Changes started the run. It requires an action
+named `Test - iOS`; if that action is renamed, verification returns unknown
+until the verifier is updated.
 
 Apple reference: [Writing custom build scripts](https://developer.apple.com/documentation/xcode/writing-custom-build-scripts).
