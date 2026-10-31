@@ -15,8 +15,17 @@ struct MainTabView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Query private var appStates: [AppState]
     @State private var morningSync = MorningSummarySync()
+    @State private var autoSync: AutoSyncCoordinator
 
     @State private var selectedTab: Tab = .today
+
+    init(engine: any BodyBatteryEngineProtocol, dataStore: DataStore) {
+        self.engine = engine
+        self.dataStore = dataStore
+        _autoSync = State(initialValue: AutoSyncCoordinator {
+            try await engine.incrementalUpdate()
+        })
+    }
 
     enum Tab {
         case today
@@ -48,6 +57,27 @@ struct MainTabView: View {
                 .tag(Tab.settings)
         }
         .background(WeeklyWorkoutObserver())
+        .task(id: scenePhase == .active) {
+            guard scenePhase == .active, !Task.isCancelled else { return }
+            #if DEBUG
+            let arguments = ProcessInfo.processInfo.arguments
+            let isUITest = arguments.contains("--v2-ui-tests")
+            let isAutoSyncFixture = isUITest && arguments.contains("--v2-sync-fixture")
+                && arguments.contains("--v2-auto-sync-fixture")
+            guard !isUITest || isAutoSyncFixture else { return }
+            #endif
+            AppBackgroundDelegate.current?.enableHealthDelivery()
+            while !Task.isCancelled {
+                // Let a started import finish when the scene becomes inactive.
+                Task { @MainActor in
+                    let last = (try? dataStore.fetchAppState())?.lastComputationDate
+                    let pending = (engine as? AppSyncRuntime)?.hasPendingChange ?? false
+                    await autoSync.requestIfNeeded(lastComputation: last, force: pending)
+                }
+                do { try await Task.sleep(for: .seconds(60)) }
+                catch { return }
+            }
+        }
         .task(id: MorningSyncTrigger(isActive: scenePhase == .active, computedAt: appStates.first?.lastComputationDate)) {
             await syncMorningSummaryIfActive()
         }

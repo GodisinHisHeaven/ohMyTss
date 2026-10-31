@@ -44,6 +44,8 @@ final class StravaSourceAvailabilityTests: XCTestCase {
         _ = try await aggregator.fetchWorkouts(from: start, to: start.addingTimeInterval(3600))
         XCTAssertEqual(Set(client.detailRequests), [101, 103])
         XCTAssertEqual(aggregator.latestDeletedStravaIDs, ["101"])
+        XCTAssertFalse(aggregator.warnings.isEmpty)
+        XCTAssertFalse(aggregator.hasRetryableFailures)
         XCTAssertEqual(aggregator.latestImportedWorkouts.first(where: { $0.id == "103" })?.startTime, start.addingTimeInterval(4000))
     }
 
@@ -59,12 +61,17 @@ final class StravaSourceAvailabilityTests: XCTestCase {
         _ = try await aggregator.fetchWorkouts(from: start, to: start.addingTimeInterval(3600))
         XCTAssertTrue(client.detailRequests.isEmpty)
         XCTAssertTrue(aggregator.latestDeletedStravaIDs.isEmpty)
+        XCTAssertTrue(aggregator.hasRetryableFailures)
         client.listFails = false
         client.detailFails = true
         _ = try await aggregator.fetchWorkouts(from: start, to: start.addingTimeInterval(3600))
         XCTAssertEqual(client.detailRequests, [101])
         XCTAssertTrue(aggregator.latestDeletedStravaIDs.isEmpty)
+        XCTAssertTrue(aggregator.hasRetryableFailures)
         XCTAssertFalse(try XCTUnwrap(store.fetchWorkout(byId: "101")).isTombstoned)
+        client.detailFails = false
+        _ = try await aggregator.fetchWorkouts(from: start, to: start.addingTimeInterval(3600))
+        XCTAssertFalse(aggregator.hasRetryableFailures)
     }
 
     private func source(id: Int, at date: Date) -> Workout {

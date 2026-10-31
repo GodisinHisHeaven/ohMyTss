@@ -428,6 +428,18 @@ class DataStore {
         return try modelContext.fetch(descriptor)
     }
 
+    /// Uses the actual start time so the interval remains correct after a time zone change.
+    func fetchWeeklyWidgetWorkouts(from start: Date, to end: Date) throws -> [Workout] {
+        let descriptor = FetchDescriptor<Workout>(
+            predicate: #Predicate { workout in
+                workout.startTime >= start && workout.startTime < end
+                    && !workout.isSuppressed && !workout.isTombstoned
+            },
+            sortBy: [SortDescriptor(\.startTime, order: .forward)]
+        )
+        return try modelContext.fetch(descriptor)
+    }
+
     func fetchWorkoutsForDay(_ date: Date) throws -> [Workout] {
         let calendar = Calendar.current
         let startOfDay = calendar.startOfDay(for: date)
