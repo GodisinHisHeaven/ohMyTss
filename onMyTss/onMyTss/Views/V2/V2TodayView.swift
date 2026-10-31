@@ -175,14 +175,14 @@ private struct IntensityDistributionCard: View {
                 .accessibilityHidden(true)
                 ViewThatFits(in: .horizontal) {
                     HStack(alignment: .top, spacing: 8) {
-                        intensityColumn("Below LT1", color: SwissStyle.positive, seconds: distribution.lowSeconds, total: distribution.totalSeconds)
-                        intensityColumn("LT1–LT2", color: SwissStyle.accent, seconds: distribution.moderateSeconds, total: distribution.totalSeconds)
-                        intensityColumn("≥ LT2", color: SwissStyle.caution, seconds: distribution.highSeconds, total: distribution.totalSeconds)
+                        intensityColumn("Below LT1", id: "low", color: SwissStyle.positive, seconds: distribution.lowSeconds, total: distribution.totalSeconds)
+                        intensityColumn("LT1–LT2", id: "middle", color: SwissStyle.accent, seconds: distribution.moderateSeconds, total: distribution.totalSeconds)
+                        intensityColumn("≥ LT2", id: "high", color: SwissStyle.caution, seconds: distribution.highSeconds, total: distribution.totalSeconds)
                     }
                     VStack(alignment: .leading, spacing: 12) {
-                        intensityRow("Below LT1", color: SwissStyle.positive, seconds: distribution.lowSeconds, total: distribution.totalSeconds)
-                        intensityRow("LT1–LT2", color: SwissStyle.accent, seconds: distribution.moderateSeconds, total: distribution.totalSeconds)
-                        intensityRow("≥ LT2", color: SwissStyle.caution, seconds: distribution.highSeconds, total: distribution.totalSeconds)
+                        intensityRow("Below LT1", id: "low", color: SwissStyle.positive, seconds: distribution.lowSeconds, total: distribution.totalSeconds)
+                        intensityRow("LT1–LT2", id: "middle", color: SwissStyle.accent, seconds: distribution.moderateSeconds, total: distribution.totalSeconds)
+                        intensityRow("≥ LT2", id: "high", color: SwissStyle.caution, seconds: distribution.highSeconds, total: distribution.totalSeconds)
                     }
                 }
             } else {
@@ -210,7 +210,7 @@ private struct IntensityDistributionCard: View {
         }
     }
 
-    private func intensityColumn(_ title: String, color: Color, seconds: Double, total: Double) -> some View {
+    private func intensityColumn(_ title: String, id: String, color: Color, seconds: Double, total: Double) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(seconds / total, format: .percent.precision(.fractionLength(0)))
                 .font(.title3.weight(.medium)).monospacedDigit()
@@ -221,9 +221,10 @@ private struct IntensityDistributionCard: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("today.intensity.\(id)")
     }
 
-    private func intensityRow(_ title: String, color: Color, seconds: Double, total: Double) -> some View {
+    private func intensityRow(_ title: String, id: String, color: Color, seconds: Double, total: Double) -> some View {
         HStack {
             Circle().fill(color).frame(width: 8, height: 8).accessibilityHidden(true)
             Text(title)
@@ -233,6 +234,7 @@ private struct IntensityDistributionCard: View {
         }
         .font(.subheadline)
         .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("today.intensity.\(id)")
     }
 
 }

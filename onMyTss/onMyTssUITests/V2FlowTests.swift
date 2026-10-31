@@ -74,12 +74,16 @@ final class V2FlowTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Intensity thresholds saved."].waitForExistence(timeout: 5))
 
         app.buttons["Today"].firstMatch.tap()
-        let low = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "72%", "Below LT1")).firstMatch
+        let low = app.descendants(matching: .any)["today.intensity.low"]
         reach(low, in: app)
-        let middle = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "20%", "LT1–LT2")).firstMatch
-        let high = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "8%", "≥ LT2")).firstMatch
+        let middle = app.descendants(matching: .any)["today.intensity.middle"]
+        let high = app.descendants(matching: .any)["today.intensity.high"]
         XCTAssertTrue(middle.exists)
         XCTAssertTrue(high.exists)
+        XCTAssertTrue(low.label.contains("72%"))
+        XCTAssertTrue(middle.label.contains("20%"))
+        XCTAssertTrue(high.label.contains("8%"))
+        XCTAssertTrue(low.frame.minY.isFinite && middle.frame.minY.isFinite && high.frame.minY.isFinite)
         XCTAssertLessThan(low.frame.midX, middle.frame.midX)
         XCTAssertLessThan(middle.frame.midX, high.frame.midX)
         XCTAssertEqual(low.frame.minY, middle.frame.minY, accuracy: 3)
