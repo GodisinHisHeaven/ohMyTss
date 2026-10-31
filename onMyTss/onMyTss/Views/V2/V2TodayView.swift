@@ -190,7 +190,7 @@ private struct IntensityDistributionCard: View {
                     .font(.subheadline).foregroundStyle(.secondary)
             }
         }
-        .accessibilityIdentifier("today.intensity")
+        .accessibilityElement(children: .contain)
         .task(id: request) {
             let currentGeneration = UUID()
             generation = currentGeneration
