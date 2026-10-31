@@ -5,7 +5,8 @@ import SwiftData
 /// Synthetic history for isolated in-memory or temporary-disk regression tests.
 @MainActor
 enum LaunchHistoryFixture {
-    static func seed(in container: ModelContainer, includeEstimates: Bool = true) throws {
+    static func seed(in container: ModelContainer, includeEstimates: Bool = true,
+                     sourceAlreadyKnown: Bool = false) throws {
         let context = ModelContext(container)
         let now = Date()
         context.insert(UserThresholds(hasCompletedOnboarding: true))
@@ -14,6 +15,9 @@ enum LaunchHistoryFixture {
             let workout = Workout(id: "synthetic-launch-\(index)", date: start.startOfDay,
                                   startTime: start, duration: 3600, workoutType: "Run", tss: 50,
                                   calculationMethod: "duration", source: .healthKit)
+            // Synthetic IDs are not HealthKit UUIDs, so the sync fixture must
+            // represent sources already identified by a previous sync.
+            if sourceAlreadyKnown { workout.sourceBundleIdentifier = "com.example.synthetic-workouts" }
             workout.sessionGroupID = workout.id
             context.insert(workout)
             guard includeEstimates else { continue }

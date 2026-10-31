@@ -149,6 +149,15 @@ class SettingsViewModel {
     func resetAllData() async {
         isSaving = true
         errorMessage = nil
+        successMessage = nil
+
+        // This check and the reset writes are synchronous on the main actor.
+        // A persisted interrupted marker alone must not prevent recovery.
+        guard !engine.isProcessing else {
+            errorMessage = "Sync is in progress. Wait for it to finish, then try again."
+            isSaving = false
+            return
+        }
 
         do {
             try dataStore.deleteAllDayAggregates()

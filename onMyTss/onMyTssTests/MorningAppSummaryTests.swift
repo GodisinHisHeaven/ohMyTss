@@ -17,13 +17,15 @@ final class MorningAppSummaryTests: XCTestCase {
         try store.saveDayAggregate(day)
         let state = try store.fetchAppState()
         state.lastComputationDate = now
-        for (id, age, duration, hidden) in [("recent", 3600.0, 1800.0, false), ("old", 8*86400.0, 1800.0, false),
-                                          ("suppressed", 3600.0, 1800.0, true), ("future", -3600.0, 1800.0, false)] {
+        for (id, age, duration) in [("recent", 3600.0, 1800.0), ("old", 8*86400.0, 1800.0),
+                                    ("suppressed", 3600.0, 1800.0), ("future", -3600.0, 1800.0)] {
             let date = now.addingTimeInterval(-age)
             let workout = Workout(id: id, date: date, startTime: date, duration: duration,
-                                  workoutType: "Run", tss: 30, calculationMethod: "duration", source: .healthKit, isSuppressed: hidden)
+                                  workoutType: "Run", tss: 30, calculationMethod: "duration",
+                                  source: id == "recent" ? .strava : .healthKit)
             try store.saveWorkouts([workout])
         }
+        XCTAssertTrue(try XCTUnwrap(store.fetchWorkout(byId: "suppressed")).isSuppressed)
         let summary = try XCTUnwrap(MorningAppSummary.make(store: store, timezone: TimeZone.current.identifier, now: now))
         XCTAssertEqual(summary.readinessScore, 72)
         XCTAssertEqual(summary.sleepHours, 7.5)

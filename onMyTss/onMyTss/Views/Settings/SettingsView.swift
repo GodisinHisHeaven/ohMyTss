@@ -140,7 +140,7 @@ struct SettingsView: View {
                     Text("Strava")
                 } footer: {
                     if viewModel.isStravaConnected {
-                        Text("Strava workouts will be synced and prioritized over HealthKit duplicates.")
+                        Text("Garmin workouts are prioritized when the same activity appears in multiple sources.")
                     } else {
                         Text("Connect your Strava account to sync activities and use Strava's FTP.")
                     }

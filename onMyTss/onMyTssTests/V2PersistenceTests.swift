@@ -285,6 +285,29 @@ final class V2PersistenceTests: XCTestCase {
         XCTAssertTrue(savedIDs.isSubset(of: Set(resumed.map(\.id))))
     }
 
+    func testResetAllDataClearsPendingSourceBackfillsAndFinalization() throws {
+        let context = ModelContext(try container())
+        let dataStore = DataStore(modelContext: context)
+        let state = try dataStore.fetchAppState()
+        state.healthKitTypeBackfillVersion = 1
+        state.pendingHealthKitTypeBackfillIDs = ["old-type-uuid"]
+        state.healthKitSourceBackfillVersion = 1
+        state.pendingHealthKitSourceBackfillIDs = ["old-source-uuid"]
+        state.pendingWorkoutSourceFinalization = true
+        try dataStore.saveWorkout(imported())
+        try dataStore.deleteAllWorkouts()
+        try dataStore.resetAppState()
+
+        let reset = try dataStore.fetchAppState()
+        XCTAssertEqual(reset.healthKitTypeBackfillVersion, 0)
+        XCTAssertTrue(reset.pendingHealthKitTypeBackfillIDs.isEmpty)
+        XCTAssertEqual(reset.healthKitSourceBackfillVersion, 0)
+        XCTAssertTrue(reset.pendingHealthKitSourceBackfillIDs.isEmpty)
+        XCTAssertFalse(reset.pendingWorkoutSourceFinalization)
+        XCTAssertNoThrow(try dataStore.ensureWorkoutMutationAllowed())
+        XCTAssertTrue(try dataStore.allWorkouts().isEmpty)
+    }
+
     func testCrossSourceDuplicateAndSourceDeletionKeepOneActiveContribution() throws {
         let context = ModelContext(try container())
         let dataStore = DataStore(modelContext: context)
@@ -339,6 +362,322 @@ final class V2PersistenceTests: XCTestCase {
         XCTAssertEqual(rows.filter { !$0.isSuppressed && !$0.isTombstoned }.map(\.id), ["walk-strava"])
         XCTAssertEqual(try dataStore.fetchDayAggregate(for: start)?.totalTSS, 35)
         XCTAssertEqual(try dataStore.fetchDayAggregate(for: start)?.workoutCount, 1)
+    }
+
+    func testGarminHealthKitWinsThreeSourceHistoricalGroupAndKeepsOneLoad() throws {
+        let context = ModelContext(try container())
+        let store = DataStore(modelContext: context)
+        let garmin = imported(id: "garmin-hk", tss: 45)
+        garmin.sourceBundleIdentifier = "com.garmin.connect.mobile"
+        let apple = imported(id: "apple-hk", tss: 25)
+        apple.sourceBundleIdentifier = "com.apple.Health"
+        let strava = imported(id: "garmin-strava", source: .strava, tss: 35)
+        for _ in 0..<2 {
+            try store.saveWorkouts([apple, strava, garmin])
+            try store.rebuildLegacyLoadHistory(now: start.addingTimeInterval(1200))
+        }
+        let rows = try store.allWorkouts()
+        XCTAssertEqual(rows.count, 3)
+        XCTAssertEqual(rows.filter { !$0.isSuppressed && !$0.isTombstoned }.map(\.id), [garmin.id])
+        XCTAssertEqual(Set(rows.compactMap(\.sessionGroupID)).count, 1)
+        XCTAssertEqual(try store.fetchDayAggregate(for: start)?.workoutCount, 1)
+        XCTAssertEqual(try store.fetchDayAggregate(for: start)?.totalTSS, 45)
+    }
+
+    func testSameAppOrUnknownHealthKitSourceBlocksAmbiguousThreeWayMerge() throws {
+        for secondBundle in ["com.apple.Health", nil] as [String?] {
+            let context = ModelContext(try container())
+            let store = DataStore(modelContext: context)
+            let first = imported(id: "ambiguous-first", tss: 10)
+            first.sourceBundleIdentifier = "com.apple.Health"
+            let second = imported(id: "ambiguous-second", tss: 20)
+            second.sourceBundleIdentifier = secondBundle
+            let strava = imported(id: "ambiguous-strava", source: .strava, tss: 30)
+            try store.saveWorkouts([first, strava, second])
+            try store.rebuildLegacyLoadHistory(now: start.addingTimeInterval(1200))
+            XCTAssertEqual(try store.fetchWorkoutsForDay(start).count, 3)
+            XCTAssertEqual(try store.fetchDayAggregate(for: start)?.totalTSS, 60)
+        }
+    }
+
+    func testSourceCorrectionSplitsGarminGroupAndPreservesIndependentLoad() throws {
+        let context = ModelContext(try container())
+        let store = DataStore(modelContext: context)
+        let garmin = imported(id: "corrected-garmin", tss: 45)
+        garmin.sourceBundleIdentifier = "com.garmin.connect.mobile"
+        let apple = imported(id: "corrected-apple", tss: 25)
+        apple.sourceBundleIdentifier = "com.apple.Health"
+        let strava = imported(id: "corrected-three-strava", source: .strava, tss: 35)
+        try store.saveWorkouts([garmin, apple, strava])
+        XCTAssertEqual(try store.fetchWorkoutsForDay(start).map(\.id), [garmin.id])
+        let corrected = imported(id: garmin.id, tss: 45)
+        corrected.sourceBundleIdentifier = "com.apple.Health"
+        let changes = try store.saveWorkouts([corrected])
+        XCTAssertTrue(changes.dates.contains(start.startOfDay))
+        try store.rebuildLegacyLoadHistory(now: start.addingTimeInterval(1200))
+        XCTAssertEqual(try store.fetchWorkoutsForDay(start).count, 3)
+        XCTAssertEqual(try store.fetchDayAggregate(for: start)?.totalTSS, 105)
+    }
+
+    func testMissingSourceMetadataOnRepeatedImportKeepsKnownGarminPriority() throws {
+        let context = ModelContext(try container())
+        let store = DataStore(modelContext: context)
+        let garmin = imported(id: "metadata-garmin", tss: 45)
+        garmin.sourceBundleIdentifier = "com.garmin.connect.mobile"
+        garmin.deviceManufacturer = "Garmin"
+        garmin.deviceName = "Garmin watch"
+        let strava = imported(id: "metadata-strava", source: .strava, tss: 35)
+        try store.saveWorkouts([garmin, strava])
+        let incomplete = imported(id: garmin.id, tss: 46)
+        try store.saveWorkouts([incomplete])
+        let saved = try XCTUnwrap(store.fetchWorkout(byId: garmin.id))
+        XCTAssertEqual(saved.sourceBundleIdentifier, "com.garmin.connect.mobile")
+        XCTAssertEqual(saved.deviceManufacturer, "Garmin")
+        XCTAssertEqual(saved.deviceName, "Garmin watch")
+        XCTAssertEqual(try store.fetchWorkoutsForDay(start).map(\.id), [garmin.id])
+        XCTAssertEqual(saved.tss, 46)
+    }
+
+    func testUnresolvedSourceDefersOnlyItsGroupAndAllowsUnrelatedDeletion() async throws {
+        let context = ModelContext(try container())
+        let store = DataStore(modelContext: context)
+        let v2 = V2Store(context: context, clock: { self.start.addingTimeInterval(7200) })
+        let state = try store.fetchAppState()
+        let health = imported(id: "pending-group-hk")
+        health.userTags = ["saved-tag"]
+        let strava = imported(id: "pending-group-strava", source: .strava)
+        let single = imported(id: "pending-single-hk")
+        single.startTime = start.addingTimeInterval(3600)
+        var features = single.features
+        features.end = single.startTime.addingTimeInterval(600)
+        single.features = features
+        state.pendingHealthKitSourceBackfillIDs = [health.id, single.id]
+        try store.saveWorkouts([health, strava, single])
+        let set = StrengthSetRecord(sessionID: health.id, exerciseID: "squat", reps: 8, rir: 0)
+        let observation = LocalObservation(regionRaw: "quads", sideRaw: "left", severity: 1,
+                                           observedAt: start, sessionID: health.id)
+        context.insert(set)
+        context.insert(observation)
+        try context.save()
+        try await v2.refreshEstimates(finalizeAliases: true)
+        XCTAssertEqual(health.userTags, ["saved-tag"])
+        XCTAssertTrue(strava.userTags.isEmpty)
+        XCTAssertEqual(set.sessionID, health.id)
+        XCTAssertEqual(observation.sessionID, health.id)
+        XCTAssertThrowsError(try store.deleteWorkout(strava)) { XCTAssertTrue($0 is WorkoutMutationError) }
+        do { try await v2.deleteSession(strava); XCTFail("Unresolved group deletion must wait") }
+        catch is WorkoutMutationError { }
+        let manual = try v2.createStrengthSession(start: start, duration: 600)
+        XCTAssertThrowsError(try v2.linkSession(manual: manual, to: strava)) { XCTAssertTrue($0 is WorkoutMutationError) }
+        try store.deleteWorkout(single)
+        XCTAssertTrue(single.isTombstoned, "An unrelated unresolved singleton can still be deleted")
+
+        state.pendingHealthKitSourceBackfillIDs = []
+        _ = try store.finalizeWorkoutSources()
+        try await v2.refreshEstimates(finalizeAliases: true)
+        XCTAssertEqual(strava.userTags, ["saved-tag"])
+        XCTAssertEqual(set.sessionID, strava.id)
+        XCTAssertEqual(observation.sessionID, strava.id)
+    }
+
+    func testUnresolvedSourceDoesNotSpreadUserTombstoneUntilResolved() throws {
+        let context = ModelContext(try container())
+        let store = DataStore(modelContext: context)
+        let state = try store.fetchAppState()
+        let health = imported(id: "pending-deleted-hk")
+        health.isTombstoned = true
+        health.deletionOrigin = "user"
+        let strava = imported(id: "pending-deleted-strava", source: .strava)
+        state.pendingHealthKitSourceBackfillIDs = [health.id]
+        try store.saveWorkouts([health, strava])
+        XCTAssertFalse(strava.isTombstoned)
+        XCTAssertTrue(strava.isSuppressed)
+        state.pendingHealthKitSourceBackfillIDs = []
+        _ = try store.finalizeWorkoutSources()
+        XCTAssertTrue(strava.isTombstoned)
+        XCTAssertEqual(strava.deletionOrigin, "user")
+    }
+
+    func testGarminCanonicalSwitchAfterSourceDeletionRetainsPersonalRows() async throws {
+        let context = ModelContext(try container())
+        let store = DataStore(modelContext: context)
+        let v2 = V2Store(context: context)
+        let garmin = imported(id: "remove-garmin", tss: 45)
+        garmin.sourceBundleIdentifier = "com.garmin.connect.mobile"
+        let apple = imported(id: "remove-apple", tss: 25)
+        apple.sourceBundleIdentifier = "com.apple.Health"
+        let strava = imported(id: "remove-strava", source: .strava, tss: 35)
+        try store.saveWorkouts([garmin, apple, strava])
+        let set = StrengthSetRecord(sessionID: garmin.id, exerciseID: "squat", reps: 8, rir: 0)
+        let observation = LocalObservation(regionRaw: "quads", sideRaw: "left", severity: 1,
+                                           observedAt: start, sessionID: garmin.id)
+        try v2.saveSet(set)
+        try v2.saveObservation(observation)
+        try store.applyHealthKitDeletions([garmin.id])
+        try await v2.refreshEstimates()
+        XCTAssertEqual(try store.fetchWorkoutsForDay(start).map(\.id), [strava.id])
+        XCTAssertEqual(set.sessionID, strava.id)
+        XCTAssertEqual(observation.sessionID, strava.id)
+        XCTAssertTrue(garmin.isTombstoned)
+        XCTAssertFalse(apple.isTombstoned)
+    }
+
+    func testCrossSourceElapsedTimeMatchesDifferentMovingDurations() throws {
+        let context = ModelContext(try container())
+        let store = DataStore(modelContext: context)
+        for _ in 0..<2 {
+            let health = imported(id: "elapsed-hk", tss: 25)
+            health.workoutType = "Running"
+            let strava = imported(id: "elapsed-strava", source: .strava, tss: 35)
+            strava.workoutType = "Run"
+            strava.duration = 540
+            // Both sources end after 600 seconds, but Strava reports 540 moving seconds.
+            try store.saveWorkouts([health, strava])
+            try store.rebuildLegacyLoadHistory(now: start.addingTimeInterval(1200))
+        }
+        let rows = try store.allWorkouts()
+        XCTAssertEqual(rows.count, 2)
+        XCTAssertEqual(rows.filter { !$0.isSuppressed && !$0.isTombstoned }.map(\.id), ["elapsed-strava"])
+        XCTAssertEqual(try store.fetchDayAggregate(for: start)?.workoutCount, 1)
+        XCTAssertEqual(try store.fetchDayAggregate(for: start)?.totalTSS, 35)
+    }
+
+    func testHikingAndYogaAliasesMatchAcrossSources() throws {
+        for (healthType, stravaType) in [("Hiking", "Hike"), ("Yoga", "Yoga")] {
+            let context = ModelContext(try container())
+            let store = DataStore(modelContext: context)
+            let health = imported(id: "sport-hk")
+            health.workoutType = healthType
+            let strava = imported(id: "sport-strava", source: .strava)
+            strava.workoutType = stravaType
+            try store.saveWorkouts([health, strava])
+            XCTAssertEqual(try store.fetchWorkoutsForDay(start).map(\.id), ["sport-strava"], healthType)
+        }
+    }
+
+    func testSameSourceWorkoutsAreNotAutomaticallyMerged() throws {
+        let context = ModelContext(try container())
+        let store = DataStore(modelContext: context)
+        let first = imported(id: "same-source-first", tss: 25)
+        let second = imported(id: "same-source-second", tss: 35)
+        second.startTime = start.addingTimeInterval(20)
+        try store.saveWorkouts([first, second])
+        try store.rebuildLegacyLoadHistory(now: start.addingTimeInterval(1200))
+        XCTAssertEqual(try store.fetchWorkoutsForDay(start).count, 2)
+        XCTAssertEqual(try store.fetchDayAggregate(for: start)?.workoutCount, 2)
+        XCTAssertEqual(try store.fetchDayAggregate(for: start)?.totalTSS, 60)
+    }
+
+    func testAmbiguousCrossSourceBridgeDoesNotMergeEitherWorkout() throws {
+        let context = ModelContext(try container())
+        let store = DataStore(modelContext: context)
+        let first = imported(id: "bridge-first", tss: 25)
+        let second = imported(id: "bridge-second", tss: 30)
+        second.startTime = start.addingTimeInterval(100)
+        var secondFeatures = second.features
+        secondFeatures.end = second.startTime.addingTimeInterval(600)
+        second.features = secondFeatures
+        let bridge = imported(id: "bridge-strava", source: .strava, tss: 35)
+        bridge.startTime = start.addingTimeInterval(50)
+        var bridgeFeatures = bridge.features
+        bridgeFeatures.end = bridge.startTime.addingTimeInterval(600)
+        bridge.features = bridgeFeatures
+        XCTAssertTrue(WorkoutAggregator.areDuplicates(first, bridge))
+        XCTAssertTrue(WorkoutAggregator.areDuplicates(second, bridge))
+        try store.saveWorkouts([first, bridge, second])
+        let rows = try store.allWorkouts()
+        XCTAssertEqual(rows.count, 3)
+        XCTAssertEqual(rows.filter { !$0.isSuppressed && !$0.isTombstoned }.count, 3)
+        XCTAssertNotEqual(first.sessionGroupID, second.sessionGroupID)
+        try store.rebuildLegacyLoadHistory(now: start.addingTimeInterval(1200))
+        XCTAssertEqual(try store.fetchDayAggregate(for: start)?.workoutCount, 3)
+        XCTAssertEqual(try store.fetchDayAggregate(for: start)?.totalTSS, 90)
+    }
+
+    func testRepeatedUnchangedSyncRepairsLegacyIncorrectGroup() async throws {
+        let context = ModelContext(try container())
+        let store = DataStore(modelContext: context)
+        let health = imported(id: "legacy-group-hk", tss: 25)
+        let strava = imported(id: "legacy-group-strava", source: .strava, tss: 35)
+        strava.startTime = start.addingTimeInterval(3600)
+        var features = strava.features
+        features.end = strava.startTime.addingTimeInterval(600)
+        strava.features = features
+        // Simulate a group written before the source corrected its start time.
+        health.sessionGroupID = health.id
+        health.linkedSessionID = strava.id
+        health.isSuppressed = true
+        strava.sessionGroupID = health.id
+        context.insert(health)
+        context.insert(strava)
+        try context.save()
+
+        for _ in 0..<2 {
+            let unchangedHealth = imported(id: "legacy-group-hk", tss: 25)
+            let unchangedStrava = imported(id: "legacy-group-strava", source: .strava, tss: 35)
+            unchangedStrava.startTime = start.addingTimeInterval(3600)
+            var unchangedFeatures = unchangedStrava.features
+            unchangedFeatures.end = unchangedStrava.startTime.addingTimeInterval(600)
+            unchangedStrava.features = unchangedFeatures
+            _ = try await store.applyImportedWorkouts([unchangedHealth, unchangedStrava], deletedIDs: [])
+        }
+        XCTAssertEqual(try store.fetchWorkoutsForDay(start).count, 2)
+        XCTAssertNotEqual(health.sessionGroupID, strava.sessionGroupID)
+        try store.rebuildLegacyLoadHistory(now: start.addingTimeInterval(4800))
+        XCTAssertEqual(try store.fetchDayAggregate(for: start)?.workoutCount, 2)
+        XCTAssertEqual(try store.fetchDayAggregate(for: start)?.totalTSS, 60)
+    }
+
+    func testCorrectedSourceSplitsGroupAndRebuildsBothDays() throws {
+        let context = ModelContext(try container())
+        let store = DataStore(modelContext: context)
+        let health = imported(id: "corrected-hk", tss: 25)
+        let strava = imported(id: "corrected-strava", source: .strava, tss: 35)
+        try store.saveWorkouts([health, strava])
+        let later = try XCTUnwrap(Calendar.current.date(byAdding: .day, value: 2, to: start))
+        try store.rebuildLegacyLoadHistory(now: later.addingTimeInterval(1200))
+        XCTAssertEqual(try store.fetchDayAggregate(for: start)?.totalTSS, 35)
+
+        for _ in 0..<2 {
+            let corrected = imported(id: "corrected-strava", source: .strava, tss: 40)
+            corrected.startTime = later
+            corrected.date = Calendar.current.startOfDay(for: later)
+            var features = corrected.features
+            features.end = later.addingTimeInterval(600)
+            corrected.features = features
+            try store.saveWorkouts([corrected])
+            try store.rebuildLegacyLoadHistory(now: later.addingTimeInterval(1200))
+        }
+        XCTAssertEqual(try store.fetchWorkoutsForDay(start).map(\.id), ["corrected-hk"])
+        XCTAssertEqual(try store.fetchWorkoutsForDay(later).map(\.id), ["corrected-strava"])
+        XCTAssertEqual(try store.fetchDayAggregate(for: start)?.totalTSS, 25)
+        XCTAssertEqual(try store.fetchDayAggregate(for: later)?.totalTSS, 40)
+        XCTAssertEqual(try store.fetchDayAggregate(for: start)?.workoutCount, 1)
+        XCTAssertEqual(try store.fetchDayAggregate(for: later)?.workoutCount, 1)
+
+        try store.deleteWorkout(try XCTUnwrap(store.fetchWorkout(byId: "corrected-strava")))
+        let surviving = try XCTUnwrap(store.fetchWorkout(byId: "corrected-hk"))
+        XCTAssertFalse(surviving.isTombstoned)
+        XCTAssertFalse(surviving.isSuppressed)
+    }
+
+    func testCorrectedTypeOrDurationSplitsPreviouslyMatchedSources() throws {
+        for correction in ["type", "duration"] {
+            let context = ModelContext(try container())
+            let store = DataStore(modelContext: context)
+            try store.saveWorkouts([imported(id: "changed-hk"), imported(id: "changed-strava", source: .strava)])
+            let corrected = imported(id: "changed-strava", source: .strava)
+            if correction == "type" {
+                corrected.workoutType = "Run"
+            } else {
+                corrected.duration = 900
+                var features = corrected.features
+                features.end = start.addingTimeInterval(900)
+                corrected.features = features
+            }
+            try store.saveWorkouts([corrected])
+            XCTAssertEqual(try store.fetchWorkoutsForDay(start).count, 2, "Correction: \(correction)")
+        }
     }
 
     func testLocalDeletionRebuildsDependentScoresAndRampRates() async throws {
@@ -446,6 +785,43 @@ final class V2PersistenceTests: XCTestCase {
         XCTAssertTrue(all.allSatisfy { $0.isTombstoned && $0.isSuppressed && $0.deletionOrigin == "user" })
         try dataStore.rebuildLegacyLoadHistory(now: start.addingTimeInterval(600))
         XCTAssertEqual(try dataStore.fetchDayAggregate(for: start)?.totalTSS, 0)
+    }
+
+    func testRepeatedImportOfUserDeletedSourceIDsDoesNotRestoreGroup() async throws {
+        let context = ModelContext(try container())
+        let store = DataStore(modelContext: context)
+        try store.saveWorkouts([imported(id: "deleted-hk"), imported(id: "deleted-strava", source: .strava)])
+        XCTAssertEqual(try store.fetchWorkoutsForDay(start).count, 1)
+        try store.deleteWorkout(try XCTUnwrap(store.fetchWorkout(byId: "deleted-strava")))
+        for _ in 0..<2 {
+            _ = try await store.applyImportedWorkouts([
+                imported(id: "deleted-hk", tss: 40),
+                imported(id: "deleted-strava", source: .strava, tss: 45)
+            ], deletedIDs: [])
+        }
+        let rows = try store.allWorkouts()
+        XCTAssertEqual(rows.count, 2)
+        XCTAssertTrue(rows.allSatisfy { $0.isTombstoned && $0.isSuppressed && $0.deletionOrigin == "user" })
+        XCTAssertTrue(try store.fetchWorkoutsForDay(start).isEmpty)
+        try store.rebuildLegacyLoadHistory(now: start.addingTimeInterval(1200))
+        XCTAssertEqual(try store.fetchDayAggregate(for: start)?.totalTSS, 0)
+    }
+
+    func testAmbiguousDeletedHistoryDoesNotDeleteNewSource() throws {
+        let context = ModelContext(try container())
+        let store = DataStore(modelContext: context)
+        let first = imported(id: "deleted-candidate-first")
+        let second = imported(id: "deleted-candidate-second")
+        try store.saveWorkouts([first, second])
+        try store.deleteWorkout(first)
+        try store.deleteWorkout(second)
+        let newSource = imported(id: "new-ambiguous-strava", source: .strava)
+        XCTAssertTrue(WorkoutAggregator.areDuplicates(first, newSource))
+        XCTAssertTrue(WorkoutAggregator.areDuplicates(second, newSource))
+        try store.saveWorkouts([newSource])
+        XCTAssertFalse(newSource.isTombstoned)
+        XCTAssertFalse(newSource.isSuppressed)
+        XCTAssertEqual(try store.fetchWorkoutsForDay(start).map(\.id), [newSource.id])
     }
 
     func testPositiveSourceSnapshotCanRestoreSourceDeletion() throws {

@@ -17,6 +17,13 @@ final class AppState {
     var healthKitAnchor: Data? // HKQueryAnchor for anchored queries
     var lastHealthKitSampleRefreshDate: Date?
     var pendingHealthKitWorkoutIDs: [String] = []
+    // Separate from sensor retries: unsupported activity types are checked only once.
+    var healthKitTypeBackfillVersion: Int = 0
+    var pendingHealthKitTypeBackfillIDs: [String] = []
+    // Independent checkpoint for identifying the producer of old HealthKit rows.
+    var healthKitSourceBackfillVersion: Int = 0
+    var pendingHealthKitSourceBackfillIDs: [String] = []
+    var pendingWorkoutSourceFinalization: Bool = false
     var lastRecoverySyncDate: Date?
 
     var lastSyncMessage: String?
