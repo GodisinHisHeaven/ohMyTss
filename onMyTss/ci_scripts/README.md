@@ -57,9 +57,37 @@ Run the configuration regression tests from the repository root:
 python3 -B -m unittest discover -s onMyTss/ci_scripts/tests -v
 ```
 
-After a merge, confirm the Xcode Cloud build shows **Branch Changes** as its
-start condition and matches the merge commit. Confirm Build, Test, Archive,
-and the TestFlight post-action succeed, then check the same build number is
-available to the internal testing group in App Store Connect.
+### Automated TestFlight verification
+
+GitHub Actions runs **Verify TestFlight distribution** on each push to `main`.
+It checks the exact push commit against Xcode Cloud and App Store Connect: a
+successful cloud run with the required actions and the corresponding valid
+build in the internal **close door** group. It only reads Apple's APIs; Xcode
+Cloud's existing branch trigger creates and distributes the build. This check
+does not create another build or require a browser login. Runs wait up to 90
+minutes and do not cancel earlier commits when a new commit is pushed.
+
+Configure the repository's Actions secrets with an App Store Connect API key
+that can read this app, its Xcode Cloud data and internal TestFlight builds:
+`ASC_ISSUER_ID`, `ASC_KEY_ID`, and `ASC_PRIVATE_KEY` (the complete `.p8` PEM
+contents). Keep the key out of the repository and logs. The optional repository
+variables `ASC_APP_ID` and `ASC_BETA_GROUP` override the defaults `6755509363`
+and `close door`. A missing credential, insufficient access, ambiguous group,
+or unknown result fails the check; a timeout also fails rather than reporting
+distribution as complete. Configure secret access in the repository settings
+and rotate or revoke the API key if it is exposed.
+
+To retry after a delayed Xcode Cloud start or temporary API failure, run the
+workflow using the `main` ref. An optional `commit_sha` selects a full 40-digit
+commit reachable from that run's main commit; otherwise it checks the current
+main commit. A new run only observes Apple state. Check its final output for
+the matched commit, cloud run and TestFlight build. A green result confirms
+internal TestFlight availability, not App Store review or public release.
+
+The required cloud test and archive configuration above remains in Xcode Cloud;
+this GitHub check observes it and does not replace those gates. The API check
+establishes the resulting build and group state; it does not independently
+establish which post-action or person added that build to the group, or prove
+that a particular tester received an invitation or installed it.
 
 Apple reference: [Writing custom build scripts](https://developer.apple.com/documentation/xcode/writing-custom-build-scripts).
