@@ -1,5 +1,116 @@
 import Foundation
 
+/// Sensor input for one workout. Missing samples remain unobserved time.
+nonisolated struct IntensityWorkout {
+    let start: Date
+    let end: Date
+    let heartRate: [TimedValue]
+    let pauses: [TimeRange]
+}
+
+/// A source row and its canonical link. Suppressed aliases may contain the
+/// heart-rate stream even when their canonical activity does not.
+nonisolated struct IntensitySource {
+    let id: String
+    let linkedID: String?
+    let isGarmin: Bool
+    let isSuppressed: Bool
+    let isDeleted: Bool
+    let workout: IntensityWorkout
+}
+
+/// Time in each heart-rate range, using user-supplied lactate thresholds.
+nonisolated struct IntensityDistribution {
+    let lowSeconds: Double
+    let moderateSeconds: Double
+    let highSeconds: Double
+
+    var totalSeconds: Double { lowSeconds + moderateSeconds + highSeconds }
+
+    static func calculate(sources: [IntensitySource], lt1: Int, lt2: Int,
+                          window: TimeRange) -> IntensityDistribution? {
+        guard (30...240).contains(lt1), (30...240).contains(lt2), lt1 < lt2,
+              window.duration > 0, window.duration.isFinite else { return nil }
+        let live = sources.filter { !$0.isDeleted }
+        let children = Dictionary(grouping: live.compactMap { source -> (String, IntensitySource)? in
+            source.linkedID.map { ($0, source) }
+        }, by: { $0.0 })
+        var low = 0.0, moderate = 0.0, high = 0.0
+        for canonical in live where !canonical.isSuppressed {
+            let start = max(canonical.workout.start, window.start)
+            let end = min(canonical.workout.end, window.end)
+            guard end > start else { continue }
+            let activityWindow = TimeRange(start: start, end: end)
+            var group = [canonical]
+            var visited: Set<String> = [canonical.id]
+            var pending = [canonical.id]
+            while let id = pending.popLast() {
+                for (_, child) in children[id] ?? [] where visited.insert(child.id).inserted {
+                    group.append(child)
+                    pending.append(child.id)
+                }
+            }
+            group.sort { $0.id < $1.id }
+            let hasGarmin = group.contains { $0.isGarmin }
+            let primaryPauses = canonical.isGarmin ? canonical.workout.pauses
+                : group.first(where: { $0.isGarmin })?.workout.pauses ?? canonical.workout.pauses
+            let candidates = group.map { source in
+                let pauses = hasGarmin ? source.workout.pauses + primaryPauses : source.workout.pauses
+                let intervals = SignalProcessing.intervals(samples: source.workout.heartRate,
+                    window: activityWindow, pauses: pauses, validRange: 30...240)
+                return (source: source, intervals: intervals, coverage: SignalProcessing.coveredSeconds(intervals))
+            }.filter { !$0.intervals.isEmpty }.sorted {
+                if hasGarmin && $0.source.isGarmin != $1.source.isGarmin { return $0.source.isGarmin }
+                if hasGarmin && $0.source.isGarmin && ($0.source.id == canonical.id) != ($1.source.id == canonical.id) {
+                    return $0.source.id == canonical.id
+                }
+                if !hasGarmin && $0.coverage == $1.coverage && ($0.source.id == canonical.id) != ($1.source.id == canonical.id) {
+                    return $0.source.id == canonical.id
+                }
+                return $0.coverage == $1.coverage ? $0.source.id < $1.source.id : $0.coverage > $1.coverage
+            }
+            guard let first = candidates.first else { continue }
+            var intervals = first.intervals
+            if hasGarmin && first.source.isGarmin {
+                for candidate in candidates.dropFirst() {
+                    intervals = fillingGaps(in: intervals, with: candidate.intervals)
+                }
+            }
+            for interval in intervals {
+                if interval.value < Double(lt1) { low += interval.duration }
+                else if interval.value < Double(lt2) { moderate += interval.duration }
+                else { high += interval.duration }
+            }
+        }
+        let result = IntensityDistribution(lowSeconds: low, moderateSeconds: moderate, highSeconds: high)
+        return result.totalSeconds > 0 ? result : nil
+    }
+
+    /// Preferred-source intervals win overlaps; later sources fill only gaps.
+    private static func fillingGaps(in selected: [TimedValue], with additions: [TimedValue]) -> [TimedValue] {
+        var uncovered: [TimedValue] = []
+        var firstPossible = 0
+        for sample in additions {
+            while firstPossible < selected.count && selected[firstPossible].end <= sample.start { firstPossible += 1 }
+            var cursor = sample.start
+            var index = firstPossible
+            while index < selected.count && selected[index].start < sample.end {
+                let existing = selected[index]
+                if existing.start > cursor {
+                    uncovered.append(.init(start: cursor, end: min(existing.start, sample.end), value: sample.value))
+                }
+                cursor = max(cursor, existing.end)
+                if cursor >= sample.end { break }
+                index += 1
+            }
+            if cursor < sample.end { uncovered.append(.init(start: cursor, end: sample.end, value: sample.value)) }
+        }
+        return (selected + uncovered).sorted { $0.start < $1.start }
+    }
+
+
+}
+
 /// Timestamp-based integration shared by the import adapter and v2 model.
 nonisolated enum SignalProcessing {
     /// Explicit nonzero intervals retain their measured support. Point samples are

@@ -51,6 +51,60 @@ final class V2FlowTests: XCTestCase {
     }
 
     @MainActor
+    func testIntensityThresholdsShowCompactDistribution() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--v2-ui-tests", "--v2-workout-map-demo", "--v2-intensity-fixture"]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Today"].waitForExistence(timeout: 10))
+        app.buttons["Settings"].firstMatch.tap()
+
+        let lt1 = app.textFields["settings.lt1HeartRate"]
+        reach(lt1, in: app)
+        lt1.tap()
+        lt1.typeText("140")
+        let lt2 = app.textFields["settings.lt2HeartRate"]
+        reach(lt2, in: app)
+        lt2.tap()
+        lt2.typeText("170")
+        app.buttons["settings.intensityDone"].tap()
+        let save = app.buttons["settings.saveIntensityThresholds"]
+        reach(save, in: app)
+        save.tap()
+        XCTAssertTrue(app.staticTexts["Intensity thresholds saved."].waitForExistence(timeout: 5))
+
+        app.buttons["Today"].firstMatch.tap()
+        let low = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "72%", "Below LT1")).firstMatch
+        reach(low, in: app)
+        let middle = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "20%", "LT1–LT2")).firstMatch
+        let high = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "8%", "≥ LT2")).firstMatch
+        XCTAssertTrue(middle.exists)
+        XCTAssertTrue(high.exists)
+        XCTAssertLessThan(low.frame.midX, middle.frame.midX)
+        XCTAssertLessThan(middle.frame.midX, high.frame.midX)
+        XCTAssertEqual(low.frame.minY, middle.frame.minY, accuracy: 3)
+        XCTAssertEqual(middle.frame.minY, high.frame.minY, accuracy: 3)
+        XCTAssertFalse(app.staticTexts["Last 7 days · heart rate"].exists)
+        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Based on")).firstMatch.exists)
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "Compact intensity distribution"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+
+        app.buttons["Settings"].firstMatch.tap()
+        reach(lt1, in: app)
+        XCTAssertEqual(lt1.value as? String, "140")
+        XCTAssertEqual(lt2.value as? String, "170")
+        lt1.tap()
+        lt1.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 3))
+        lt2.tap()
+        lt2.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 3))
+        app.buttons["settings.intensityDone"].tap()
+        reach(save, in: app)
+        save.tap()
+        XCTAssertTrue(app.staticTexts["Intensity thresholds cleared."].waitForExistence(timeout: 5))
+    }
+
+    @MainActor
     func testLaunchWithLargeSavedHistoryOpensUsableTabs() {
         assertLargeHistoryOpensUsableTabs(missingEstimates: false)
     }

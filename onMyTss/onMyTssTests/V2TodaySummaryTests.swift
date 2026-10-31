@@ -5,6 +5,48 @@ import XCTest
 final class V2TodaySummaryTests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 1_790_000_000)
 
+    func testIntensityBackgroundRequestTracksSamplesThresholdsAndWindow() async throws {
+        var features = WorkoutFeatures()
+        features.heartRate = [TimedValue(start: now.addingTimeInterval(-100), end: now, value: 150)]
+        let snapshot = IntensityInputSnapshot(id: "run", linkedID: nil, isGarmin: false,
+            isSuppressed: false, isDeleted: false, start: now.addingTimeInterval(-100), duration: 100,
+            featuresData: try JSONEncoder().encode(features))
+        let window = TimeRange(start: now.addingTimeInterval(-100), end: now)
+        let request = IntensityCalculationRequest(sources: [snapshot], lt1: 140, lt2: 170, window: window)
+        let result = try await Task.detached { try request.calculate() }.value
+        XCTAssertEqual(result?.moderateSeconds, 100)
+        let completed = IntensityCalculationCompleted(request: request, distribution: result)
+        XCTAssertTrue(completed.matches(request))
+
+        let changedThreshold = IntensityCalculationRequest(sources: [snapshot], lt1: 120, lt2: 140, window: window)
+        XCTAssertFalse(completed.matches(changedThreshold))
+        let changedWindow = IntensityCalculationRequest(sources: [snapshot], lt1: 140, lt2: 170,
+            window: TimeRange(start: now.addingTimeInterval(-50), end: now))
+        XCTAssertFalse(completed.matches(changedWindow))
+        let updated = IntensityInputSnapshot(id: snapshot.id, linkedID: nil, isGarmin: false,
+            isSuppressed: false, isDeleted: false, start: snapshot.start, duration: snapshot.duration, featuresData: nil)
+        XCTAssertFalse(completed.matches(IntensityCalculationRequest(sources: [updated], lt1: 140, lt2: 170, window: window)))
+        let revised = try await Task.detached { try changedThreshold.calculate() }.value
+        XCTAssertEqual(revised?.highSeconds, 100)
+        let clipped = try await Task.detached { try changedWindow.calculate() }.value
+        XCTAssertEqual(clipped?.moderateSeconds, 50)
+    }
+
+    func testIntensityBackgroundRequestHonorsCancellation() async throws {
+        let request = IntensityCalculationRequest(sources: [], lt1: 140, lt2: 170,
+            window: TimeRange(start: now.addingTimeInterval(-100), end: now))
+        let worker = Task.detached {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try request.calculate()
+        }
+        do {
+            _ = try await worker.value
+            XCTFail("A canceled calculation must not publish a result")
+        } catch is CancellationError {
+            // Expected.
+        }
+    }
+
     private func workout(_ id: String, daysAgo: Double = 0) -> Workout {
         let start = now.addingTimeInterval(-daysAgo * 86400)
         return Workout(id: id, date: start, startTime: start, duration: 3600,
