@@ -1,0 +1,66 @@
+name: Verify TestFlight distribution
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: "Optional full main-branch commit SHA to verify"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify exact TestFlight build
+    runs-on: ubuntu-latest
+    timeout-minutes: 105
+    steps:
+      # Secrets are not exposed to this step, or to pull request workflows.
+      - name: Require the protected main branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "This workflow must run from main." >&2
+            exit 1
+          fi
+
+      - name: Check out trusted main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Select the commit to verify
+        id: target
+        shell: bash
+        env:
+          REQUESTED_SHA: ${{ inputs.commit_sha }}
+        run: |
+          set -euo pipefail
+          target="${REQUESTED_SHA:-$GITHUB_SHA}"
+          if [[ ! "$target" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "The target must be a full lowercase Git commit SHA." >&2
+            exit 1
+          fi
+          if [[ "$(git rev-parse HEAD)" != "$GITHUB_SHA" ]] || ! git merge-base --is-ancestor "$target" "$GITHUB_SHA"; then
+            echo "The target is not reachable from this main-branch run." >&2
+            exit 1
+          fi
+          printf 'sha=%s\n' "$target" >> "$GITHUB_OUTPUT"
+
+      # Repo secrets are scoped to this read-only verification step. A missing
+      # key is a failure, never a successful or skipped distribution check.
+      - name: Verify Xcode Cloud and TestFlight
+        env:
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+          ASC_APP_ID: ${{ vars.ASC_APP_ID || '6755509363' }}
+          ASC_BETA_GROUP: ${{ vars.ASC_BETA_GROUP || 'close door' }}
+          TARGET_SHA: ${{ steps.target.outputs.sha }}
+        run: python3 scripts/verify_testflight.py --commit "$TARGET_SHA" --timeout-seconds 5400 --poll-seconds 30
