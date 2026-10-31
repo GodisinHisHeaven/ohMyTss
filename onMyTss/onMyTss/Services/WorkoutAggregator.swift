@@ -68,7 +68,7 @@ enum TSSMethod: String {
 }
 
 /// Aggregates workouts from Strava and HealthKit
-/// Handles deduplication with Strava priority
+/// Handles deduplication with Garmin priority
 @MainActor
 final class WorkoutAggregator {
 
@@ -87,6 +87,8 @@ final class WorkoutAggregator {
     private(set) var successfulSources: Set<String> = []
     private(set) var warnings: [String] = []
     private(set) var hasRetryableFailures = false
+    /// Sources whose workout inventory could not be fully verified this pass.
+    private(set) var incompleteWorkoutSources: Set<String> = []
     private(set) var latestDeletedStravaIDs: [String] = []
     private(set) var latestDeletedHealthKitIDs: [String] = []
     private(set) var latestHealthKitAnchor: HKQueryAnchor?
@@ -110,7 +112,7 @@ final class WorkoutAggregator {
     // MARK: - Fetch Workouts
 
     /// Fetch all workouts from both sources (Strava + HealthKit)
-    /// Returns deduplicated workouts with Strava priority
+    /// Returns deduplicated workouts with Garmin priority
     func fetchWorkouts(from startDate: Date, to endDate: Date) async throws -> [Workout] {
         try await fetchSources(from: startDate, to: endDate) {
             try await self.fetchHealthKitWorkouts(from: startDate, to: endDate)
@@ -145,6 +147,7 @@ final class WorkoutAggregator {
                 } catch {
                     if error is CancellationError { throw error }
                     try Task.checkCancellation()
+                    self.incompleteWorkoutSources.insert(WorkoutSource.healthKit.rawValue)
                     self.recordRetryableWarning("Recent HealthKit samples could not refresh. Saved samples retained; retry sync.")
                 }
             }
@@ -172,6 +175,7 @@ final class WorkoutAggregator {
         successfulSources = []
         warnings = []
         hasRetryableFailures = false
+        incompleteWorkoutSources = []
         var hkWorkouts: [Workout] = []
         var stravaWorkouts: [Workout] = []
         var sourceErrors: [Error] = []
@@ -242,7 +246,7 @@ final class WorkoutAggregator {
             let workout = Workout(
                 id: hkWorkout.uuid.uuidString, date: hkWorkout.startDate.startOfDay,
                 startTime: hkWorkout.startDate, duration: hkWorkout.duration,
-                workoutType: workoutTypeName(for: hkWorkout.workoutActivityType),
+                workoutType: Self.workoutTypeName(for: hkWorkout.workoutActivityType),
                 distance: hkWorkout.totalDistance?.doubleValue(for: .meter()),
                 tss: value.tss.isFinite ? value.tss : 0, calculationMethod: value.method, source: .healthKit,
                 healthKitUUID: hkWorkout.uuid.uuidString,
@@ -250,6 +254,8 @@ final class WorkoutAggregator {
                 averageHeartRate: value.averageHeartRate, maxHeartRate: value.maxHeartRate,
                 deviceName: hkWorkout.device?.name
             )
+            workout.sourceBundleIdentifier = hkWorkout.sourceRevision.source.bundleIdentifier
+            workout.deviceManufacturer = hkWorkout.device?.manufacturer
             workout.featuresData = value.featuresData
             workouts.append(workout)
         }
@@ -321,6 +327,7 @@ final class WorkoutAggregator {
             } catch {
                 if error is CancellationError { throw error }
                 try Task.checkCancellation()
+                incompleteWorkoutSources.insert(WorkoutSource.strava.rawValue)
                 recordRetryableWarning("A missing Strava activity could not be verified. Its saved source and your records are retained; retry sync.")
                 // Avoid repeated requests after a rate-limit, connection or
                 // authorization failure. Unchecked sources remain untouched.
@@ -393,52 +400,69 @@ final class WorkoutAggregator {
 
     // MARK: - Deduplication
 
-    /// Deduplicate workouts with Strava priority
-    /// Uses same criteria as HealthKit deduplication: time, duration, type
-    func deduplicateWorkouts(healthKit: [Workout], strava: [Workout]) -> [Workout] {
-        var result: [Workout] = []
-        var nearby: [String: [Workout]] = [:]
-        // Reset incoming snapshots; persistence also reconciles against prior
-        // imports and keeps manual associations separate from this heuristic.
-        for workout in strava + healthKit { workout.isSuppressed = false }
-        for workout in strava + healthKit {
-            let type = Self.normalizeWorkoutType(workout.workoutType)
-            let bucket = Int(floor(workout.startTime.timeIntervalSince1970 / 60))
-            let candidates = (-1...1).flatMap { nearby["\(type):\(bucket + $0)"] ?? [] }
-            if candidates.contains(where: { areDuplicates(workout1: workout, workout2: $0) }) {
-                workout.isSuppressed = true
-            } else {
-                result.append(workout)
-                nearby["\(type):\(bucket)", default: []].append(workout)
-            }
-        }
-        return result
+    /// Classify only explicit Garmin identity; missing metadata is unknown.
+    static func isGarminSource(_ workout: Workout) -> Bool {
+        isGarminSource(source: workout.source, bundleIdentifier: workout.sourceBundleIdentifier,
+                       manufacturer: workout.deviceManufacturer, deviceName: workout.deviceName)
     }
 
-    /// Check if two workouts are duplicates
-    /// Same criteria as HealthKit deduplication:
-    /// - Same workout type
-    /// - Start times within 60 seconds
-    /// - Durations within 5 seconds
-    private func areDuplicates(workout1: Workout, workout2: Workout) -> Bool {
-        // Check workout type match
-        guard Self.normalizeWorkoutType(workout1.workoutType) == Self.normalizeWorkoutType(workout2.workoutType) else {
-            return false
+    nonisolated static func isGarminSource(source: String, bundleIdentifier: String?, manufacturer: String?, deviceName: String?) -> Bool {
+        let bundle = bundleIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        let maker = manufacturer?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        if source == WorkoutSource.healthKit.rawValue {
+            return bundle.hasPrefix("com.garmin.") || maker == "garmin"
         }
-
-        // Check start time (within 60 seconds)
-        let timeDiff = abs(workout1.startTime.timeIntervalSince(workout2.startTime))
-        guard timeDiff < 60 else {
-            return false
+        if source == WorkoutSource.strava.rawValue {
+            let device = deviceName?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+            return device == "garmin" || device.hasPrefix("garmin ") || device.hasPrefix("garmin-")
         }
+        return false
+    }
 
-        // Check duration (within 5 seconds)
-        let durationDiff = abs(workout1.duration - workout2.duration)
-        guard durationDiff < 5 else {
-            return false
+    /// Prefer Garmin HealthKit data, then Garmin Strava, then other Strava data.
+    static func sourcePriority(_ workout: Workout) -> Int {
+        if isGarminSource(workout) { return workout.source == WorkoutSource.healthKit.rawValue ? 3 : 2 }
+        return workout.source == WorkoutSource.strava.rawValue ? 1 : 0
+    }
+
+    /// Use the same groups and source priority as persistent reconciliation.
+    func deduplicateWorkouts(healthKit: [Workout], strava: [Workout]) -> [Workout] {
+        let incoming = strava + healthKit
+        for row in incoming { row.isSuppressed = false }
+        for members in DataStore.matchingWorkoutGroups(incoming) {
+            let canonical = members.sorted {
+                let left = Self.sourcePriority($0), right = Self.sourcePriority($1)
+                return left == right ? $0.id < $1.id : left > right
+            }.first
+            for row in members where row.id != canonical?.id { row.isSuppressed = true }
         }
+        return incoming.filter { !$0.isSuppressed }
+    }
 
-        return true
+    /// Match only across external sources. Source IDs handle repeat imports;
+    /// similar workouts from the same source are not proof of duplication.
+    static func areDuplicates(_ first: Workout, _ second: Workout) -> Bool {
+        let sources = Set([first.source, second.source])
+        guard sources == Set([WorkoutSource.healthKit.rawValue, WorkoutSource.strava.rawValue]) else { return false }
+        let type = normalizeWorkoutType(first.workoutType)
+        guard !type.isEmpty, type != "other", type == normalizeWorkoutType(second.workoutType) else { return false }
+        return hasMatchingTiming(first, second)
+    }
+
+    /// Used for both definite matches and unknown-type ambiguity checks.
+    static func hasMatchingTiming(_ first: Workout, _ second: Workout) -> Bool {
+        guard abs(first.startTime.timeIntervalSince(second.startTime)) < 60,
+              first.duration.isFinite, second.duration.isFinite,
+              first.duration > 0, second.duration > 0 else { return false }
+        // Strava records moving time as duration; HealthKit can include pauses.
+        // Where both ends are present they must agree, even when moving times match.
+        if let firstEnd = first.features.end, let secondEnd = second.features.end {
+            let firstElapsed = firstEnd.timeIntervalSince(first.startTime)
+            let secondElapsed = secondEnd.timeIntervalSince(second.startTime)
+            return firstElapsed.isFinite && secondElapsed.isFinite && firstElapsed > 0 && secondElapsed > 0
+                && abs(firstElapsed - secondElapsed) < 5
+        }
+        return abs(first.duration - second.duration) < 5
     }
 
     /// Normalize workout type for comparison
@@ -456,6 +480,8 @@ final class WorkoutAggregator {
             return "strength"
         } else if lowercased.contains("walk") {
             return "walking"
+        } else if lowercased == "hike" || lowercased == "hiking" {
+            return "hiking"
         }
 
         return lowercased
@@ -464,7 +490,7 @@ final class WorkoutAggregator {
     // MARK: - Helper Methods
 
     /// Get workout type name from HKWorkoutActivityType
-    private func workoutTypeName(for type: HKWorkoutActivityType) -> String {
+    static func workoutTypeName(for type: HKWorkoutActivityType) -> String {
         switch type {
         case .cycling:
             return "Cycling"
@@ -474,6 +500,20 @@ final class WorkoutAggregator {
             return "Swimming"
         case .walking:
             return "Walking"
+        case .hiking:
+            return "Hiking"
+        case .yoga:
+            return "Yoga"
+        case .pilates:
+            return "Pilates"
+        case .elliptical:
+            return "Elliptical"
+        case .rowing:
+            return "Rowing"
+        case .stairClimbing:
+            return "StairClimbing"
+        case .crossTraining:
+            return "CrossTraining"
         case .traditionalStrengthTraining, .functionalStrengthTraining:
             return "Strength"
         default:

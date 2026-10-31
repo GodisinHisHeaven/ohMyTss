@@ -91,6 +91,7 @@ final class V2Store {
 
     /// Explicit user-confirmed merge keeps imported cardio only once and moves independent local records.
     func linkSession(manual: Workout, to target: Workout) throws {
+        try DataStore(modelContext: context).ensureWorkoutMutationAllowed(for: target)
         guard manual.source == WorkoutSource.manual.rawValue, manual.id != target.id,
               !target.isTombstoned, !target.isSuppressed, target.source != WorkoutSource.manual.rawValue,
               manual.linkedSessionID == nil else { throw V2StoreError.invalidSession }
@@ -109,6 +110,7 @@ final class V2Store {
     }
 
     func deleteSession(_ session: Workout) async throws {
+        try DataStore(modelContext: context).ensureWorkoutMutationAllowed(for: session)
         // Delete the logical session, retaining source tombstones and all user records for audit.
         let all = try context.fetch(FetchDescriptor<Workout>())
         let ids = relatedIDs(to: session.id, in: all)
@@ -143,19 +145,28 @@ final class V2Store {
     }
 
     /// Recompute immutable inputs off the UI actor and persist bounded batches.
-    func refreshEstimates() async throws {
-        try await updateEstimates(onlyMissing: false)
+    func refreshEstimates(finalizeAliases: Bool = false,
+                          validateFinalization: (() throws -> Bool)? = nil) async throws {
+        try await updateEstimates(onlyMissing: false, finalizeAliases: finalizeAliases,
+                                  validateFinalization: validateFinalization)
     }
 
     func backfillEstimates() async throws {
         try await updateEstimates(onlyMissing: true)
     }
 
-    private func updateEstimates(onlyMissing: Bool) async throws {
+    private func updateEstimates(onlyMissing: Bool, finalizeAliases: Bool = false,
+                                 validateFinalization: (() throws -> Bool)? = nil) async throws {
         processing: while true {
             try Task.checkCancellation()
             try await Task.sleep(for: .milliseconds(1))
-            if !onlyMissing { try resolveAliases() }
+            if !onlyMissing {
+                let state = try context.fetch(FetchDescriptor<AppState>()).first
+                let pending = state?.isComputationInProgress == true || state?.pendingWorkoutSourceFinalization == true
+                if finalizeAliases {
+                    if try validateFinalization?() ?? true { try resolveAliases() }
+                } else if !pending { try resolveAliases() }
+            }
             let snapshot = try V2EstimateBatch(context: context)
             let now = clock()
             let calculation = Task.detached(priority: .utility) {
@@ -192,6 +203,8 @@ final class V2Store {
 
     private func resolveAliases() throws {
         let all = try context.fetch(FetchDescriptor<Workout>())
+        let state = try context.fetch(FetchDescriptor<AppState>()).first
+        let unresolvedSources = Set(state?.pendingHealthKitSourceBackfillIDs ?? [])
         let children = Dictionary(grouping: all.filter { $0.linkedSessionID != nil }, by: { $0.linkedSessionID! })
         let sets = Dictionary(grouping: try context.fetch(FetchDescriptor<StrengthSetRecord>()), by: \.sessionID)
         let observations = Dictionary(grouping: try context.fetch(FetchDescriptor<LocalObservation>()), by: \.sessionID)
@@ -201,6 +214,7 @@ final class V2Store {
             while let id = pending.popLast() {
                 for child in children[id] ?? [] where ids.insert(child.id).inserted { pending.append(child.id) }
             }
+            if ids.count > 1 && !ids.isDisjoint(with: unresolvedSources) { continue }
             for id in ids where id != canonical.id {
                 for row in sets[id] ?? [] { row.sessionID = canonical.id }
                 for row in observations[id] ?? [] { row.sessionID = canonical.id }

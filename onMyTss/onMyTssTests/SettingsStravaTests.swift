@@ -77,12 +77,14 @@ private final class StubStravaConnection: StravaConnectionManaging {
 
 @MainActor
 private final class FailingSyncEngine: BodyBatteryEngineProtocol {
+    var isProcessing = false
     func recomputeAll() async throws { throw URLError(.notConnectedToInternet) }
     func incrementalUpdate() async throws { throw URLError(.notConnectedToInternet) }
 }
 
 @MainActor
 private final class CompletingSyncEngine: BodyBatteryEngineProtocol {
+    var isProcessing = false
     let store: onMyTss.DataStore
     let completedAt: Date
 

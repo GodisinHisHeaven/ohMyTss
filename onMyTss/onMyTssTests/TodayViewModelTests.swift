@@ -37,6 +37,7 @@ final class TodayViewModelTests: XCTestCase {
 
 @MainActor
 private final class MockEngine: BodyBatteryEngineProtocol {
+    var isProcessing = false
     let dataStore: onMyTss.DataStore
     var recomputeCalled = false
 

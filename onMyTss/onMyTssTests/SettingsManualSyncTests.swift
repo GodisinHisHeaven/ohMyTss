@@ -73,6 +73,7 @@ final class SettingsManualSyncTests: XCTestCase {
 
 @MainActor
 private final class ManualSyncEngine: BodyBatteryEngineProtocol {
+    var isProcessing = false
     private let work: () throws -> Void
 
     init(work: @escaping () throws -> Void) { self.work = work }

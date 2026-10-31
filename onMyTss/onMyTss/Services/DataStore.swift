@@ -192,6 +192,11 @@ class DataStore {
         appState.healthKitAnchor = nil
         appState.lastHealthKitSampleRefreshDate = nil
         appState.pendingHealthKitWorkoutIDs = []
+        appState.healthKitTypeBackfillVersion = 0
+        appState.pendingHealthKitTypeBackfillIDs = []
+        appState.healthKitSourceBackfillVersion = 0
+        appState.pendingHealthKitSourceBackfillIDs = []
+        appState.pendingWorkoutSourceFinalization = false
         appState.lastRecoverySyncDate = nil
         appState.lastComputationDate = nil
         appState.isComputationInProgress = false
@@ -212,7 +217,7 @@ class DataStore {
     /// Identity upserts preserve user data and deletion tombstones. Identical
     /// source responses do not dirty a model or trigger history reconciliation.
     @discardableResult
-    func saveWorkouts(_ workouts: [Workout]) throws -> WorkoutChanges {
+    func saveWorkouts(_ workouts: [Workout], reconcileSideEffects: Bool? = nil) throws -> WorkoutChanges {
         var changes = WorkoutChanges()
         for workout in workouts {
             if let existing = try fetchWorkout(byId: workout.id) {
@@ -226,13 +231,16 @@ class DataStore {
             }
         }
         if !changes.isEmpty {
-            changes.formUnion(try reconcileWorkoutSources())
+            changes.formUnion(try reconcileWorkoutSources(applySideEffects: reconcileSideEffects))
             try modelContext.save()
         }
         return changes
     }
 
     private func merge(_ incoming: Workout, into existing: Workout) throws -> Bool {
+        let sourceBundleIdentifier = incoming.sourceBundleIdentifier ?? existing.sourceBundleIdentifier
+        let deviceManufacturer = incoming.deviceManufacturer ?? existing.deviceManufacturer
+        let deviceName = incoming.deviceName ?? existing.deviceName
         if incoming.featuresData == existing.featuresData,
            incoming.date == existing.date, incoming.startTime == existing.startTime,
            incoming.duration == existing.duration, incoming.workoutType == existing.workoutType,
@@ -241,7 +249,9 @@ class DataStore {
            incoming.stravaId == existing.stravaId, incoming.healthKitUUID == existing.healthKitUUID,
            incoming.averagePower == existing.averagePower, incoming.normalizedPower == existing.normalizedPower,
            incoming.averageHeartRate == existing.averageHeartRate, incoming.maxHeartRate == existing.maxHeartRate,
-           incoming.deviceName == existing.deviceName,
+           deviceName == existing.deviceName,
+           sourceBundleIdentifier == existing.sourceBundleIdentifier,
+           deviceManufacturer == existing.deviceManufacturer,
            !(existing.isTombstoned && existing.deletionOrigin == "source") { return false }
         var features = incoming.features
         let unreadable = Set(features.failedChannels + features.unavailableChannels)
@@ -285,7 +295,9 @@ class DataStore {
             || existing.source != incoming.source || existing.stravaId != incoming.stravaId
             || existing.healthKitUUID != incoming.healthKitUUID || existing.averagePower != averagePower
             || existing.normalizedPower != normalizedPower || existing.averageHeartRate != averageHR
-            || existing.maxHeartRate != maxHR || existing.deviceName != incoming.deviceName
+            || existing.maxHeartRate != maxHR || existing.deviceName != deviceName
+            || existing.sourceBundleIdentifier != sourceBundleIdentifier
+            || existing.deviceManufacturer != deviceManufacturer
             || existing.featuresData != featuresData else { return false }
         if existing.legacyTSS == nil {
             existing.legacyTSS = existing.tss
@@ -310,7 +322,9 @@ class DataStore {
         existing.normalizedPower = normalizedPower
         existing.averageHeartRate = averageHR
         existing.maxHeartRate = maxHR
-        existing.deviceName = incoming.deviceName
+        existing.deviceName = deviceName
+        existing.sourceBundleIdentifier = sourceBundleIdentifier
+        existing.deviceManufacturer = deviceManufacturer
         existing.featuresData = featuresData
         return true
     }
@@ -318,69 +332,165 @@ class DataStore {
     /// Bounded imports combine both sources. Reconcile before committing each
     /// batch, so cancellation never leaves duplicate active source rows. Each yield
     /// allows navigation and Settings to run during a large first import.
-    func applyImportedWorkouts(_ workouts: [Workout], deletedIDs: [String]) async throws -> WorkoutChanges {
+    func applyImportedWorkouts(_ workouts: [Workout], deletedIDs: [String], finalize: Bool = true,
+                               validateSources: (() throws -> Void)? = nil) async throws -> WorkoutChanges {
         var changes = WorkoutChanges()
         for offset in stride(from: 0, to: workouts.count, by: 20) {
             try Task.checkCancellation()
-            changes.formUnion(try saveWorkouts(Array(workouts[offset..<min(offset + 20, workouts.count)])))
+            try validateSources?()
+            changes.formUnion(try saveWorkouts(Array(workouts[offset..<min(offset + 20, workouts.count)]), reconcileSideEffects: false))
             try await Task.sleep(for: .milliseconds(1))
         }
         for offset in stride(from: 0, to: deletedIDs.count, by: 20) {
             try Task.checkCancellation()
+            try validateSources?()
             let deleted = try applySourceDeletions(Array(deletedIDs[offset..<min(offset + 20, deletedIDs.count)]), rebuildHistory: false)
             changes.formUnion(deleted)
             if !deleted.isEmpty {
-                changes.formUnion(try reconcileWorkoutSources())
+                changes.formUnion(try reconcileWorkoutSources(applySideEffects: false))
                 try modelContext.save()
             }
             try await Task.sleep(for: .milliseconds(1))
         }
+        if finalize { changes.formUnion(try finalizeWorkoutSources()) }
         return changes
     }
 
-    /// Compare only temporally adjacent sources, instead of searching every
-    /// historical row for every activity. Existing logical groups stay durable.
+    /// Reconcile even when no source changed, to repair groups from older versions.
     @discardableResult
-    func reconcileWorkoutSources() throws -> WorkoutChanges {
+    func finalizeWorkoutSources() throws -> WorkoutChanges {
+        let changes = try reconcileWorkoutSources(applySideEffects: true)
+        if !changes.isEmpty { try modelContext.save() }
+        return changes
+    }
+
+    /// Group only complete, unambiguous clusters of independently sourced rows.
+    /// A chain is not proof: every pair must match and a source may appear once.
+    /// Unknown HealthKit apps can still match one Strava row, as before, but
+    /// cannot establish that two HealthKit rows came from different apps.
+    static func matchingWorkoutGroups(_ workouts: [Workout]) -> [[Workout]] {
+        let rows = workouts.sorted {
+            if $0.startTime != $1.startTime { return $0.startTime < $1.startTime }
+            return $0.id < $1.id
+        }
+        var neighbors = Array(repeating: [Int](), count: rows.count)
+        for index in rows.indices {
+            var other = index + 1
+            while other < rows.count && rows[other].startTime.timeIntervalSince(rows[index].startTime) < 60 {
+                if possibleDuplicate(rows[index], rows[other]) {
+                    neighbors[index].append(other)
+                    neighbors[other].append(index)
+                }
+                other += 1
+            }
+        }
+        var visited = Set<Int>()
+        var result: [[Workout]] = []
+        for index in rows.indices where !visited.contains(index) {
+            var pending = [index]
+            var component: [Int] = []
+            visited.insert(index)
+            while let current = pending.popLast() {
+                component.append(current)
+                for neighbor in neighbors[current] where visited.insert(neighbor).inserted { pending.append(neighbor) }
+            }
+            let members = component.map { rows[$0] }
+            var complete = true
+            for left in members.indices {
+                for right in members.indices where right > left {
+                    if !definiteDuplicate(members[left], members[right]) { complete = false }
+                }
+            }
+            if complete { result.append(members) }
+            else { result.append(contentsOf: members.map { [$0] }) }
+        }
+        return result
+    }
+
+    private static func possibleDuplicate(_ first: Workout, _ second: Workout) -> Bool {
+        guard WorkoutAggregator.hasMatchingTiming(first, second) else { return false }
+        let firstType = WorkoutAggregator.normalizeWorkoutType(first.workoutType)
+        let secondType = WorkoutAggregator.normalizeWorkoutType(second.workoutType)
+        if firstType == secondType { return !firstType.isEmpty }
+        return (first.source == WorkoutSource.healthKit.rawValue && firstType == "other") ||
+            (second.source == WorkoutSource.healthKit.rawValue && secondType == "other")
+    }
+
+    private static func definiteDuplicate(_ first: Workout, _ second: Workout) -> Bool {
+        guard possibleDuplicate(first, second) else { return false }
+        let type = WorkoutAggregator.normalizeWorkoutType(first.workoutType)
+        guard type != "other", type == WorkoutAggregator.normalizeWorkoutType(second.workoutType) else { return false }
+        let healthKit = WorkoutSource.healthKit.rawValue
+        let strava = WorkoutSource.strava.rawValue
+        if Set([first.source, second.source]) == Set([healthKit, strava]) { return true }
+        guard first.source == healthKit, second.source == healthKit,
+              let firstBundle = first.sourceBundleIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+              let secondBundle = second.sourceBundleIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+              !firstBundle.isEmpty, !secondBundle.isEmpty else { return false }
+        return firstBundle != secondBundle
+    }
+
+    /// Compare only temporally adjacent sources, instead of searching every
+    /// historical row for every activity. Recompute logical groups after corrections.
+    @discardableResult
+    func reconcileWorkoutSources(applySideEffects: Bool? = nil) throws -> WorkoutChanges {
+        // While an import is suspended, other UI actions may reconcile through
+        // another DataStore using the same context. They must not finalize an
+        // incomplete batch either. The completed import explicitly opts in.
+        let state = try modelContext.fetch(FetchDescriptor<AppState>()).first
+        let unresolvedSources = Set(state?.pendingHealthKitSourceBackfillIDs ?? [])
+        let mayFinalize: Bool
+        if let applySideEffects { mayFinalize = applySideEffects }
+        else {
+            mayFinalize = state?.isComputationInProgress != true && state?.pendingWorkoutSourceFinalization != true
+        }
         let all = try allWorkouts()
         let before = Dictionary(uniqueKeysWithValues: all.map { ($0.id, WorkoutCanonicalState($0)) })
         let external = all.filter { $0.source != WorkoutSource.manual.rawValue }
-        var parents: [String: String] = [:]
-        func root(_ value: String) -> String {
-            var current = value
-            while let parent = parents[current], parent != current { current = parent }
-            return current
+        // Re-evaluate associations after source corrections without allowing
+        // an uncertain candidate or a transitive bridge to swallow a session.
+        var groupForID = Dictionary(uniqueKeysWithValues: external.map { ($0.id, $0.id) })
+        for members in Self.matchingWorkoutGroups(external.filter { $0.deletionOrigin != "source" }) {
+            guard let group = members.map(\.id).min() else { continue }
+            for row in members { groupForID[row.id] = group }
         }
-        let types = external.map { WorkoutAggregator.normalizeWorkoutType($0.workoutType) }
-        for index in external.indices {
-            let row = external[index]
-            var candidate = index + 1
-            while candidate < external.count && external[candidate].startTime.timeIntervalSince(row.startTime) < 60 {
-                let other = external[candidate]
-                if types[index] == types[candidate] && abs(row.duration - other.duration) < 5 {
-                    let left = root(row.sessionGroupID ?? row.id)
-                    let right = root(other.sessionGroupID ?? other.id)
-                    if left != right { parents[max(left, right)] = min(left, right) }
-                }
-                candidate += 1
+        // Source-deleted aliases cannot claim a live match ahead of a current
+        // source. Keep a still-matching old alias attached to its former group,
+        // so its manual children remain reachable after the canonical changes.
+        let previousGroups = Dictionary(grouping: external.filter { $0.sessionGroupID != nil }) { $0.sessionGroupID! }
+        for row in external where row.deletionOrigin == "source" {
+            guard let previousGroup = row.sessionGroupID else { continue }
+            let survivors = (previousGroups[previousGroup] ?? []).filter {
+                $0.id != row.id && $0.deletionOrigin != "source" &&
+                $0.sessionGroupID == previousGroup && Self.definiteDuplicate(row, $0)
+            }
+            let survivorGroups = Set(survivors.compactMap { groupForID[$0.id] })
+            if survivorGroups.count == 1, let group = survivorGroups.first {
+                groupForID[row.id] = group
             }
         }
         for row in external {
-            let group = root(row.sessionGroupID ?? row.id)
+            let group = groupForID[row.id] ?? row.id
             if row.sessionGroupID != group { row.sessionGroupID = group }
         }
         let groups = Dictionary(grouping: external) { $0.sessionGroupID ?? $0.id }
         for members in groups.values {
-            if members.contains(where: { $0.deletionOrigin == "user" }) {
+            // Source identity can affect both the matching and the canonical
+            // row. Keep irreversible actions local to resolved groups.
+            let groupMayFinalize = mayFinalize && (members.count < 2 || members.allSatisfy { !unresolvedSources.contains($0.id) })
+            let hasUserDeletion = members.contains { $0.deletionOrigin == "user" }
+            if hasUserDeletion && groupMayFinalize {
                 for row in members where !row.isTombstoned || row.deletionOrigin != "user" {
                     row.isTombstoned = true; row.deletionOrigin = "user"
                 }
             }
-            let canonical = members.filter { !$0.isTombstoned }.sorted {
-                if $0.source != $1.source { return $0.source == WorkoutSource.strava.rawValue }
+            let canonical = (hasUserDeletion && !groupMayFinalize ? [] : members.filter { !$0.isTombstoned }).sorted {
+                let leftPriority = WorkoutAggregator.sourcePriority($0)
+                let rightPriority = WorkoutAggregator.sourcePriority($1)
+                if leftPriority != rightPriority { return leftPriority > rightPriority }
                 return $0.id < $1.id
             }.first
-            if let canonical {
+            if let canonical, groupMayFinalize {
                 let tags = Array(Set(members.flatMap(\.userTags))).sorted()
                 if canonical.userTags != tags { canonical.userTags = tags }
                 for alias in members where alias.id != canonical.id && !alias.userTags.isEmpty { alias.userTags = [] }
@@ -452,7 +562,33 @@ class DataStore {
         return try modelContext.fetch(descriptor)
     }
 
+    func ensureWorkoutMutationAllowed(for workout: Workout? = nil) throws {
+        let state = try modelContext.fetch(FetchDescriptor<AppState>()).first
+        if state?.isComputationInProgress == true || state?.pendingWorkoutSourceFinalization == true {
+            throw WorkoutMutationError.syncInProgress
+        }
+        let unresolved = Set(state?.pendingHealthKitSourceBackfillIDs ?? [])
+        guard let workout, !unresolved.isEmpty else { return }
+        let all = try allWorkouts()
+        var ids: Set<String> = [workout.id]
+        var changed = true
+        while changed {
+            let count = ids.count
+            let groups = Set(all.filter { ids.contains($0.id) }.compactMap(\.sessionGroupID))
+            for row in all {
+                if let group = row.sessionGroupID, groups.contains(group) { ids.insert(row.id) }
+                if let link = row.linkedSessionID {
+                    if ids.contains(link) { ids.insert(row.id) }
+                    if ids.contains(row.id) { ids.insert(link) }
+                }
+            }
+            changed = count != ids.count
+        }
+        if ids.count > 1 && !ids.isDisjoint(with: unresolved) { throw WorkoutMutationError.syncInProgress }
+    }
+
     func deleteWorkout(_ workout: Workout) throws {
+        try ensureWorkoutMutationAllowed(for: workout)
         workout.isTombstoned = true
         workout.deletionOrigin = "user"
         workout.isSuppressed = true
@@ -556,10 +692,12 @@ class DataStore {
         try await V2Store(context: modelContext).backfillEstimates()
     }
 
-    func refreshV2Estimates() async throws {
+    func refreshV2Estimates(finalizeAliases: Bool = false,
+                            validateFinalization: (() throws -> Bool)? = nil) async throws {
         // Older focused unit-test containers may intentionally include only the legacy schema.
         guard modelContext.container.schema.entities.contains(where: { $0.name == "LoadEstimateRecord" }) else { return }
-        try await V2Store(context: modelContext).refreshEstimates()
+        try await V2Store(context: modelContext).refreshEstimates(finalizeAliases: finalizeAliases,
+                                                                  validateFinalization: validateFinalization)
     }
 
     // MARK: - StravaAuth Operations
@@ -590,6 +728,17 @@ class DataStore {
     }
 }
 
+
+enum WorkoutMutationError: LocalizedError {
+    case syncInProgress
+
+    var errorDescription: String? {
+        switch self {
+        case .syncInProgress:
+            return "Activity sync is incomplete. Sync all connected sources, then try again."
+        }
+    }
+}
 
 struct WorkoutChanges {
     var ids: Set<String> = []

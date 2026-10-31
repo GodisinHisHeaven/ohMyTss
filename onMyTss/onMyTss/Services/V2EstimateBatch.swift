@@ -13,6 +13,7 @@ nonisolated struct V2EstimateBatch: Sendable {
         let featuresData: Data?
         let tags: [String]
         let source: String
+        let isGarmin: Bool
         let linkedID: String?
         let deleted: Bool
         let suppressed: Bool
@@ -47,7 +48,7 @@ nonisolated struct V2EstimateBatch: Sendable {
         sessions = try context.fetch(FetchDescriptor<Workout>(sortBy: [SortDescriptor(\.id)])).map {
             Session(id: $0.id, startTime: $0.startTime, duration: $0.duration, type: $0.workoutType,
                     distance: $0.distance, featuresData: $0.featuresData, tags: $0.userTags.sorted(),
-                    source: $0.source, linkedID: $0.linkedSessionID,
+                    source: $0.source, isGarmin: WorkoutAggregator.isGarminSource($0), linkedID: $0.linkedSessionID,
                     deleted: $0.isTombstoned, suppressed: $0.isSuppressed)
         }
         sets = try context.fetch(FetchDescriptor<StrengthSetRecord>()).sorted { $0.id.uuidString < $1.id.uuidString }.map {
@@ -84,7 +85,7 @@ nonisolated struct V2EstimateBatch: Sendable {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         let decoder = JSONDecoder()
-        func features(for session: Session) -> WorkoutFeatures {
+        func decodedFeatures(for session: Session) -> WorkoutFeatures {
             session.featuresData.flatMap { try? decoder.decode(WorkoutFeatures.self, from: $0) } ?? WorkoutFeatures()
         }
         // Retain only run endpoints for prior-exposure lookup, not every decoded
@@ -110,25 +111,92 @@ nonisolated struct V2EstimateBatch: Sendable {
                 for child in children[id] ?? [] where ids.insert(child.id).inserted { pendingIDs.append(child.id) }
             }
             let sources = ids.compactMap { byID[$0] }.filter { !$0.deleted }.sorted { $0.id < $1.id }
-            var features = features(for: session)
+            var features = decodedFeatures(for: session)
             let window = TimeRange(start: session.startTime, end: features.end ?? session.startTime.addingTimeInterval(session.duration))
             func supported(_ values: [TimedValue], pauses: [TimeRange], range: ClosedRange<Double>) -> Double {
                 SignalProcessing.coveredSeconds(SignalProcessing.intervals(samples: values, window: window, pauses: pauses, validRange: range))
             }
-            for source in sources where source.id != session.id {
-                let other = source.featuresData.flatMap { try? decoder.decode(WorkoutFeatures.self, from: $0) } ?? WorkoutFeatures()
-                if supported(other.heartRate, pauses: other.pauses, range: 30...240) > supported(features.heartRate, pauses: features.pauses, range: 30...240) { features.heartRate = other.heartRate }
-                if supported(other.power, pauses: other.pauses, range: 0...2500) > supported(features.power, pauses: features.pauses, range: 0...2500) { features.power = other.power }
-                if supported(other.cadence, pauses: other.pauses, range: 0...250) > supported(features.cadence, pauses: features.pauses, range: 0...250) { features.cadence = other.cadence }
-                if supported(other.speed, pauses: other.pauses, range: 0...15) > supported(features.speed, pauses: features.pauses, range: 0...15) { features.speed = other.speed }
-                if supported(other.elevation, pauses: other.pauses, range: -500...9000) > supported(features.elevation, pauses: features.pauses, range: -500...9000) { features.elevation = other.elevation }
-                if supported(other.grade, pauses: other.pauses, range: -0.5...0.5) > supported(features.grade, pauses: features.pauses, range: -0.5...0.5) { features.grade = other.grade }
-                if features.ascentMeters == nil { features.ascentMeters = other.ascentMeters }
-                if features.descentMeters == nil { features.descentMeters = other.descentMeters }
-                if other.swimSegments.count > features.swimSegments.count { features.swimSegments = other.swimSegments }
-                if features.pauses.isEmpty { features.pauses = other.pauses }
-                if features.end == nil { features.end = other.end }
-                features.provenance = Array(Set(features.provenance + other.provenance)).sorted()
+            if sources.count > 1 && sources.contains(where: \.isGarmin) {
+                // Materialize each source's valid support using its own pauses.
+                // Garmin samples win overlaps; other sources fill only gaps.
+                let inputs = sources.map { ($0, $0.id == session.id ? features : decodedFeatures(for: $0)) }
+                let primaryPauses = session.isGarmin ? features.pauses
+                    : inputs.first(where: { $0.0.isGarmin })?.1.pauses ?? features.pauses
+                func fillGaps(_ selected: [TimedValue], with additions: [TimedValue]) -> [TimedValue] {
+                    var uncovered: [TimedValue] = []
+                    var firstPossible = 0
+                    for sample in additions {
+                        while firstPossible < selected.count && selected[firstPossible].end <= sample.start { firstPossible += 1 }
+                        var cursor = sample.start
+                        var index = firstPossible
+                        while index < selected.count && selected[index].start < sample.end {
+                            let existing = selected[index]
+                            if existing.start > cursor {
+                                uncovered.append(TimedValue(start: cursor, end: min(existing.start, sample.end), value: sample.value))
+                            }
+                            cursor = max(cursor, existing.end)
+                            if cursor >= sample.end { break }
+                            index += 1
+                        }
+                        if cursor < sample.end { uncovered.append(TimedValue(start: cursor, end: sample.end, value: sample.value)) }
+                    }
+                    return (selected + uncovered).sorted { $0.start < $1.start }
+                }
+                func merged(_ key: KeyPath<WorkoutFeatures, [TimedValue]>, range: ClosedRange<Double>) -> [TimedValue] {
+                    let candidates = inputs.map { source, value in
+                        let intervals = SignalProcessing.intervals(samples: value[keyPath: key], window: window,
+                                                                   pauses: value.pauses + primaryPauses, validRange: range)
+                        return (source, intervals, SignalProcessing.coveredSeconds(intervals))
+                    }.filter { !$0.1.isEmpty }.sorted {
+                        if $0.0.isGarmin != $1.0.isGarmin { return $0.0.isGarmin }
+                        if $0.0.isGarmin && ($0.0.id == session.id) != ($1.0.id == session.id) { return $0.0.id == session.id }
+                        return $0.2 == $1.2 ? $0.0.id < $1.0.id : $0.2 > $1.2
+                    }
+                    guard let first = candidates.first else { return [] }
+                    // Without any usable Garmin intervals retain the existing
+                    // highest-coverage fallback, rather than combining sources.
+                    guard first.0.isGarmin else { return first.1 }
+                    return candidates.dropFirst().reduce(first.1) { fillGaps($0, with: $1.1) }
+                }
+                features.heartRate = merged(\.heartRate, range: 30...240)
+                features.power = merged(\.power, range: 0...2500)
+                features.cadence = merged(\.cadence, range: 0...250)
+                features.speed = merged(\.speed, range: 0...15)
+                features.elevation = merged(\.elevation, range: -500...9000)
+                features.grade = merged(\.grade, range: -0.5...0.5)
+                // The canonical Garmin timeline controls overall activity pauses;
+                // a different source's pauses must not erase Garmin measurements.
+                features.pauses = primaryPauses
+                let ranked = inputs.sorted {
+                    if $0.0.isGarmin != $1.0.isGarmin { return $0.0.isGarmin }
+                    if ($0.0.id == session.id) != ($1.0.id == session.id) { return $0.0.id == session.id }
+                    return $0.0.id < $1.0.id
+                }
+                features.ascentMeters = ranked.compactMap { $0.1.ascentMeters }.first
+                features.descentMeters = ranked.compactMap { $0.1.descentMeters }.first
+                features.swimSegments = ranked.first { !$0.1.swimSegments.isEmpty }?.1.swimSegments ?? []
+                for (source, other) in inputs where source.id != session.id {
+                    if features.end == nil { features.end = other.end }
+                    features.provenance = Array(Set(features.provenance + other.provenance)).sorted()
+                }
+            } else {
+                // Preserve the existing highest-coverage rule for non-Garmin groups.
+                // Single-source sessions skip coverage comparisons entirely.
+                for source in sources where source.id != session.id {
+                    let other = decodedFeatures(for: source)
+                    if supported(other.heartRate, pauses: other.pauses, range: 30...240) > supported(features.heartRate, pauses: features.pauses, range: 30...240) { features.heartRate = other.heartRate }
+                    if supported(other.power, pauses: other.pauses, range: 0...2500) > supported(features.power, pauses: features.pauses, range: 0...2500) { features.power = other.power }
+                    if supported(other.cadence, pauses: other.pauses, range: 0...250) > supported(features.cadence, pauses: features.pauses, range: 0...250) { features.cadence = other.cadence }
+                    if supported(other.speed, pauses: other.pauses, range: 0...15) > supported(features.speed, pauses: features.pauses, range: 0...15) { features.speed = other.speed }
+                    if supported(other.elevation, pauses: other.pauses, range: -500...9000) > supported(features.elevation, pauses: features.pauses, range: -500...9000) { features.elevation = other.elevation }
+                    if supported(other.grade, pauses: other.pauses, range: -0.5...0.5) > supported(features.grade, pauses: features.pauses, range: -0.5...0.5) { features.grade = other.grade }
+                    if features.ascentMeters == nil { features.ascentMeters = other.ascentMeters }
+                    if features.descentMeters == nil { features.descentMeters = other.descentMeters }
+                    if other.swimSegments.count > features.swimSegments.count { features.swimSegments = other.swimSegments }
+                    if features.pauses.isEmpty { features.pauses = other.pauses }
+                    if features.end == nil { features.end = other.end }
+                    features.provenance = Array(Set(features.provenance + other.provenance)).sorted()
+                }
             }
             let recordedSets = sets.filter { ids.contains($0.sessionID) }
             let inputs = recordedSets.map(\.input)

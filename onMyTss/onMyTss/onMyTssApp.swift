@@ -34,7 +34,8 @@ struct ohMyTssApp: App {
         #if DEBUG
         if (inMemory || testStoreURL != nil) && ProcessInfo.processInfo.arguments.contains("--v2-large-history") {
             try LaunchHistoryFixture.seed(in: container, includeEstimates:
-                !ProcessInfo.processInfo.arguments.contains("--v2-missing-estimates"))
+                !ProcessInfo.processInfo.arguments.contains("--v2-missing-estimates"),
+                sourceAlreadyKnown: ProcessInfo.processInfo.arguments.contains("--v2-sync-fixture"))
         }
         if inMemory && ProcessInfo.processInfo.arguments.contains("--v2-rpe-demo") {
             try LaunchHistoryFixture.seedDashboard(in: container)

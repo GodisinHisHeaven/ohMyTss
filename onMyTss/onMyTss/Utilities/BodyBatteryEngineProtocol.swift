@@ -7,7 +7,9 @@
 
 import Foundation
 
+@MainActor
 protocol BodyBatteryEngineProtocol {
+    var isProcessing: Bool { get }
     func recomputeAll() async throws
     func incrementalUpdate() async throws
 }

@@ -67,6 +67,10 @@ final class Workout {
     /// Device name that recorded the workout
     var deviceName: String?
 
+    /// Source identity is independent of sensor availability.
+    var sourceBundleIdentifier: String?
+    var deviceManufacturer: String?
+
     // Additive v2 fields: optional/default values allow lightweight legacy-store migration.
     var featuresData: Data?
     var userTags: [String] = []

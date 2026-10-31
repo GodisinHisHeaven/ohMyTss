@@ -10,6 +10,7 @@ final class AppSyncRuntime: BodyBatteryEngineProtocol {
     private var container: ModelContainer?
     private(set) var dataStore: DataStore?
     private var engine: BodyBatteryEngine?
+    var isProcessing: Bool { engine?.isProcessing == true }
     private let pending: PendingSyncStore
     private var volatilePending = false
     private let logger = Logger(subsystem: "mj6.onMyTss", category: "BackgroundSync")
@@ -35,6 +36,14 @@ final class AppSyncRuntime: BodyBatteryEngineProtocol {
         #endif
         pending = PendingSyncStore(url: directory.appendingPathComponent("ohmytss/pending-sync.json"))
     }
+
+    #if DEBUG
+    /// Isolated injection for tests; never opens or mutates the shared app store.
+    init(testEngine: BodyBatteryEngine, pendingURL: URL) {
+        engine = testEngine
+        pending = PendingSyncStore(url: pendingURL)
+    }
+    #endif
 
     func open() throws -> ModelContainer {
         if let container { return container }
