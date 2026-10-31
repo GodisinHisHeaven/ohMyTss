@@ -62,6 +62,7 @@ final class V2FlowTests: XCTestCase {
         reach(lt1, in: app)
         lt1.tap()
         lt1.typeText("140")
+        app.buttons["settings.intensityDone"].tap()
         let lt2 = app.textFields["settings.lt2HeartRate"]
         reach(lt2, in: app)
         lt2.tap()
@@ -96,6 +97,8 @@ final class V2FlowTests: XCTestCase {
         XCTAssertEqual(lt2.value as? String, "170")
         lt1.tap()
         lt1.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 3))
+        app.buttons["settings.intensityDone"].tap()
+        reach(lt2, in: app)
         lt2.tap()
         lt2.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 3))
         app.buttons["settings.intensityDone"].tap()
