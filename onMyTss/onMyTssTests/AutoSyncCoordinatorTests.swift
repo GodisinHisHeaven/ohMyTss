@@ -20,13 +20,26 @@ final class AutoSyncCoordinatorTests: XCTestCase {
     }
 
     func testPersistedLastComputationPreventsSyncAfterRelaunch() async {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
         let clock = TestClock()
         var calls = 0
-        let coordinator = AutoSyncCoordinator(clock: { clock.now }) { calls += 1 }
+        let coordinator = AutoSyncCoordinator(calendar: calendar, clock: { clock.now }) { calls += 1 }
 
         await coordinator.requestIfNeeded(lastComputation: clock.now.addingTimeInterval(-60))
         XCTAssertEqual(calls, 0)
         await coordinator.requestIfNeeded(lastComputation: clock.now.addingTimeInterval(-900))
+        XCTAssertEqual(calls, 1)
+    }
+
+    func testPersistedLastComputationAcrossLocalMidnightRunsAfterRelaunch() async {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "America/Los_Angeles")!
+        let clock = TestClock()
+        var calls = 0
+        let coordinator = AutoSyncCoordinator(calendar: calendar, clock: { clock.now }) { calls += 1 }
+
+        await coordinator.requestIfNeeded(lastComputation: clock.now.addingTimeInterval(-60))
         XCTAssertEqual(calls, 1)
     }
 
