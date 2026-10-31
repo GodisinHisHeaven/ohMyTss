@@ -233,6 +233,14 @@ def verify_once(client, app_id, group_name, commit):
         raise Retry("Waiting for Xcode Cloud run completion")
     actions = client.all("/v1/ciBuildRuns/%s/actions?limit=200" % run_id)
     action_attrs = [attributes(a) for a in actions]
+    post_actions = [a for a in action_attrs if a.get("name") == "TestFlight Internal Testing - iOS"]
+    if len(post_actions) != 1 or post_actions[0].get("actionType") != "TEST":
+        raise Unknown("The unique TestFlight Internal Testing - iOS action is unavailable")
+    post_action = post_actions[0]
+    if post_action.get("completionStatus") in {"FAILED", "ERRORED", "CANCELED", "SKIPPED"}:
+        raise Failed("Xcode Cloud TestFlight internal testing post-action did not succeed")
+    if post_action.get("completionStatus") != "SUCCEEDED" or post_action.get("executionProgress") != "COMPLETE":
+        raise Retry("Waiting for the TestFlight internal testing post-action to complete")
     for kind in ("BUILD", "TEST", "ARCHIVE"):
         selected = [a for a in action_attrs if a.get("actionType") == kind]
         if not selected:

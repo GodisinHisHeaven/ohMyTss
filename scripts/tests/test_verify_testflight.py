@@ -42,7 +42,9 @@ class FakeClient:
                 item("run", number=37, sourceCommit={"commitSha": SHA}, isPullRequestBuild=False,
                      executionProgress="COMPLETE", completionStatus="SUCCEEDED")],
             "/v1/ciBuildRuns/run/actions?limit=200": [item(x, name="Test - iOS" if x == "TEST" else x, actionType=x, completionStatus="SUCCEEDED", executionProgress="COMPLETE", isRequiredToPass=True)
-                                                        for x in ("BUILD", "TEST", "ARCHIVE")],
+                                                        for x in ("BUILD", "TEST", "ARCHIVE")] + [
+                item("post", name="TestFlight Internal Testing - iOS", actionType="TEST",
+                     completionStatus="SUCCEEDED", executionProgress="COMPLETE", isRequiredToPass=True)],
             "/v1/ciBuildRuns/run/builds?limit=200": [item("build")],
             "/v1/betaGroups/group/builds?limit=200": [item("build")],
         }
@@ -128,6 +130,31 @@ class TestVerification(unittest.TestCase):
         actions.append(item("duplicate", name="Test - iOS", actionType="TEST", completionStatus="SUCCEEDED",
                             executionProgress="COMPLETE", isRequiredToPass=True))
         with self.assertRaises(verify.Unknown): self.check()
+
+    def test_post_action_must_exist_uniquely_with_expected_type(self):
+        actions = self.api.lists["/v1/ciBuildRuns/run/actions?limit=200"]
+        post = actions.pop()
+        with self.assertRaises(verify.Unknown): self.check()
+        actions.append(post)
+        post["attributes"]["actionType"] = "ARCHIVE"
+        with self.assertRaises(verify.Unknown): self.check()
+        post["attributes"]["actionType"] = "TEST"
+        actions.append(item("duplicate", name="TestFlight Internal Testing - iOS", actionType="TEST",
+                            completionStatus="SUCCEEDED", executionProgress="COMPLETE"))
+        with self.assertRaises(verify.Unknown): self.check()
+
+    def test_post_action_requires_completed_success(self):
+        attrs = self.api.lists["/v1/ciBuildRuns/run/actions?limit=200"][-1]["attributes"]
+        for progress, status in (("PENDING", None), ("RUNNING", None), ("RUNNING", "SUCCEEDED")):
+            with self.subTest(progress=progress, status=status):
+                attrs.update(executionProgress=progress, completionStatus=status)
+                with self.assertRaises(verify.Retry): self.check()
+        for status in ("FAILED", "ERRORED", "CANCELED", "SKIPPED"):
+            with self.subTest(status=status):
+                attrs.update(executionProgress="COMPLETE", completionStatus=status)
+                with self.assertRaises(verify.Failed): self.check()
+        attrs.update(executionProgress="COMPLETE", completionStatus="SUCCEEDED")
+        self.assertEqual(self.check()["runNumber"], 37)
 
     def test_processing_group_and_internal_state_all_required(self):
         attrs = self.api.singles["/v1/builds/build"]["data"]["attributes"]
