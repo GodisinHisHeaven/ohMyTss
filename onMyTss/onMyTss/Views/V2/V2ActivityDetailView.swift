@@ -6,7 +6,7 @@ struct V2ActivityDetailView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
     @Query(sort: \StrengthSetRecord.recordedAt) private var allSets: [StrengthSetRecord]
-    @Query private var estimates: [LoadEstimateRecord]
+    @Query(sort: \LoadEstimateRecord.computedAt, order: .reverse) private var estimates: [LoadEstimateRecord]
     @Query(sort: \LocalObservation.observedAt, order: .reverse) private var observations: [LocalObservation]
     @Query(sort: \StrengthTemplate.name) private var templates: [StrengthTemplate]
     @Query private var workouts: [Workout]
@@ -22,14 +22,11 @@ struct V2ActivityDetailView: View {
 
     init(workout: Workout) {
         self.workout = workout
-        let sessionID = workout.id
-        _estimates = Query(filter: #Predicate<LoadEstimateRecord> { $0.sessionID == sessionID },
-                           sort: \LoadEstimateRecord.computedAt, order: .reverse)
         _tags = State(initialValue: Set(workout.userTags))
     }
 
     private var sets: [StrengthSetRecord] { allSets.filter { $0.sessionID == workout.id } }
-    private var revisions: [LoadEstimateRecord] { estimates }
+    private var revisions: [LoadEstimateRecord] { estimates.filter { $0.sessionID == workout.id } }
     private var latest: LoadEstimateValue? { revisions.first?.value }
     private var isActive: Bool { !workout.isSuppressed && !workout.isTombstoned }
     private var isSwim: Bool { workout.workoutType.lowercased().contains("swim") }
@@ -211,7 +208,6 @@ struct V2ActivityDetailView: View {
                         DisclosureGroup("\(revision.version) · \(revision.computedAt.formatted(date: .abbreviated, time: .shortened))") {
                             if let value = revision.value { V2EstimateView(estimate: value) }
                         }
-                        .accessibilityIdentifier("activity.estimateRevision")
                     }
                 }
             }

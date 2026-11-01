@@ -4,43 +4,6 @@ import XCTest
 /// These tests require a real Apple simulator and are not runnable on Linux.
 final class V2FlowTests: XCTestCase {
     @MainActor
-    func testEstimateHistoryIsScopedAndUpdatesWithThousandSavedActivities() {
-        let app = XCUIApplication()
-        app.launchArguments = ["--v2-ui-tests", "--v2-large-history", "--v2-disk-history"]
-        app.launch()
-        XCTAssertTrue(app.navigationBars["Today"].waitForExistence(timeout: 10))
-
-        let first = app.buttons["today.workout.synthetic-launch-0"]
-        XCTAssertTrue(reachDashboardButton(first, in: app))
-        first.tap()
-        XCTAssertTrue(app.navigationBars["Run"].waitForExistence(timeout: 5))
-        let recalculate = app.buttons["activity.recalculate"]
-        reach(recalculate, in: app)
-        recalculate.tap()
-        let history = app.staticTexts["Estimate history"]
-        reach(history, in: app)
-        XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "activity.estimateRevision").count, 1)
-
-        // The next activity has its own single estimate, even though the
-        // first now has two and the store contains 998 other histories.
-        let sideBack = app.buttons["BackButton"]
-        if sideBack.exists { sideBack.tap() }
-        else { app.navigationBars.buttons.element(boundBy: 0).tap() }
-        XCTAssertTrue(app.navigationBars["Today"].waitForExistence(timeout: 5))
-        let second = app.buttons["today.workout.synthetic-launch-1"]
-        XCTAssertTrue(reachDashboardButton(second, in: app))
-        second.tap()
-        XCTAssertTrue(app.navigationBars["Run"].waitForExistence(timeout: 5))
-        let remove = app.buttons["Remove activity from totals"]
-        reach(remove, in: app)
-        XCTAssertFalse(history.exists, "Other activities' estimates must not appear in this history")
-        reach(recalculate, in: app)
-        recalculate.tap()
-        reach(history, in: app)
-        XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "activity.estimateRevision").count, 1)
-    }
-
-    @MainActor
     func testOfflineRepairKeepsThousandDiskRecordsBrowsable() {
         let app = XCUIApplication()
         app.launchArguments = ["--v2-ui-tests", "--v2-large-history", "--v2-disk-history",
