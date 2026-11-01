@@ -5,6 +5,7 @@ import os
 import re
 import sys
 import time
+from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import Request, build_opener
 
@@ -16,6 +17,11 @@ from verify_testflight import Client, NoRedirect, Retry, Unknown, attributes
 
 WORKFLOW_FILE = "start-main-from-history.yml"
 UUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+DEFINITE_REJECTIONS = {400, 401, 403, 404, 409, 422}
+
+
+class ExplicitPostRejection(Exception):
+    pass
 
 
 def require_unique_dispatch(target, run_id, token, opener=None):
@@ -133,15 +139,30 @@ def start(client, target, old_id, app, run_id, token, *, current_main=github_bra
                       data=json.dumps(body).encode(), method="POST",
                       headers={"Authorization": "Bearer " + client.token,
                                "Content-Type": "application/json", "Accept": "application/json"})
+    # This is the only POST; never retry on a lost or malformed response.
+    # Only an HTTPError from opening the request is an explicit rejection.
     try:
-        # This is the only POST; never retry on a lost or malformed response.
-        with client.opener.open(request, timeout=15) as response:
+        response = client.opener.open(request, timeout=15)
+    except HTTPError as error:
+        if type(error.code) is int and error.code in DEFINITE_REJECTIONS:
+            raise Unknown("POST rejected (HTTP %d); no automatic retry; inspect before any new dispatch"
+                          % error.code) from None
+        raise Unknown("POST may have created a run; inspect ASC and do not dispatch again") from None
+    except Exception:
+        raise Unknown("POST may have created a run; inspect ASC and do not dispatch again") from None
+    try:
+        with response:
+            if response.status in DEFINITE_REJECTIONS:
+                raise ExplicitPostRejection(response.status)
             require(response.status == 201, "Unexpected POST status")
             payload = json.load(response)
         created = payload.get("data") if isinstance(payload, dict) else None
         require(isinstance(created, dict) and created.get("type") == "ciBuildRuns", "Malformed POST response")
         new_id = created.get("id")
         require(isinstance(new_id, str) and UUID.fullmatch(new_id), "Cloud run ID unavailable")
+    except ExplicitPostRejection as error:
+        raise Unknown("POST rejected (HTTP %d); no automatic retry; inspect before any new dispatch"
+                      % error.args[0]) from None
     except Exception:
         raise Unknown("POST may have created a run; inspect ASC and do not dispatch again") from None
     try:

@@ -179,6 +179,20 @@ class TestManualConfiguration(unittest.TestCase):
             side = git("rev-parse", "HEAD")
             git("checkout", "-q", "--detach", current)
             self.assertTrue(config.is_checked_out_ancestor(first, current, cwd=repo))
+            real_run = subprocess.run
+            child_envs = []
+            def capture_child_env(*args, **kwargs):
+                child_envs.append(kwargs["env"])
+                return real_run(*args, **kwargs)
+            sensitive_env = {"GH_READ_TOKEN": "github-secret", "ASC_PRIVATE_KEY": "apple-secret",
+                             "ASC_ISSUER_ID": "issuer", "ASC_KEY_ID": "key", "UNRELATED_SECRET": "other"}
+            with patch.dict(os.environ, sensitive_env), patch.object(config.subprocess, "run", side_effect=capture_child_env):
+                self.assertTrue(config.is_checked_out_ancestor(first, current, cwd=repo))
+            self.assertGreater(len(child_envs), 0)
+            for child_env in child_envs:
+                self.assertTrue(all(key not in child_env for key in sensitive_env))
+                self.assertEqual(child_env["GIT_NO_REPLACE_OBJECTS"], "1")
+                self.assertEqual(child_env["GIT_TERMINAL_PROMPT"], "0")
             with patch.dict(os.environ, {"GIT_DIR": "/nonexistent", "GIT_WORK_TREE": "/nonexistent"}):
                 self.assertTrue(config.is_checked_out_ancestor(first, current, cwd=repo))
             with patch.object(config.os, "lstat", side_effect=PermissionError("sensitive")) as denied:

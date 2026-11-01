@@ -30,9 +30,10 @@ def is_checked_out_ancestor(ancestor, target, *, cwd=None):
     if not all(isinstance(value, str) and re.fullmatch(r"[0-9a-f]{40}", value)
                for value in (ancestor, target)):
         return False
-    # Ignore inherited Git overrides, including alternate graft files and
-    # repository paths; this check must use the checkout in the working dir.
-    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    # Exclude Git overrides and credentials from the child process. This check
+    # uses the checkout in the working dir and needs only basic process settings.
+    allowed_env = {"PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "SYSTEMROOT"}
+    env = {key: value for key, value in os.environ.items() if key in allowed_env}
     env.update(GIT_NO_REPLACE_OBJECTS="1", GIT_TERMINAL_PROMPT="0")
     def git(*args):
         return subprocess.run(["git", *args], cwd=cwd, env=env, capture_output=True,
