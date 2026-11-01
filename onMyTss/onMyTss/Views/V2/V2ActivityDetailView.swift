@@ -17,6 +17,14 @@ struct V2ActivityDetailView: View {
     @State private var templateName = ""
     @State private var namingTemplate = false
     @State private var confirmDelete = false
+    @State private var confirmCyclingTest = false
+    @State private var confirmDeflection = false
+    @State private var deflectionConfirmation: CyclingDeflectionConfirmation?
+    @State private var deflectionResult: CyclingDeflectionResult?
+    @State private var deflectionGeneration = UUID()
+    @AppStorage("intensityLT1HeartRate") private var lt1HeartRate = 0
+    @AppStorage("intensityLT2HeartRate") private var lt2HeartRate = 0
+    @AppStorage("intensityLT2Source") private var lt2Source = ""
     @State private var tags: Set<String>
     @State private var error: String?
 
@@ -33,6 +41,18 @@ struct V2ActivityDetailView: View {
     private var isRide: Bool {
         let type = workout.workoutType.lowercased()
         return type.contains("cycl") || type.contains("ride") || type.contains("bike")
+    }
+    private let cyclingTestTag = "complete_incremental_cycling_test"
+
+    private var deflectionInput: CyclingDeflectionInput {
+        CyclingDeflectionInput(id: workout.id, start: workout.startTime, duration: workout.duration,
+            featuresData: workout.featuresData, marked: workout.userTags.contains(cyclingTestTag),
+            activeCycling: isActive && isRide)
+    }
+
+    private var currentCandidate: HRPowerDeflectionCandidate? {
+        guard let result = deflectionResult, result.input == deflectionInput else { return nil }
+        return result.candidate
     }
 
     var body: some View {
@@ -100,11 +120,55 @@ struct V2ActivityDetailView: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     Button("Save details and recalculate") {
-                        workout.userTags = tags.sorted()
+                        var editableTags = Set<String>()
+                        if isSwim {
+                            editableTags.formUnion(["paddles", "fins", "pull_buoy", "kick_drill",
+                                "freestyle", "backstroke", "breaststroke", "butterfly"])
+                        }
+                        if isRide { editableTags.formUnion(["seated", "standing"]) }
+                        workout.userTags = Set(workout.userTags).subtracting(editableTags)
+                            .union(tags.intersection(editableTags)).sorted()
                         recalculate()
                     }
                     .accessibilityIdentifier("activity.saveTags")
                     .disabled(workout.isSuppressed || workout.isTombstoned)
+                }
+            }
+            if isActive && isRide {
+                Section("Incremental cycling test") {
+                    Text("Only mark an activity recorded separately as one complete incremental cycling test, without warm-up or cool-down.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    if workout.userTags.contains(cyclingTestTag) {
+                        Button("Remove test marking") { setCyclingTestMarked(false) }
+                            .accessibilityIdentifier("activity.unmarkCyclingTest")
+                        if deflectionResult?.input != deflectionInput {
+                            ProgressView()
+                        } else if let candidate = currentCandidate {
+                            Text("Unvalidated deflection candidate: \(Int(candidate.heartRateBPM.rounded())) bpm")
+                                .accessibilityIdentifier("activity.deflectionCandidate")
+                            Text("Analyzed: \(candidate.analyzedWindow.start.formatted(.dateTime.month().day().hour().minute().second())) – \(candidate.analyzedWindow.end.formatted(.dateTime.month().day().hour().minute().second()))")
+                                .font(.caption).foregroundStyle(.secondary)
+                            if candidate.analyzedWindow.end < candidate.testWindow.end {
+                                Text("The final partial minute was checked but excluded from the fit.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                            Text("This is not a measured LT2. Review before using it.")
+                                .font(.caption).foregroundStyle(.secondary)
+                            Button("Review candidate for LT2") { reviewDeflection(candidate) }
+                                .disabled(!(30...240).contains(lt1HeartRate) || Int(candidate.heartRateBPM.rounded()) <= lt1HeartRate)
+                                .accessibilityIdentifier("activity.useDeflection")
+                            if !(30...240).contains(lt1HeartRate) || Int(candidate.heartRateBPM.rounded()) <= lt1HeartRate {
+                                Text("Set a valid LT1 below the candidate in Settings first.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                        } else {
+                            Text("No candidate from this activity. Suitable paired heart rate and power data are required.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    } else {
+                        Button("Mark as complete incremental test") { confirmCyclingTest = true }
+                            .accessibilityIdentifier("activity.markCyclingTest")
+                    }
                 }
             }
             Section("Strength sets") {
@@ -172,6 +236,18 @@ struct V2ActivityDetailView: View {
         }
         .navigationTitle(workout.workoutType)
         .navigationBarTitleDisplayMode(.inline)
+        .task(id: deflectionInput) {
+            let input = deflectionInput
+            let generation = UUID()
+            deflectionGeneration = generation
+            guard input.marked && input.activeCycling else { deflectionResult = nil; return }
+            let worker = Task.detached(priority: .userInitiated) { input.calculate() }
+            let candidate = await withTaskCancellationHandler {
+                await worker.value
+            } onCancel: { worker.cancel() }
+            guard !Task.isCancelled, generation == deflectionGeneration, input == deflectionInput else { return }
+            deflectionResult = CyclingDeflectionResult(input: input, candidate: candidate)
+        }
         .sheet(isPresented: $addSet) { StrengthSetEditor(sessionID: workout.id) }
         .sheet(item: $editingSet) { StrengthSetEditor(sessionID: workout.id, existing: $0) }
         .sheet(isPresented: $addReport) { ObservationEditor(sessionID: workout.id) }
@@ -194,6 +270,19 @@ struct V2ActivityDetailView: View {
                 }
             }
         }
+        .confirmationDialog("Mark this as a complete incremental cycling test?", isPresented: $confirmCyclingTest, titleVisibility: .visible) {
+            Button("Mark complete test") { setCyclingTestMarked(true) }
+        } message: {
+            Text("Mark only a separately recorded complete incremental test. Warm-up and cool-down must not be included.")
+        }
+        .confirmationDialog("Use the unvalidated candidate as LT2?", isPresented: $confirmDeflection, titleVisibility: .visible) {
+            Button("Use as LT2") { acceptDeflection() }
+        } message: {
+            if let confirmation = deflectionConfirmation {
+                let previous = (30...240).contains(confirmation.previousLT2) ? " It will replace the current LT2 of \(confirmation.previousLT2) bpm." : ""
+                Text("This is not a measured LT2. The candidate is \(confirmation.candidateBPM) bpm.\(previous)")
+            }
+        }
     }
 
     private func tag(_ label: String, raw: String) -> some View {
@@ -214,11 +303,87 @@ struct V2ActivityDetailView: View {
         catch { context.rollback(); self.error = error.localizedDescription }
     }
 
+    private func setCyclingTestMarked(_ marked: Bool) {
+        guard isActive && isRide else { return }
+        let original = workout.userTags
+        var updated = Set(original)
+        if marked { updated.insert(cyclingTestTag) } else { updated.remove(cyclingTestTag) }
+        workout.userTags = updated.sorted()
+        do {
+            try context.save()
+            deflectionGeneration = UUID()
+            deflectionResult = nil
+            if marked { tags.insert(cyclingTestTag) } else { tags.remove(cyclingTestTag) }
+            error = nil
+        } catch {
+            workout.userTags = original
+            self.error = "Could not save the test marking."
+        }
+    }
+
+    private func reviewDeflection(_ candidate: HRPowerDeflectionCandidate) {
+        deflectionConfirmation = CyclingDeflectionConfirmation(input: deflectionInput,
+            candidateBPM: Int(candidate.heartRateBPM.rounded()), previousLT1: lt1HeartRate,
+            previousLT2: lt2HeartRate)
+        confirmDeflection = true
+    }
+
+    private func acceptDeflection() {
+        guard isActive, isRide, workout.userTags.contains(cyclingTestTag),
+              let confirmation = deflectionConfirmation, confirmation.input == deflectionInput,
+              confirmation.previousLT1 == lt1HeartRate, confirmation.previousLT2 == lt2HeartRate,
+              let candidate = currentCandidate,
+              Int(candidate.heartRateBPM.rounded()) == confirmation.candidateBPM,
+              (30...240).contains(lt1HeartRate) else {
+            error = "The candidate is no longer available."
+            return
+        }
+        let bpm = Int(candidate.heartRateBPM.rounded())
+        guard (30...240).contains(bpm), bpm > lt1HeartRate else {
+            error = "LT1 must be below the candidate."
+            return
+        }
+        lt2HeartRate = bpm
+        lt2Source = "unvalidated_cycling_deflection"
+        error = nil
+    }
+
     private func setDescription(_ set: StrengthSetRecord) -> String {
         let weight = set.weightKG.map { String(format: "%.1f kg", $0) } ?? "Weight unknown"
         let effort = set.rir.map { "RIR \($0)" } ?? set.effortRaw?.capitalized ?? "Effort unknown"
         return "\(set.reps) reps · \(weight) · \(effort)"
     }
+}
+
+nonisolated private struct CyclingDeflectionInput: Equatable, Sendable {
+    let id: String
+    let start: Date
+    let duration: TimeInterval
+    let featuresData: Data?
+    let marked: Bool
+    let activeCycling: Bool
+
+    func calculate() -> HRPowerDeflectionCandidate? {
+        guard !Task.isCancelled, marked, activeCycling, duration.isFinite, duration > 0,
+              let data = featuresData, let features = try? JSONDecoder().decode(WorkoutFeatures.self, from: data) else { return nil }
+        let end = features.end ?? start.addingTimeInterval(duration)
+        guard end <= Date() else { return nil }
+        return HRPowerDeflectionEstimator.candidate(window: TimeRange(start: start, end: end),
+            heartRate: features.heartRate, power: features.power,
+            userConfirmedCompleteIncrementalTest: marked, pauses: features.pauses)
+    }
+}
+
+private struct CyclingDeflectionResult {
+    let input: CyclingDeflectionInput
+    let candidate: HRPowerDeflectionCandidate?
+}
+
+private struct CyclingDeflectionConfirmation {
+    let input: CyclingDeflectionInput
+    let candidateBPM: Int
+    let previousLT1: Int
+    let previousLT2: Int
 }
 
 private struct LinkSessionView: View {
