@@ -63,8 +63,16 @@ class TestTestFlightWorkflow(unittest.TestCase):
         self.assertIn("  push:\n    branches: [main]", triggers)
         self.assertIn("  workflow_dispatch:", triggers)
         self.assertNotIn("pull_request", triggers)
-        before_verify = WORKFLOW.split("      - name: Verify Xcode Cloud and TestFlight", 1)[0]
-        self.assertNotIn("secrets.", before_verify)
+        before_retry = WORKFLOW.split("      - name: Retry canceled Xcode Cloud run", 1)[0]
+        self.assertNotIn("secrets.", before_retry)
+        retry_step = WORKFLOW.split("      - name: Retry canceled Xcode Cloud run", 1)[1].split("      - name: Verify Xcode Cloud and TestFlight", 1)[0]
+        self.assertIn("github.event_name == 'workflow_dispatch' && inputs.retry_canceled_cloud_run == true", retry_step)
+        self.assertIn("default: false", triggers)
+        self.assertIn("scripts/retry_canceled_cloud_run.py", retry_step)
+        self.assertIn("cancel-in-progress: false", WORKFLOW)
+        self.assertIn("id: cloud_retry", retry_step)
+        self.assertIn("steps.cloud_retry.outputs.run_id", WORKFLOW)
+        self.assertIn('args+=(--expected-run-id "$EXPECTED_RUN_ID")', WORKFLOW)
         self.assertNotIn("cancel-in-progress: true", WORKFLOW)
         self.assertIn("persist-credentials: false", WORKFLOW)
         self.assertNotIn("continue-on-error", WORKFLOW)

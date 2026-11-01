@@ -9,6 +9,15 @@ on:
         description: "Optional full main-branch commit SHA to verify"
         required: false
         type: string
+      retry_canceled_cloud_run:
+        description: "Start one replacement for a canceled current-main Cloud run"
+        required: true
+        type: boolean
+        default: false
+      canceled_run_id:
+        description: "Canceled Xcode Cloud run ID; required only for retry"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -18,6 +27,9 @@ jobs:
     name: Verify exact TestFlight build
     runs-on: ubuntu-latest
     timeout-minutes: 105
+    concurrency:
+      group: ${{ github.event_name == 'workflow_dispatch' && inputs.retry_canceled_cloud_run && 'testflight-cloud-recovery' || github.run_id }}
+      cancel-in-progress: false
     steps:
       # Secrets are not exposed to this step, or to pull request workflows.
       - name: Require the protected main branch
@@ -53,8 +65,23 @@ jobs:
           fi
           printf 'sha=%s\n' "$target" >> "$GITHUB_OUTPUT"
 
-      # Repo secrets are scoped to this read-only verification step. A missing
-      # key is a failure, never a successful or skipped distribution check.
+      # This write-capable step is available only on explicit main dispatch.
+      # It performs one POST at most; uncertain outcomes must be investigated.
+      - name: Retry canceled Xcode Cloud run
+        id: cloud_retry
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.retry_canceled_cloud_run == true }}
+        env:
+          GH_READ_TOKEN: ${{ github.token }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+          ASC_APP_ID: ${{ vars.ASC_APP_ID || '6755509363' }}
+          TARGET_SHA: ${{ steps.target.outputs.sha }}
+          CANCELED_RUN_ID: ${{ inputs.canceled_run_id }}
+        run: python3 scripts/retry_canceled_cloud_run.py
+
+      # Verification is unchanged and remains mandatory after an explicit retry.
+      # A missing key is a failure, never a successful or skipped check.
       - name: Verify Xcode Cloud and TestFlight
         env:
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
@@ -63,4 +90,12 @@ jobs:
           ASC_APP_ID: ${{ vars.ASC_APP_ID || '6755509363' }}
           ASC_BETA_GROUP: ${{ vars.ASC_BETA_GROUP || 'close door' }}
           TARGET_SHA: ${{ steps.target.outputs.sha }}
-        run: python3 scripts/verify_testflight.py --commit "$TARGET_SHA" --timeout-seconds 5400 --poll-seconds 30
+          EXPECTED_RUN_ID: ${{ steps.cloud_retry.outputs.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=(--timeout-seconds 5400 --poll-seconds 30)
+          if [[ -n "$EXPECTED_RUN_ID" ]]; then
+            args+=(--expected-run-id "$EXPECTED_RUN_ID")
+          fi
+          python3 scripts/verify_testflight.py --commit "$TARGET_SHA" "${args[@]}"

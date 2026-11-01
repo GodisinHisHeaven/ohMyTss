@@ -199,7 +199,7 @@ def run_is_main(client, run):
     return ref["kind"] == "BRANCH" and ref["canonicalName"] == "refs/heads/main"
 
 
-def verify_once(client, app_id, group_name, commit):
+def verify_once(client, app_id, group_name, commit, expected_run_id=None):
     app = quote(app_id, safe="")
     product = resource_id(client.get("/v1/apps/%s/ciProduct" % app).get("data"))
     groups = client.all("/v1/apps/%s/betaGroups?limit=200" % app)
@@ -218,6 +218,8 @@ def verify_once(client, app_id, group_name, commit):
             exact.append(run)
     if not exact:
         raise Retry("Waiting for a main-branch Xcode Cloud run for the exact commit")
+    if expected_run_id is not None and not any(r.get("id") == expected_run_id for r in exact):
+        raise Retry("Waiting for the newly created Xcode Cloud run to appear")
     # An older successful retry must not hide a newer failed or running retry.
     if any(not isinstance(attributes(r).get("number"), int) for r in exact):
         raise Unknown("Xcode Cloud run number is unavailable")
@@ -227,7 +229,13 @@ def verify_once(client, app_id, group_name, commit):
     run = exact[0]
     run_id, state = resource_id(run), attributes(run)
     status = state.get("completionStatus")
-    if status in {"FAILED", "ERRORED", "CANCELED", "SKIPPED"}:
+    if status == "CANCELED":
+        reason = state.get("cancelReason")
+        # Apple documents a string, not an enum. Never emit arbitrary server text
+        # or control characters into Actions logs.
+        safe_reason = reason if isinstance(reason, str) and re.fullmatch(r"[A-Z][A-Z_]{1,63}", reason) else "unavailable"
+        raise Failed("Xcode Cloud run was canceled (cancelReason: %s)" % safe_reason)
+    if status in {"FAILED", "ERRORED", "SKIPPED"}:
         raise Failed("Xcode Cloud run failed or was canceled")
     if state.get("executionProgress") != "COMPLETE" or status != "SUCCEEDED":
         raise Retry("Waiting for Xcode Cloud run completion")
@@ -282,6 +290,7 @@ def main(argv=None):
     parser.add_argument("--app-id", default=os.environ.get("ASC_APP_ID"))
     parser.add_argument("--group", default=os.environ.get("ASC_BETA_GROUP"))
     parser.add_argument("--commit", required=True)
+    parser.add_argument("--expected-run-id", help="Wait for this newly created run to appear")
     parser.add_argument("--timeout-seconds", type=int, default=3600)
     parser.add_argument("--poll-seconds", type=int, default=30)
     args = parser.parse_args(argv)
@@ -289,15 +298,16 @@ def main(argv=None):
     if not all(credentials) or not args.app_id or not args.group:
         print("UNKNOWN: ASC credentials, app ID, and internal beta group are required", file=sys.stderr)
         return 2
-    if not re.fullmatch(r"[0-9a-fA-F]{40}", args.commit) or args.timeout_seconds <= 0 or args.poll_seconds <= 0:
-        print("UNKNOWN: a full 40-character commit and positive timeouts are required", file=sys.stderr)
+    if (not re.fullmatch(r"[0-9a-fA-F]{40}", args.commit) or args.timeout_seconds <= 0 or args.poll_seconds <= 0
+            or (args.expected_run_id is not None and not re.fullmatch(r"[0-9a-fA-F-]{36}", args.expected_run_id))):
+        print("UNKNOWN: a full 40-character commit, valid expected run ID, and positive timeouts are required", file=sys.stderr)
         return 2
     deadline = time.monotonic() + args.timeout_seconds
     client = Client(*credentials, deadline)
     last = "No ASC response"
     while time.monotonic() < deadline:
         try:
-            result = verify_once(client, args.app_id, args.group, args.commit.lower())
+            result = verify_once(client, args.app_id, args.group, args.commit.lower(), args.expected_run_id)
             print("VERIFIED " + json.dumps(result, sort_keys=True))
             return 0
         except Failed as exc:
