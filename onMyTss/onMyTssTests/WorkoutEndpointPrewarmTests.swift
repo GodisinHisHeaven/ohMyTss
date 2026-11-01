@@ -1,9 +1,130 @@
 import XCTest
 import SwiftData
+import Dispatch
 @testable import onMyTss
 
 @MainActor
 final class WorkoutEndpointPrewarmTests: XCTestCase {
+    func testSameLengthDifferentBytesDecodeSeparatelyAndKeepEachProof() throws {
+        let start = Date(timeIntervalSince1970: 1_750_000_000)
+        var features = WorkoutFeatures()
+        features.end = start.addingTimeInterval(600)
+        let original = try JSONEncoder().encode(features)
+        features.end = start.addingTimeInterval(900)
+        let corrected = try JSONEncoder().encode(features)
+        XCTAssertEqual(original.count, corrected.count)
+        XCTAssertNotEqual(original, corrected)
+
+        let inputs = [WorkoutEndpointPayload(id: "source", data: original, retainRaw: false),
+                      WorkoutEndpointPayload(id: "source", data: corrected, retainRaw: false)]
+        var decodeCount = 0
+        let decoded = try WorkoutEndpointPrewarmer.decodeBatch(inputs) { data in
+            decodeCount += 1
+            return (try? JSONDecoder().decode(WorkoutFeatures.self, from: data))?.end
+        }
+        XCTAssertEqual(decodeCount, 2)
+        XCTAssertEqual(decoded.map(\.end), [start.addingTimeInterval(600), start.addingTimeInterval(900)])
+        XCTAssertEqual(decoded.map(\.id), inputs.map(\.id))
+        for (input, output) in zip(inputs, decoded) {
+            let data = try XCTUnwrap(input.data)
+            guard case let .digest(byteCount, sha256) = output.proof else {
+                return XCTFail("Each version must retain its own digest proof")
+            }
+            XCTAssertEqual(byteCount, data.count)
+            XCTAssertEqual(sha256, WorkoutEndpointPrewarmer.digest(data))
+        }
+    }
+
+    func testCancellationStopsAnActiveLongDetachedDecodeBatch() async throws {
+        var features = WorkoutFeatures()
+        features.end = Date(timeIntervalSince1970: 1_750_000_600)
+        let data = try JSONEncoder().encode(features)
+        let inputs = (0..<5_000).map { _ in WorkoutEndpointPayload(id: "source", data: data) }
+        let gate = ActiveDecodeGate()
+        let task = Task {
+            try await WorkoutEndpointPrewarmer.decode(inputs, decodeEnd: { data in
+                gate.decode(data)
+            })
+        }
+        defer { gate.resume() }
+        let started = await Task.detached { gate.waitUntilStarted() }.value
+        guard started else {
+            task.cancel()
+            XCTFail("The detached decoder did not start")
+            return
+        }
+        task.cancel()
+        gate.resume()
+        do {
+            _ = try await task.value
+            XCTFail("Cancellation must stop the active batch")
+        } catch is CancellationError {
+            // The next row checks cancellation before a cached endpoint can be reused.
+        }
+        XCTAssertEqual(gate.decodeCount, 1)
+    }
+
+    func testAdjacentIdenticalPayloadsReuseOnlyTheFullDecode() throws {
+        let start = Date(timeIntervalSince1970: 1_750_000_000)
+        var features = WorkoutFeatures()
+        features.end = start.addingTimeInterval(600)
+        let original = try JSONEncoder().encode(features)
+        let equalCopy = Data(Array(original))
+        features.end = start.addingTimeInterval(900)
+        let corrected = try JSONEncoder().encode(features)
+        let corrupt = Data("{invalid".utf8)
+        let inputs = [
+            WorkoutEndpointPayload(id: "a", data: original),
+            WorkoutEndpointPayload(id: "a", data: equalCopy, retainRaw: false),
+            WorkoutEndpointPayload(id: "a", data: corrected, retainRaw: false),
+            WorkoutEndpointPayload(id: "a", data: corrected),
+            WorkoutEndpointPayload(id: "b", data: corrected),
+            WorkoutEndpointPayload(id: "a", data: corrected),
+            WorkoutEndpointPayload(id: "nil", data: nil),
+            WorkoutEndpointPayload(id: "nil", data: nil, retainRaw: false),
+            WorkoutEndpointPayload(id: "bad", data: corrupt, retainRaw: false),
+            WorkoutEndpointPayload(id: "bad", data: Data(Array(corrupt))),
+            WorkoutEndpointPayload(id: "bad", data: Data()),
+            WorkoutEndpointPayload(id: "bad", data: nil),
+            WorkoutEndpointPayload(id: "bad", data: nil),
+            WorkoutEndpointPayload(id: "other", data: corrupt)
+        ]
+        var decodeCount = 0
+        let decoded = try WorkoutEndpointPrewarmer.decodeBatch(inputs) { data in
+            decodeCount += 1
+            return (try? JSONDecoder().decode(WorkoutFeatures.self, from: data))?.end
+        }
+        XCTAssertEqual(decodeCount, 7)
+        XCTAssertEqual(decoded.map(\.id), inputs.map(\.id))
+        XCTAssertEqual(decoded.map(\.end), [
+            start.addingTimeInterval(600), start.addingTimeInterval(600),
+            start.addingTimeInterval(900), start.addingTimeInterval(900),
+            start.addingTimeInterval(900), start.addingTimeInterval(900),
+            nil, nil, nil, nil, nil, nil, nil, nil
+        ])
+        for (input, output) in zip(inputs, decoded) {
+            if !input.retainRaw, let data = input.data {
+                guard case let .digest(byteCount, sha256) = output.proof else {
+                    return XCTFail("Digest proof required for this entry")
+                }
+                XCTAssertEqual(byteCount, data.count)
+                XCTAssertEqual(sha256, WorkoutEndpointPrewarmer.digest(data))
+            } else {
+                guard case let .exact(data) = output.proof else {
+                    return XCTFail("Exact proof required for this entry")
+                }
+                XCTAssertEqual(data, input.data)
+            }
+        }
+        // A later batch starts empty even when its first row has the same ID
+        // and bytes as the preceding batch's final row.
+        _ = try WorkoutEndpointPrewarmer.decodeBatch([inputs.last!]) { data in
+            decodeCount += 1
+            return (try? JSONDecoder().decode(WorkoutFeatures.self, from: data))?.end
+        }
+        XCTAssertEqual(decodeCount, 8)
+    }
+
     func testCandidateSelectionAndWholePayloadDecode() async throws {
         let start = Date(timeIntervalSince1970: 1_750_000_000)
         func item(_ id: String, _ source: String, _ type: String, _ offset: Double) -> WorkoutEndpointCandidate {
@@ -204,6 +325,34 @@ final class WorkoutEndpointPrewarmTests: XCTestCase {
 }
 
 private enum TestSourceError: Error { case changed }
+nonisolated private final class ActiveDecodeGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private let started = DispatchSemaphore(value: 0)
+    private let proceed = DispatchSemaphore(value: 0)
+    private var calls = 0
+
+    var decodeCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return calls
+    }
+
+    func decode(_ data: Data) -> Date? {
+        lock.lock()
+        calls += 1
+        let first = calls == 1
+        lock.unlock()
+        if first {
+            started.signal()
+            proceed.wait()
+        }
+        return (try? JSONDecoder().decode(WorkoutFeatures.self, from: data))?.end
+    }
+
+    func waitUntilStarted() -> Bool { started.wait(timeout: .now() + 10) == .success }
+    func resume() { proceed.signal() }
+}
+
 private actor EndpointGate {
     private var paused = false
     private var pauseWaiter: CheckedContinuation<Void, Never>?

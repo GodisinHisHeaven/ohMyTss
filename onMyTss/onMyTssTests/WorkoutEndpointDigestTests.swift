@@ -132,6 +132,44 @@ final class WorkoutEndpointDigestTests: XCTestCase {
         XCTAssertFalse(bridge.isSuppressed)
     }
 
+    func testReusedOverflowDecodeDoesNotPropagateDeletionThroughCorrectedBridge() async throws {
+        let f = try fixture()
+        defer { withExtendedLifetime(f.container) {} }
+        let start = Date(timeIntervalSince1970: 1_750_000_000)
+        let data = try payload(start: start, end: 600)
+        let deleted = workout("deleted", .healthKit, start)
+        let active = workout("active-strava", .strava, start)
+        let bridge = workout("bridge-health", .healthKit, start.addingTimeInterval(3600))
+        for row in [deleted, active, bridge] { row.featuresData = data; f.context.insert(row) }
+        try f.context.save()
+        let incomingBridge = workout(bridge.id, .healthKit, bridge.startTime)
+        incomingBridge.featuresData = Data(Array(data))
+        let observation = DigestBatchObservation()
+        let cache = try await f.store.prepareWorkoutEndpoints(
+            incoming: [incomingBridge], byteLimit: 0,
+            candidateIDs: { _ in ["active-strava", "bridge-health", "deleted"] },
+            decode: { values in
+                await observation.record(values)
+                return try await WorkoutEndpointPrewarmer.decode(values)
+            }
+        )
+        let observed = await observation.sawDuplicate
+        XCTAssertTrue(observed, "The real overflow batch must contain both versions")
+        XCTAssertNil(cache.matching(id: bridge.id, data: data))
+        XCTAssertEqual(cache.matching(id: bridge.id, data: data, allowDigest: true)?.end,
+                       start.addingTimeInterval(600))
+
+        deleted.isTombstoned = true
+        deleted.deletionOrigin = "user"
+        bridge.startTime = start.addingTimeInterval(59)
+        _ = try f.store.reconcileWorkoutSources(applySideEffects: true, prewarmed: cache)
+        XCTAssertTrue(deleted.isTombstoned)
+        XCTAssertFalse(active.isTombstoned)
+        XCTAssertFalse(active.isSuppressed)
+        XCTAssertFalse(bridge.isTombstoned)
+        XCTAssertFalse(bridge.isSuppressed)
+    }
+
     func testCorrectedPayloadWhileDigestDecodesDoesNotReuseOldEndpoint() async throws {
         let f = try fixture()
         defer { withExtendedLifetime(f.container) {} }
@@ -144,9 +182,11 @@ final class WorkoutEndpointDigestTests: XCTestCase {
         f.context.insert(health)
         f.context.insert(strava)
         try f.context.save()
+        let duplicate = workout("strava", .strava, start)
+        duplicate.featuresData = Data(Array(old))
         let gate = DigestGate()
         let task = Task {
-            try await f.store.prepareWorkoutEndpoints(incoming: [], byteLimit: 0, decode: { values in
+            try await f.store.prepareWorkoutEndpoints(incoming: [duplicate], byteLimit: 0, decode: { values in
                 let decoded = try await WorkoutEndpointPrewarmer.decode(values)
                 await gate.pause()
                 return decoded
@@ -232,6 +272,20 @@ final class WorkoutEndpointDigestTests: XCTestCase {
         let schema = Schema(AppSchema.models)
         let container = try ModelContainer(for: schema, configurations: [ModelConfiguration(isStoredInMemoryOnly: true)])
         return (container, container.mainContext, DataStore(modelContext: container.mainContext))
+    }
+}
+
+private actor DigestBatchObservation {
+    private(set) var sawDuplicate = false
+    func record(_ values: [WorkoutEndpointPayload]) {
+        guard values.count > 1 else { return }
+        for index in 1..<values.count {
+            let before = values[index - 1]
+            let current = values[index]
+            if before.id == current.id, before.data == current.data {
+                sawDuplicate = true
+            }
+        }
     }
 }
 

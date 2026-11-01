@@ -77,23 +77,46 @@ nonisolated enum WorkoutEndpointPrewarmer {
     }
 
     static func decode(_ inputs: [WorkoutEndpointPayload]) async throws -> [PrewarmedWorkoutEndpoint] {
+        try await decode(inputs, decodeEnd: {
+            (try? JSONDecoder().decode(WorkoutFeatures.self, from: $0))?.end
+        })
+    }
+
+    static func decode(_ inputs: [WorkoutEndpointPayload],
+                       decodeEnd: @escaping @Sendable (Data) -> Date?) async throws -> [PrewarmedWorkoutEndpoint] {
         let worker = Task.detached(priority: .utility) { () throws -> [PrewarmedWorkoutEndpoint] in
-            var result: [PrewarmedWorkoutEndpoint] = []
-            for input in inputs {
-                try Task.checkCancellation()
-                // Decode the whole payload exactly as Workout.features does;
-                // malformed unrelated sensor channels still yield nil.
-                let end = input.data.flatMap { (try? JSONDecoder().decode(WorkoutFeatures.self, from: $0))?.end }
-                let proof: WorkoutEndpointProof
-                if !input.retainRaw, let data = input.data {
-                    proof = .digest(byteCount: data.count, sha256: digest(data))
-                } else {
-                    proof = .exact(input.data)
-                }
-                result.append(PrewarmedWorkoutEndpoint(id: input.id, proof: proof, end: end))
-            }
-            return result
+            try decodeBatch(inputs, decodeEnd: decodeEnd)
         }
         return try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
+    }
+
+    /// Reuse only the immediately preceding complete decode of the same ID
+    /// and bytes. Keep each entry's independent proof and output order.
+    static func decodeBatch(
+        _ inputs: [WorkoutEndpointPayload],
+        decodeEnd: (Data) -> Date?
+    ) throws -> [PrewarmedWorkoutEndpoint] {
+        var result: [PrewarmedWorkoutEndpoint] = []
+        var previous: (id: String, data: Data?, end: Date?)?
+        for input in inputs {
+            try Task.checkCancellation()
+            let end: Date?
+            if let previous, previous.id == input.id, previous.data == input.data {
+                end = previous.end
+            } else {
+                // Decode all channels: an unrelated corrupt channel still
+                // makes the endpoint unreadable, just as Workout.features.
+                end = input.data.flatMap(decodeEnd)
+            }
+            previous = (input.id, input.data, end)
+            let proof: WorkoutEndpointProof
+            if !input.retainRaw, let data = input.data {
+                proof = .digest(byteCount: data.count, sha256: digest(data))
+            } else {
+                proof = .exact(input.data)
+            }
+            result.append(PrewarmedWorkoutEndpoint(id: input.id, proof: proof, end: end))
+        }
+        return result
     }
 }
