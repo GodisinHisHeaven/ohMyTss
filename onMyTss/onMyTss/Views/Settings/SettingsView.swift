@@ -21,8 +21,13 @@ struct SettingsView: View {
     @State private var showingFTPEditor = false
     @AppStorage("intensityLT1HeartRate") private var intensityLT1HeartRate = 0
     @AppStorage("intensityLT2HeartRate") private var intensityLT2HeartRate = 0
+    @AppStorage("intensityLT2Source") private var intensityLT2Source = ""
     @State private var lt1Input = ""
     @State private var lt2Input = ""
+    @State private var lt2ManuallyEdited = false
+    @State private var loadedLT1 = 0
+    @State private var loadedLT2 = 0
+    @State private var loadedLT2Source = ""
     @State private var intensityMessage: String?
     @FocusState private var focusedIntensity: IntensityField?
 
@@ -60,22 +65,33 @@ struct SettingsView: View {
                         .keyboardType(.numberPad)
                         .focused($focusedIntensity, equals: .lt1)
                         .accessibilityIdentifier("settings.lt1HeartRate")
-                    TextField("LT2 heart rate (bpm)", text: $lt2Input)
+                    TextField("LT2 heart rate (bpm)", text: Binding(get: { lt2Input }, set: {
+                        lt2Input = $0
+                        lt2ManuallyEdited = true
+                    }))
                         .keyboardType(.numberPad)
                         .focused($focusedIntensity, equals: .lt2)
                         .accessibilityIdentifier("settings.lt2HeartRate")
                     Button("Save intensity thresholds") { saveIntensityThresholds() }
                         .swissAction()
                         .accessibilityIdentifier("settings.saveIntensityThresholds")
+                    if intensityLT2Source == "unvalidated_cycling_deflection", intensityLT2HeartRate > 0 {
+                        Text("LT2 selected from an unvalidated cycling deflection candidate.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                     if let intensityMessage { Text(intensityMessage).font(.caption) }
                 } header: {
                     Text("Training intensity")
                 } footer: {
-                    Text("Enter your personal LT1 and LT2 heart rates to see your training distribution. Both values must be 30–240 bpm, with LT1 below LT2. Leave both blank to clear them.")
+                    Text("Enter your LT1 heart rate. LT2 can be entered now or selected after reviewing a cycling test candidate. Values must be 30–240 bpm, with LT1 below LT2. Leave both blank to clear them.")
                 }
                 .onAppear {
+                    loadedLT1 = intensityLT1HeartRate
+                    loadedLT2 = intensityLT2HeartRate
+                    loadedLT2Source = intensityLT2Source
                     lt1Input = intensityLT1HeartRate > 0 ? String(intensityLT1HeartRate) : ""
                     lt2Input = intensityLT2HeartRate > 0 ? String(intensityLT2HeartRate) : ""
+                    lt2ManuallyEdited = false
                 }
 
                 // Cycling Settings
@@ -287,23 +303,38 @@ struct SettingsView: View {
 
     private func saveIntensityThresholds() {
         focusedIntensity = nil
+        guard loadedLT1 == intensityLT1HeartRate, loadedLT2 == intensityLT2HeartRate,
+              loadedLT2Source == intensityLT2Source else {
+            intensityMessage = "Thresholds changed elsewhere. Reopen Settings to review the latest values."
+            return
+        }
         let first = lt1Input.trimmingCharacters(in: .whitespacesAndNewlines)
         let second = lt2Input.trimmingCharacters(in: .whitespacesAndNewlines)
         if first.isEmpty && second.isEmpty {
             intensityLT1HeartRate = 0
             intensityLT2HeartRate = 0
+            intensityLT2Source = ""
+            loadedLT1 = 0
+            loadedLT2 = 0
+            loadedLT2Source = ""
             intensityMessage = "Intensity thresholds cleared."
             return
         }
-        guard let lt1 = Int(first), let lt2 = Int(second),
-              (30...240).contains(lt1), (30...240).contains(lt2), lt1 < lt2 else {
-            intensityMessage = "Enter both values from 30–240 bpm, with LT1 below LT2."
+        let lt2 = second.isEmpty ? nil : Int(second)
+        guard let lt1 = Int(first), (30...240).contains(lt1),
+              second.isEmpty || (lt2.map { (30...240).contains($0) && lt1 < $0 } == true) else {
+            intensityMessage = "Enter LT1 from 30–240 bpm, and a higher LT2 if set."
             return
         }
         intensityLT1HeartRate = lt1
-        intensityLT2HeartRate = lt2
+        intensityLT2HeartRate = lt2 ?? 0
+        if lt2ManuallyEdited || lt2 == nil { intensityLT2Source = "" }
+        loadedLT1 = intensityLT1HeartRate
+        loadedLT2 = intensityLT2HeartRate
+        loadedLT2Source = intensityLT2Source
         lt1Input = String(lt1)
-        lt2Input = String(lt2)
+        lt2Input = lt2.map { String($0) } ?? ""
+        lt2ManuallyEdited = false
         intensityMessage = "Intensity thresholds saved."
     }
 

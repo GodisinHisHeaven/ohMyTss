@@ -111,6 +111,80 @@ final class V2FlowTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Intensity thresholds cleared."].waitForExistence(timeout: 5))
     }
 
+    #if DEBUG
+    @MainActor
+    func testCyclingDeflectionRequiresConfirmationAndKeepsConfirmedValue() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--v2-ui-tests", "--v2-workout-map-demo", "--v2-deflection-fixture"]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Today"].waitForExistence(timeout: 10))
+        app.buttons["Settings"].firstMatch.tap()
+        let lt1 = app.textFields["settings.lt1HeartRate"]
+        let lt2 = app.textFields["settings.lt2HeartRate"]
+        let save = app.buttons["settings.saveIntensityThresholds"]
+        reach(lt1, in: app)
+        lt1.tap()
+        lt1.typeText("110")
+        app.buttons["settings.intensityDone"].tap()
+        reach(save, in: app)
+        save.tap()
+        XCTAssertTrue(app.staticTexts["Intensity thresholds saved."].waitForExistence(timeout: 5))
+
+        // Verify LT1 can be saved alone, then retain a manual LT2 until confirmation.
+        app.buttons["Today"].firstMatch.tap()
+        app.buttons["Settings"].firstMatch.tap()
+        reach(lt1, in: app)
+        XCTAssertEqual(lt1.value as? String, "110")
+        let initialLT2 = lt2.value as? String ?? ""
+        XCTAssertTrue(initialLT2.isEmpty || initialLT2 == "LT2 heart rate (bpm)")
+        lt2.tap()
+        lt2.typeText("150")
+        app.buttons["settings.intensityDone"].tap()
+        reach(save, in: app)
+        save.tap()
+
+        app.buttons["History"].firstMatch.tap()
+        let ride = app.buttons["history.workout.synthetic-dashboard-0"]
+        reach(ride, in: app)
+        ride.tap()
+        let mark = app.buttons["activity.markCyclingTest"]
+        reach(mark, in: app)
+        mark.tap()
+        app.buttons["Mark complete test"].tap()
+        let candidate = app.staticTexts["activity.deflectionCandidate"]
+        reach(candidate, in: app)
+        XCTAssertTrue(candidate.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(candidate.label.contains("132 bpm"))
+
+        // Viewing a candidate must not silently replace the existing manual value.
+        app.buttons["Settings"].firstMatch.tap()
+        reach(lt2, in: app)
+        XCTAssertEqual(lt2.value as? String, "150")
+        app.buttons["History"].firstMatch.tap()
+        let use = app.buttons["activity.useDeflection"]
+        reach(use, in: app)
+        use.tap()
+        app.buttons["Use as LT2"].tap()
+        app.buttons["Settings"].firstMatch.tap()
+        reach(lt2, in: app)
+        XCTAssertEqual(lt1.value as? String, "110")
+        XCTAssertEqual(lt2.value as? String, "132")
+        let source = app.staticTexts["LT2 selected from an unvalidated cycling deflection candidate."]
+        reach(source, in: app)
+        XCTAssertTrue(source.exists)
+
+        app.buttons["History"].firstMatch.tap()
+        let unmark = app.buttons["activity.unmarkCyclingTest"]
+        reach(unmark, in: app)
+        unmark.tap()
+        XCTAssertTrue(mark.waitForExistence(timeout: 5))
+        XCTAssertFalse(candidate.exists)
+        app.buttons["Settings"].firstMatch.tap()
+        reach(lt2, in: app)
+        XCTAssertEqual(lt2.value as? String, "132")
+    }
+    #endif
+
     @MainActor
     func testLaunchWithLargeSavedHistoryOpensUsableTabs() {
         assertLargeHistoryOpensUsableTabs(missingEstimates: false)
@@ -186,7 +260,7 @@ final class V2FlowTests: XCTestCase {
             if element.isHittable { return }
             upper.press(forDuration: 0.05, thenDragTo: lower)
         }
-        XCTAssertTrue(element.isHittable, "Expected \(element.identifier) to be reachable at \(element.frame)",
+        XCTAssertTrue(element.isHittable, "Expected \(element.identifier) to be reachable at \(element.frame)\n\(app.debugDescription)",
                       file: file, line: line)
     }
 

@@ -36,9 +36,11 @@ enum LaunchHistoryFixture {
         let context = ModelContext(container)
         let now = Date()
         let intensityFixture = ProcessInfo.processInfo.arguments.contains("--v2-intensity-fixture")
-        if intensityFixture {
+        let deflectionFixture = ProcessInfo.processInfo.arguments.contains("--v2-deflection-fixture")
+        if intensityFixture || deflectionFixture {
             UserDefaults.standard.set(0, forKey: "intensityLT1HeartRate")
             UserDefaults.standard.set(0, forKey: "intensityLT2HeartRate")
+            UserDefaults.standard.set("", forKey: "intensityLT2Source")
         }
         if try context.fetchCount(FetchDescriptor<UserThresholds>()) == 0 {
             context.insert(UserThresholds(hasCompletedOnboarding: true))
@@ -54,8 +56,22 @@ enum LaunchHistoryFixture {
         for (index, type) in ["Ride", "Run", "Strength", "Swim", "Walk", "Run", "Ride", "Run"].enumerated() {
             let start = now.addingTimeInterval(-Double(index) * 86400 - 3600)
             let workout = Workout(id: "synthetic-dashboard-\(index)", date: start.startOfDay, startTime: start,
-                duration: 2700, workoutType: type, tss: 48, calculationMethod: "duration", source: .manual)
-            if intensityFixture && index == 0 {
+                duration: deflectionFixture && index == 0 ? 960 : 2700,
+                workoutType: type, tss: 48, calculationMethod: "duration", source: .manual)
+            if deflectionFixture && index == 0 {
+                var features = WorkoutFeatures()
+                features.end = start.addingTimeInterval(960)
+                for minute in 0..<16 {
+                    for sample in 0..<12 {
+                        let begin = start.addingTimeInterval(Double(minute * 60 + sample * 5))
+                        let end = begin.addingTimeInterval(5)
+                        let hr = 100 + 4 * Double(min(minute, 8)) + 1.2 * Double(max(0, minute - 8))
+                        features.heartRate.append(TimedValue(start: begin, end: end, value: hr))
+                        features.power.append(TimedValue(start: begin, end: end, value: 100 + 15 * Double(minute)))
+                    }
+                }
+                workout.features = features
+            } else if intensityFixture && index == 0 {
                 var features = WorkoutFeatures()
                 features.heartRate = [
                     TimedValue(start: start, end: start.addingTimeInterval(72), value: 120),
