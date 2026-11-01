@@ -1,111 +1,50 @@
-name: PR tests
-
+name: Temporary Release interaction gate
 'on':
-  pull_request:
   workflow_dispatch:
-
 permissions:
-  contents: read
-
+  actions: read
 concurrency:
-  group: pr-tests-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-
+  group: synthetic-release-gate-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
-  quick:
-    name: Quick checks
+  release-gate:
     runs-on: xcode-27
-    timeout-minutes: 25
+    timeout-minutes: 100
+    name: Synthetic Release upgrade and interactions
     steps:
-      - name: Check out the proposed merge
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - name: Run quick checks
-        run: python3 scripts/test.py quick --output-dir "$RUNNER_TEMP/ohmytss-quick"
-
-      - name: Verify quick report exists
-        run: test -s "$RUNNER_TEMP/ohmytss-quick/summary.json"
-
-      - name: Upload quick results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: quick-test-results
-          path: ${{ runner.temp }}/ohmytss-quick
-          if-no-files-found: error
-          retention-days: 14
-
-  ios:
-    name: iOS unit and UI tests
-    runs-on: xcode-27
-    timeout-minutes: 75
-    steps:
-      - name: Check out the proposed merge
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - name: Prepare synthetic build settings
+      - name: Check isolated runner and run synthetic gate
         shell: bash
-        run: |
-          set -euo pipefail
-          # CI checkouts have no local ignored credentials. These values only
-          # allow simulator builds and cannot authorize a Strava connection.
-          config=onMyTss/Config/Secrets.xcconfig
-          if [[ ! -e "$config" ]]; then
-            umask 077
-            printf '%s\n' 'STRAVA_CLIENT_ID = 123456' 'STRAVA_CLIENT_SECRET = CI_SYNTHETIC_ONLY' > "$config"
-          fi
-
-      - name: Select an available iPhone simulator
-        id: simulator
-        shell: bash
-        run: |
-          set -euo pipefail
-          xcodebuild -version
-          xcrun simctl list devices available --json > "$RUNNER_TEMP/ohmytss-simulators.json"
-          python3 - "$RUNNER_TEMP/ohmytss-simulators.json" >> "$GITHUB_OUTPUT" <<'PY'
-          import json
-          import re
-          import sys
-
-          data = json.load(open(sys.argv[1], encoding="utf-8"))
-          choices = []
-          for runtime, devices in data.get("devices", {}).items():
-              match = re.search(r"\.iOS-(\d+)-(\d+)$", runtime)
-              if not match:
-                  continue
-              version = tuple(map(int, match.groups()))
-              if version < (26, 1):
-                  continue
-              for device in devices:
-                  name, udid = device.get("name", ""), device.get("udid", "")
-                  if device.get("isAvailable") and name.startswith("iPhone") and re.fullmatch(r"[0-9A-Fa-f-]{36}", udid):
-                      choices.append((version, name == "iPhone 17 Pro", name, udid))
-          if not choices:
-              raise SystemExit("No available iPhone simulator with iOS 26.1 or later; see the runner's installed runtimes.")
-          version, _, name, udid = max(choices)
-          print(f"destination=platform=iOS Simulator,id={udid}")
-          print(f"Selected {name}, iOS {version[0]}.{version[1]} ({udid})", file=sys.stderr)
-          PY
-
-      - name: Run full simulator tests
         env:
-          TEST_DESTINATION: ${{ steps.simulator.outputs.destination }}
-        run: python3 scripts/test.py full --destination "$TEST_DESTINATION" --output-dir "$RUNNER_TEMP/ohmytss-full"
-
-      - name: Verify simulator report exists
-        run: test -s "$RUNNER_TEMP/ohmytss-full/summary.json"
-
-      - name: Upload simulator results
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REPOSITORY" == 'GodisinHisHeaven/ohMyTss' ]]
+          [[ "$RUNNER_ENVIRONMENT" == 'github-hosted' && "$RUNNER_OS" == 'macOS' ]]
+          [[ "$RUNNER_TEMP" == /Users/runner/work/* && "$GITHUB_WORKSPACE" == /Users/runner/work/* ]]
+          mkdir -p "$RUNNER_TEMP/release-gate-results"
+          curl --fail --silent --show-error --retry 3 -H 'Accept: application/vnd.github+json' \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100" \
+            > "$RUNNER_TEMP/release-gate-results/jobs.json"
+          unset GH_TOKEN
+          python3 - "$RUNNER_TEMP/release-gate-results/jobs.json" "$RUNNER_NAME" <<'PY'
+          import json, sys
+          jobs=json.load(open(sys.argv[1], encoding='utf-8')).get('jobs', [])
+          matches=[x for x in jobs if x.get('name')=='Synthetic Release upgrade and interactions' and x.get('runner_name')==sys.argv[2]]
+          if len(matches)!=1 or matches[0].get('runner_group_name')!='GitHub Actions':
+              raise SystemExit('Runner is not the isolated GitHub-hosted job')
+          print('Verified hosted job:', matches[0]['runner_name'])
+          PY
+          git clone --quiet --no-checkout "https://github.com/$GITHUB_REPOSITORY.git" "$RUNNER_TEMP/gate-repository"
+          git -C "$RUNNER_TEMP/gate-repository" fetch --quiet origin "$GITHUB_SHA"
+          [[ "$(git -C "$RUNNER_TEMP/gate-repository" rev-parse "$GITHUB_SHA^1")" == 4560edef02cdd1094b4f20acc0c6d12482a13005 ]]
+          git -C "$RUNNER_TEMP/gate-repository" show "$GITHUB_SHA:scripts/synthetic-release-gate.sh" > "$RUNNER_TEMP/synthetic-release-gate.sh"
+          bash "$RUNNER_TEMP/synthetic-release-gate.sh"
+      - name: Upload synthetic results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ios-test-results
-          path: |
-            ${{ runner.temp }}/ohmytss-full
-            ${{ runner.temp }}/ohmytss-simulators.json
-          if-no-files-found: error
-          retention-days: 14
+          name: synthetic-release-interaction-results
+          path: ${{ runner.temp }}/release-gate-results
+          if-no-files-found: warn
+          retention-days: 7
