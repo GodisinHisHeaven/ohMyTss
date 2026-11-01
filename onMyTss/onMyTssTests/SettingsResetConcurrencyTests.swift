@@ -135,22 +135,40 @@ final class SettingsResetConcurrencyTests: XCTestCase {
     }
 
     func testResetWaitsForActualBoundedImportAndPreservesSavedRows() async throws {
-        let fixture = try ResetFixture(count: 400, pauseQuery: false)
+        // Twenty-one inputs require two real 20-row batches; the gate makes the
+        // first committed batch observable without racing a timer or polling
+        // the entire database while HealthKit inputs are being converted.
+        let fixture = try ResetFixture(count: 21, pauseQuery: false)
+        let gate = LocalRepairGate()
+        fixture.store.importedBatchDidSaveForTesting = { count in
+            if count == 20 { await gate.wait() }
+        }
         var finished = false
         let task = Task { defer { finished = true }; try await fixture.engine.incrementalUpdate() }
-        defer { task.cancel() }
-        try await waitFor { try fixture.store.allWorkouts().count >= 20 || finished }
+        defer { gate.release(); task.cancel(); fixture.store.importedBatchDidSaveForTesting = nil }
+        try await waitFor { gate.waiting || finished }
+        guard gate.waiting else {
+            if finished { try await task.value }
+            XCTFail("The import did not reach its first committed batch; converted HealthKit inputs: \(fixture.health.featuresRead)/21")
+            return
+        }
         XCTAssertFalse(finished, "The test must exercise a live import batch")
         XCTAssertTrue(fixture.runtime.isProcessing)
-        let before = try fixture.store.allWorkouts().count
-        XCTAssertGreaterThanOrEqual(before, 20)
+        let before = Set(try fixture.store.allWorkouts().map(\.id))
+        XCTAssertEqual(before.count, 20)
+        XCTAssertTrue(try fixture.store.fetchAppState().isComputationInProgress)
         await fixture.viewModel.resetAllData()
         XCTAssertTrue(fixture.viewModel.errorMessage?.contains("Sync is in progress") == true)
-        XCTAssertGreaterThanOrEqual(try fixture.store.allWorkouts().count, before)
+        XCTAssertNil(fixture.viewModel.successMessage)
+        XCTAssertEqual(Set(try fixture.store.allWorkouts().map(\.id)), before)
 
         task.cancel()
-        do { try await task.value } catch is CancellationError { } catch { throw error }
+        gate.release()
+        do { try await task.value; XCTFail("Cancellation must stop the next import batch") }
+        catch is CancellationError { } catch { throw error }
         XCTAssertFalse(fixture.runtime.isProcessing)
+        XCTAssertEqual(Set(try fixture.store.allWorkouts().map(\.id)), before)
+        XCTAssertTrue(try fixture.store.fetchAppState().isComputationInProgress)
         await fixture.viewModel.resetAllData()
         XCTAssertNil(fixture.viewModel.errorMessage)
         XCTAssertTrue(try fixture.store.allWorkouts().isEmpty)
@@ -213,6 +231,7 @@ private final class ResetHealthSource: HealthKitManager {
     private let pauseQuery: Bool
     private var continuation: CheckedContinuation<Void, Never>?
     var waiting: Bool { continuation != nil }
+    private(set) var featuresRead = 0
 
     init(count: Int, pauseQuery: Bool) {
         self.pauseQuery = pauseQuery
@@ -227,7 +246,10 @@ private final class ResetHealthSource: HealthKitManager {
         if pauseQuery { await withCheckedContinuation { continuation = $0 } }
         return (workouts, [], HKQueryAnchor(fromValue: 1))
     }
-    override func fetchWorkoutFeatures(for workout: HKWorkout) async throws -> WorkoutFeatures { WorkoutFeatures() }
+    override func fetchWorkoutFeatures(for workout: HKWorkout) async throws -> WorkoutFeatures {
+        featuresRead += 1
+        return WorkoutFeatures()
+    }
     override func fetchHRVSamples(from startDate: Date, to endDate: Date) async throws -> [HKQuantitySample] { [] }
     override func fetchRestingHeartRateSamples(from startDate: Date, to endDate: Date) async throws -> [HKQuantitySample] { [] }
     override func fetchSleepSamples(from startDate: Date, to endDate: Date) async throws -> [HKCategorySample] { [] }

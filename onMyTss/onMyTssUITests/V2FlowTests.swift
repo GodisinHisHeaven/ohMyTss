@@ -75,7 +75,9 @@ final class V2FlowTests: XCTestCase {
             return
         }
         XCTAssertTrue(ownSet.isEnabled)
-        print("UI_CANONICAL_SET frame=\(ownSet.frame) nav=\(app.navigationBars["Swim"].frame) tabs=\(app.tabBars.firstMatch.frame)")
+        let tabBar = app.tabBars.firstMatch
+        let tabFrame = tabBar.exists ? String(describing: tabBar.frame) : "not present"
+        print("UI_CANONICAL_SET frame=\(ownSet.frame) nav=\(app.navigationBars["Swim"].frame) tabs=\(tabFrame)")
         ownSet.tap()
         let opened = app.navigationBars["Edit set"].waitForExistence(timeout: 10)
         if !opened {

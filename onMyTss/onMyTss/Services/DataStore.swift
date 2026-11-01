@@ -13,6 +13,11 @@ import SwiftData
 class DataStore {
     private var modelContext: ModelContext
 
+    #if DEBUG
+    /// Allows concurrency tests to pause after a batch is actually committed.
+    var importedBatchDidSaveForTesting: (@MainActor (Int) async -> Void)?
+    #endif
+
     // Avoid the older Swift runtime's isolated-deinit crash (swiftlang/swift#88036).
     nonisolated deinit {}
 
@@ -465,6 +470,9 @@ class DataStore {
             try validateSources?()
             changes.formUnion(try saveWorkouts(Array(workouts[offset..<min(offset + 20, workouts.count)]),
                                               reconcileSideEffects: false, prewarmed: endpoints))
+            #if DEBUG
+            await importedBatchDidSaveForTesting?(min(offset + 20, workouts.count))
+            #endif
             try await Task.sleep(for: .milliseconds(1))
         }
         for offset in stride(from: 0, to: deletedIDs.count, by: 20) {
