@@ -39,13 +39,20 @@ passed or that TestFlight distribution completed.
 # Configuring a manual main start condition
 
 The `Configure Xcode Cloud manual main` workflow is manual-dispatch only and
-runs from protected `main`. Supply the canceled current-main run ID. After this
-entrypoint's PR is merged, use a canceled run for the new main SHA; a run for an
-older SHA cannot be used. Its
+runs from protected `main`. Supply a canceled main-branch run ID. Its
 `apply_change` input defaults to false, which performs a read-only preflight.
+For that read-only inspection, the run may instead use an ancestor of current
+main if the exact checkout is complete, the ancestor check succeeds, and the app
+has exactly one current Cloud workflow matching the run. Multiple workflows,
+missing history, different repositories, or a changed main cause a refusal.
+Git ancestry includes merged side-branch commits; it does not prove the commit
+was on main's first-parent history, that its build succeeded, or that its old
+post-action configuration is unchanged. A historical run is never accepted for
+an update or to create a replacement build.
 With explicit `true`, the workflow can add an exact `main` manual start condition
-only when Apple explicitly returns the existing manual condition as null. Missing
-or non-null conditions are rejected for updates. Read-only preflight also accepts
+only for a canceled run at the current main SHA and when Apple explicitly returns
+the existing manual condition as null. Missing or non-null conditions are rejected
+for updates. Read-only preflight also accepts
 existing non-null conditions after the identity and required-action checks. It
 reports missing/null/non-null status and a conservative branch-coverage category:
 `exact main`, `covers main but broader`, `does not cover main`, `not configured`,

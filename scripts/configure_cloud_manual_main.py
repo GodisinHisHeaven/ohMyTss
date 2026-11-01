@@ -4,6 +4,7 @@ import json
 from http.client import HTTPException
 import os
 import re
+import subprocess
 import sys
 import time
 from urllib.error import HTTPError, URLError
@@ -22,6 +23,40 @@ REQUIRED_FIELDS = ("name", "branchStartCondition", "tagStartCondition", "pullReq
                    "scheduledStartCondition", "manualTagStartCondition", "manualPullRequestStartCondition",
                    "clean", "containerFilePath", "actions", "isEnabled", "isLockedForEditing", "lastModifiedDate")
 REQUIRED_RELATIONSHIPS = ("product", "repository", "xcodeVersion", "macOsVersion")
+
+
+def is_checked_out_ancestor(ancestor, target, *, cwd=None):
+    """Prove ancestry using the full, exact checkout without replace refs."""
+    if not all(isinstance(value, str) and re.fullmatch(r"[0-9a-f]{40}", value)
+               for value in (ancestor, target)):
+        return False
+    # Ignore inherited Git overrides, including alternate graft files and
+    # repository paths; this check must use the checkout in the working dir.
+    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    env.update(GIT_NO_REPLACE_OBJECTS="1", GIT_TERMINAL_PROMPT="0")
+    def git(*args):
+        return subprocess.run(["git", *args], cwd=cwd, env=env, capture_output=True,
+                              text=True, check=False, timeout=15)
+    try:
+        head = git("rev-parse", "--verify", "HEAD^{commit}")
+        shallow = git("rev-parse", "--is-shallow-repository")
+        if head.returncode != 0 or head.stdout.strip() != target or shallow.returncode != 0 or shallow.stdout.strip() != "false":
+            return False
+        grafts = git("rev-parse", "--path-format=absolute", "--git-path", "info/grafts")
+        graft_path = grafts.stdout.strip()
+        if grafts.returncode != 0 or not os.path.isabs(graft_path) or "\n" in graft_path:
+            return False
+        try:
+            os.lstat(graft_path)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            return False
+        else:
+            return False
+        return git("merge-base", "--is-ancestor", ancestor, target).returncode == 0
+    except (OSError, subprocess.SubprocessError, UnicodeError):
+        return False
 
 
 def manual_main_coverage(condition):
@@ -205,7 +240,8 @@ def checked_configuration(workflow, expected_product, expected_repo):
     return baseline, relations
 
 
-def configure(client, target, run_id, app, apply_change, current_main=github_branch):
+def configure(client, target, run_id, app, apply_change, current_main=github_branch,
+              ancestor_check=is_checked_out_ancestor):
     require(re.fullmatch(r"[0-9a-f]{40}", target) is not None, "Invalid target SHA")
     require(UUID.fullmatch(run_id) is not None, "Invalid canceled run ID")
     require(re.fullmatch(r"[0-9]+", app) is not None, "Invalid app ID")
@@ -213,8 +249,13 @@ def configure(client, target, run_id, app, apply_change, current_main=github_bra
     run = request_data(client, "/v1/ciBuildRuns/" + run_id + "?include=workflow,product,sourceBranchOrTag",
                        "ciBuildRuns", run_id)
     a = attributes(run)
-    require(source_sha(run) == target and a.get("isPullRequestBuild") is False,
-            "Run does not match current main SHA")
+    run_sha = source_sha(run)
+    require(isinstance(run_sha, str) and re.fullmatch(r"[0-9a-f]{40}", run_sha) is not None
+            and a.get("isPullRequestBuild") is False, "Run source is invalid or is a pull request")
+    historical = run_sha != target
+    if historical:
+        require(not apply_change, "A historical run can only be inspected read-only")
+        require(ancestor_check(run_sha, target), "Historical run is not a verified current-main ancestor")
     require(a.get("executionProgress") == "COMPLETE" and a.get("completionStatus") == "CANCELED",
             "Run is not completed and canceled")
     workflow_id = link(run, "workflow", "ciWorkflows")
@@ -222,6 +263,11 @@ def configure(client, target, run_id, app, apply_change, current_main=github_bra
     ref_id = link(run, "sourceBranchOrTag", "scmGitReferences")
     app_product = request_data(client, "/v1/apps/" + app + "/ciProduct", "ciProducts")
     require(app_product.get("id") == product_id, "Run belongs to a different app")
+    if historical:
+        workflows = client.all("/v1/ciProducts/" + product_id + "/workflows?limit=200")
+        require(len(workflows) == 1 and isinstance(workflows[0], dict)
+                and workflows[0].get("type") == "ciWorkflows" and workflows[0].get("id") == workflow_id,
+                "Historical run workflow is not the app's sole current workflow")
     check_branch(client, ref_id)
     before, before_included = read_workflow(client, workflow_id, report=True)
     repo_id = link(before, "repository", "scmRepositories")
@@ -241,6 +287,9 @@ def configure(client, target, run_id, app, apply_change, current_main=github_bra
     print("Preflight passed; TestFlight post-action settings are not exposed by this API.")
     print("Apple does not document an atomic conditional PATCH; concurrent edits may race.")
     if not apply_change:
+        require(current_main("main") == target, "GitHub main changed during inspection")
+        if historical:
+            print("Historical run SHA is a reachable ancestor of current main; no build was verified.")
         coverage = (manual_main_coverage(before_attrs["manualBranchStartCondition"])
                     if "manualBranchStartCondition" in before_attrs else "unknown")
         print("Manual branch coverage:", coverage)

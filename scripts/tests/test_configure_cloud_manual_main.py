@@ -3,7 +3,10 @@ import copy
 from http.client import BadStatusLine, IncompleteRead, LineTooLong
 import io
 import json
+import os
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 import unittest
 from contextlib import redirect_stdout
@@ -44,6 +47,12 @@ class FakeConfiguration(FakeClient):
         self.mutate_pre_patch = None
         self.mutate_after = None
         self.mutate_included_after = None
+        self.product_workflows = [{"type": "ciWorkflows", "id": WORKFLOW}]
+
+    def all(self, path):
+        if path == "/v1/ciProducts/" + PRODUCT + "/workflows?limit=200":
+            return copy.deepcopy(self.product_workflows)
+        return super().all(path)
 
     def get(self, path):
         if path == config.workflow_path(WORKFLOW):
@@ -75,9 +84,132 @@ class TestManualConfiguration(unittest.TestCase):
         self.api = FakeConfiguration()
         self.output = io.StringIO()
 
-    def check(self, apply=True, main=lambda _: SHA):
+    def check(self, apply=True, main=lambda _: SHA, ancestor=config.is_checked_out_ancestor):
         with redirect_stdout(self.output):
-            config.configure(self.api, SHA, OLD, "123", apply, current_main=main)
+            config.configure(self.api, SHA, OLD, "123", apply, current_main=main, ancestor_check=ancestor)
+
+    def test_historical_run_is_read_only_and_requires_verified_ancestry(self):
+        historic = "b" * 40
+        self.api.old["attributes"]["sourceCommit"]["commitSha"] = historic
+        calls = []
+        self.check(False, ancestor=lambda old, target: calls.append((old, target)) or True)
+        self.assertEqual(calls, [(historic, SHA)])
+        self.assertEqual(self.api.requests, [])
+        self.assertIn("reachable ancestor", self.output.getvalue())
+        self.assertIn("no build was verified", self.output.getvalue())
+        self.assertIn("Read-only mode", self.output.getvalue())
+        self.assertNotIn(historic, self.output.getvalue())
+
+    def test_historical_write_is_never_allowed_or_checked_as_ancestor(self):
+        self.api.old["attributes"]["sourceCommit"]["commitSha"] = "b" * 40
+        with self.assertRaises(config.Unknown):
+            self.check(True, ancestor=lambda *_: self.fail("Write path must not check historical ancestry"))
+        self.assertEqual(self.api.requests, [])
+
+    def test_historical_read_rejects_nonancestor_and_invalid_source_without_writes(self):
+        for old_sha, valid in (("b" * 40, False), ("not-a-full-commit", True), (None, True), ("A" * 40, True)):
+            with self.subTest(old_sha=old_sha):
+                self.api = FakeConfiguration()
+                self.api.old["attributes"]["sourceCommit"]["commitSha"] = old_sha
+                with self.assertRaises(config.Unknown): self.check(False, ancestor=lambda *_: valid)
+                self.assertEqual(self.api.requests, [])
+
+    def test_historical_read_requires_sole_current_product_workflow(self):
+        cases = [[], [{"type": "ciWorkflows", "id": REPO}],
+                 [{"type": "ciWorkflows", "id": WORKFLOW}, {"type": "ciWorkflows", "id": REPO}],
+                 [{"type": "not-a-workflow", "id": WORKFLOW}], [None]]
+        for workflows in cases:
+            with self.subTest(workflows=workflows):
+                self.api = FakeConfiguration()
+                self.api.old["attributes"]["sourceCommit"]["commitSha"] = "b" * 40
+                self.api.product_workflows = workflows
+                with self.assertRaises(config.Unknown): self.check(False, ancestor=lambda *_: True)
+                self.assertEqual(self.api.requests, [])
+
+    def test_historical_read_still_checks_identity_actions_and_current_main(self):
+        changes = [
+            lambda c: c.old["attributes"].update(isPullRequestBuild=True),
+            lambda c: c.old["attributes"].update(completionStatus="FAILED"),
+            lambda c: c.old["attributes"].update(executionProgress="IN_PROGRESS"),
+            lambda c: c.old["relationships"]["product"]["data"].update(id=REPO),
+            lambda c: c.repo["attributes"].update(httpCloneUrl="https://evil.invalid/repo"),
+            lambda c: c.ref["attributes"].update(canonicalName="refs/heads/other"),
+            lambda c: c.ref["attributes"].update(isDeleted=True),
+            lambda c: c.workflow["attributes"]["actions"][1].update(isRequiredToPass=False),
+        ]
+        for change in changes:
+            with self.subTest(change=change):
+                self.api = FakeConfiguration()
+                self.api.old["attributes"]["sourceCommit"]["commitSha"] = "b" * 40
+                change(self.api)
+                with self.assertRaises(config.Unknown): self.check(False, ancestor=lambda *_: True)
+                self.assertEqual(self.api.requests, [])
+        self.api = FakeConfiguration()
+        self.api.old["attributes"]["sourceCommit"]["commitSha"] = "b" * 40
+        sequence = iter([SHA, "c" * 40])
+        with self.assertRaises(config.Unknown):
+            self.check(False, main=lambda _: next(sequence), ancestor=lambda *_: True)
+        self.assertEqual(self.api.requests, [])
+
+    def test_current_main_write_never_uses_ancestor_exception(self):
+        self.check(True, ancestor=lambda *_: self.fail("Current write must not invoke ancestry check"))
+        self.assertEqual(len(self.api.requests), 1)
+
+    def test_ancestor_check_uses_full_exact_checkout_and_never_replace_refs(self):
+        with tempfile.TemporaryDirectory() as root:
+            repo = Path(root) / "repo"
+            repo.mkdir()
+            def git(*args, cwd=repo):
+                return subprocess.run(["git", *args], cwd=cwd, check=True, text=True,
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout.strip()
+            git("init", "-q")
+            git("config", "user.email", "unit-test@example.invalid")
+            git("config", "user.name", "Unit Test")
+            (repo / "file").write_text("one")
+            git("add", "file")
+            git("commit", "-qm", "first")
+            first = git("rev-parse", "HEAD")
+            (repo / "file").write_text("two")
+            git("commit", "-qam", "second")
+            current = git("rev-parse", "HEAD")
+            git("checkout", "-qb", "side", first)
+            (repo / "other").write_text("side")
+            git("add", "other")
+            git("commit", "-qm", "side")
+            side = git("rev-parse", "HEAD")
+            git("checkout", "-q", "--detach", current)
+            self.assertTrue(config.is_checked_out_ancestor(first, current, cwd=repo))
+            with patch.dict(os.environ, {"GIT_DIR": "/nonexistent", "GIT_WORK_TREE": "/nonexistent"}):
+                self.assertTrue(config.is_checked_out_ancestor(first, current, cwd=repo))
+            with patch.object(config.os, "lstat", side_effect=PermissionError("sensitive")) as denied:
+                self.assertFalse(config.is_checked_out_ancestor(first, current, cwd=repo))
+                denied.assert_called_once()
+                self.assertTrue(str(denied.call_args.args[0]).endswith("/info/grafts"))
+            self.assertTrue(config.is_checked_out_ancestor(current, current, cwd=repo))
+            self.assertFalse(config.is_checked_out_ancestor(side, current, cwd=repo))
+            self.assertFalse(config.is_checked_out_ancestor("f" * 40, current, cwd=repo))
+            self.assertFalse(config.is_checked_out_ancestor(first, side, cwd=repo))
+            self.assertFalse(config.is_checked_out_ancestor("--bad", current, cwd=repo))
+            git("replace", first, side)
+            self.assertFalse(config.is_checked_out_ancestor(side, current, cwd=repo))
+            alternate_grafts = Path(root) / "alternate-grafts"
+            alternate_grafts.write_text(current + " " + side + "\n")
+            with patch.dict("os.environ", {"GIT_GRAFT_FILE": str(alternate_grafts)}):
+                self.assertFalse(config.is_checked_out_ancestor(side, current, cwd=repo))
+            grafts = repo / ".git" / "info" / "grafts"
+            grafts.parent.mkdir(parents=True, exist_ok=True)
+            grafts.write_text(current + " " + side + "\n")
+            self.assertFalse(config.is_checked_out_ancestor(side, current, cwd=repo))
+            grafts.unlink()
+            shallow = Path(root) / "shallow"
+            git("clone", "-q", "--depth=1", "file://" + str(repo), str(shallow))
+            self.assertFalse(config.is_checked_out_ancestor(first, current, cwd=shallow))
+
+    def test_ancestor_check_fails_closed_on_git_errors_and_timeouts(self):
+        for error in (OSError("sensitive"), subprocess.TimeoutExpired("git", 15),
+                      subprocess.SubprocessError("sensitive")):
+            with self.subTest(error=type(error).__name__), patch.object(config.subprocess, "run", side_effect=error):
+                self.assertFalse(config.is_checked_out_ancestor("b" * 40, SHA))
 
     def test_default_read_only_does_not_patch_or_start_build(self):
         self.check(False)
@@ -370,6 +502,8 @@ class TestManualConfiguration(unittest.TestCase):
         self.assertNotIn("  pull_request:", workflow)
         self.assertIn("default: false", workflow)
         self.assertIn("group: testflight-cloud-recovery", workflow)
+        self.assertIn("fetch-depth: 0", workflow)
+        self.assertIn("ref: ${{ github.sha }}", workflow)
         self.assertNotIn("continue-on-error", workflow)
         self.assertNotIn("secrets.", workflow.split("      - name: Inspect or configure manual main", 1)[0])
 
