@@ -111,6 +111,11 @@ nonisolated enum WorkoutSourceMatching {
         func definite(_ first: Int, _ second: Int) throws -> Bool {
             guard try possible(first, second) else { return false }
             let a = inputs[first], b = inputs[second], type = types[first]
+            // Preserve ambiguity edges, but require actual endpoints before
+            // grouping a candidate involving a user deletion.
+            if a.deletionOrigin == "user" || b.deletionOrigin == "user" {
+                guard endpoint(first) != nil && endpoint(second) != nil else { return false }
+            }
             guard type != "other", type == types[second] else { return false }
             if (a.source == "healthKit" && b.source == "strava") ||
                 (a.source == "strava" && b.source == "healthKit") { return true }

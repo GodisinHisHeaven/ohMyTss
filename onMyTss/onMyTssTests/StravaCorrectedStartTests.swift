@@ -4,6 +4,29 @@ import SwiftData
 
 @MainActor
 final class StravaCorrectedStartTests: XCTestCase {
+    func testMissingElapsedEqualDurationDoesNotPropagateUserDeletionAfterCorrection() async throws {
+        let fixture = try makeFixture(healthDuration: 600, userDeletedHealth: true)
+        defer { withExtendedLifetime(fixture.container) {} }
+        fixture.health.startTime = fixture.correction.startTime.addingTimeInterval(20)
+        var healthFeatures = fixture.health.features
+        healthFeatures.end = fixture.health.startTime.addingTimeInterval(600)
+        fixture.health.features = healthFeatures
+        let cache = try await fixture.store.prepareWorkoutEndpoints(incoming: [fixture.correction])
+        for _ in 0..<2 {
+            try fixture.store.saveWorkouts([fixture.correction], prewarmed: cache)
+            _ = try fixture.store.finalizeWorkoutSources(prewarmed: cache)
+            _ = try await fixture.store.repairWorkoutSourcesLocally()
+            let saved = try XCTUnwrap(fixture.store.fetchWorkout(byId: "strava"))
+            XCTAssertNil(saved.features.end)
+            XCTAssertFalse(saved.isTombstoned)
+            XCTAssertFalse(saved.isSuppressed)
+            XCTAssertNil(saved.linkedSessionID)
+            XCTAssertEqual(saved.userTags, ["personal-tag"])
+            XCTAssertEqual(fixture.health.deletionOrigin, "user")
+            XCTAssertTrue(fixture.health.isTombstoned)
+        }
+    }
+
     func testCorrectedStartWithMissingElapsedStillGroupsMatchingDuration() async throws {
         let fixture = try makeFixture(healthDuration: 600, userDeletedHealth: false)
         defer { withExtendedLifetime(fixture.container) {} }

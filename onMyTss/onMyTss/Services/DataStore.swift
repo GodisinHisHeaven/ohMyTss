@@ -580,6 +580,11 @@ class DataStore {
     private static func definiteDuplicate(_ first: Workout, _ second: Workout,
                                           endpoints: WorkoutEndpointCache) -> Bool {
         guard possibleDuplicate(first, second, endpoints: endpoints) else { return false }
+        // Keep uncertain deletion candidates in the ambiguity graph, but
+        // never group them without both actual endpoints.
+        if first.deletionOrigin == "user" || second.deletionOrigin == "user" {
+            guard endpoints.end(first) != nil && endpoints.end(second) != nil else { return false }
+        }
         let type = WorkoutAggregator.normalizeWorkoutType(first.workoutType)
         guard type != "other", type == WorkoutAggregator.normalizeWorkoutType(second.workoutType) else { return false }
         let healthKit = WorkoutSource.healthKit.rawValue

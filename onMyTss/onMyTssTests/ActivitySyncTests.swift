@@ -55,6 +55,9 @@ final class ActivitySyncTests: XCTestCase {
                              calculationMethod: "duration", source: .healthKit)
         health.isTombstoned = true
         health.deletionOrigin = "user"
+        var healthFeatures = WorkoutFeatures()
+        healthFeatures.end = start.addingTimeInterval(600)
+        health.features = healthFeatures
         let strava = Workout(id: "123", date: start.startOfDay, startTime: start, duration: 600,
                              workoutType: "Run", tss: 30, calculationMethod: "duration", source: .strava, stravaId: 123)
         fixture.context.insert(health)
@@ -77,7 +80,7 @@ final class ActivitySyncTests: XCTestCase {
         XCTAssertNil(auth.lastSyncDate)
 
         fixture.strava.failList = false
-        fixture.strava.listed = [try activity(id: 123, at: start)]
+        fixture.strava.listed = [try activity(id: 123, at: start, elapsed: 600)]
         try await fixture.engine.incrementalUpdate()
         XCTAssertFalse(state.pendingWorkoutSourceFinalization)
         XCTAssertTrue(strava.isTombstoned)
@@ -1019,10 +1022,16 @@ final class ActivitySyncTests: XCTestCase {
                              calculationMethod: "duration", source: .healthKit)
         health.isTombstoned = true
         health.deletionOrigin = "user"
+        var healthFeatures = WorkoutFeatures()
+        healthFeatures.end = start.addingTimeInterval(600)
+        health.features = healthFeatures
         try fixture.store.saveWorkout(health)
         let candidate = Workout(id: "recover-strava", date: start.startOfDay, startTime: start,
                                 duration: 600, workoutType: "Run", tss: 10,
                                 calculationMethod: "duration", source: .strava)
+        var candidateFeatures = WorkoutFeatures()
+        candidateFeatures.end = start.addingTimeInterval(600)
+        candidate.features = candidateFeatures
         state.isComputationInProgress = true
         try fixture.store.saveWorkouts([candidate], reconcileSideEffects: false)
         fixture.health.failChanges = true
@@ -1198,8 +1207,10 @@ final class ActivitySyncTests: XCTestCase {
         }
     }
 
-    private func activity(id: Int, at date: Date) throws -> StravaActivity {
-        let json = try JSONSerialization.data(withJSONObject: ["id": id, "start_date": ISO8601DateFormatter().string(from: date), "moving_time": 600, "sport_type": "Run"])
+    private func activity(id: Int, at date: Date, elapsed: Int? = nil) throws -> StravaActivity {
+        var data: [String: Any] = ["id": id, "start_date": ISO8601DateFormatter().string(from: date), "moving_time": 600, "sport_type": "Run"]
+        if let elapsed { data["elapsed_time"] = elapsed }
+        let json = try JSONSerialization.data(withJSONObject: data)
         let decoder = JSONDecoder(); decoder.keyDecodingStrategy = .convertFromSnakeCase
         return try decoder.decode(StravaActivity.self, from: json)
     }
