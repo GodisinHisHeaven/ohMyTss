@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 /// Prewarming is only a performance hint. A missed or stale hint always uses
 /// the existing synchronous decoder during reconciliation.
@@ -13,15 +14,31 @@ nonisolated struct WorkoutEndpointCandidate: Sendable {
 nonisolated struct WorkoutEndpointPayload: Sendable {
     let id: String
     let data: Data?
+    let retainRaw: Bool
+
+    init(id: String, data: Data?, retainRaw: Bool = true) {
+        self.id = id
+        self.data = data
+        self.retainRaw = retainRaw
+    }
+}
+
+/// A digest is a bounded performance hint, not byte-for-byte proof. It is
+/// never used by reconciliation components containing a user deletion.
+nonisolated enum WorkoutEndpointProof: Sendable {
+    case exact(Data?)
+    case digest(byteCount: Int, sha256: Data)
 }
 
 nonisolated struct PrewarmedWorkoutEndpoint: Sendable {
     let id: String
-    let data: Data?
+    let proof: WorkoutEndpointProof
     let end: Date?
 }
 
 nonisolated enum WorkoutEndpointPrewarmer {
+    static func digest(_ data: Data) -> Data { Data(SHA256.hash(data: data)) }
+
     /// This deliberately selects a superset of definite matches: ambiguous
     /// candidates must remain available to prevent erroneous merges.
     static func candidateIDs(_ inputs: [WorkoutEndpointCandidate]) async throws -> [String] {
@@ -67,7 +84,13 @@ nonisolated enum WorkoutEndpointPrewarmer {
                 // Decode the whole payload exactly as Workout.features does;
                 // malformed unrelated sensor channels still yield nil.
                 let end = input.data.flatMap { (try? JSONDecoder().decode(WorkoutFeatures.self, from: $0))?.end }
-                result.append(PrewarmedWorkoutEndpoint(id: input.id, data: input.data, end: end))
+                let proof: WorkoutEndpointProof
+                if !input.retainRaw, let data = input.data {
+                    proof = .digest(byteCount: data.count, sha256: digest(data))
+                } else {
+                    proof = .exact(input.data)
+                }
+                result.append(PrewarmedWorkoutEndpoint(id: input.id, proof: proof, end: end))
             }
             return result
         }

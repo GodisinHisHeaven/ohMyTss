@@ -176,13 +176,16 @@ final class MorningStatusFlowTests: XCTestCase {
         let done = app.buttons["Done"]
         XCTAssertTrue(done.waitForExistence(timeout: 5))
         done.tap()
-        let hidden = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "exists == false"), object: app.keyboards.firstMatch
+        // Done is present only while an input field has focus. Checking the
+        // app's toolbar avoids slow system-keyboard accessibility snapshots.
+        let focusCleared = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: done
         )
-        XCTAssertEqual(XCTWaiter.wait(for: [hidden], timeout: 5), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [focusCleared], timeout: 5), .completed)
         let verify = app.buttons["morning.verify"]
         reach(verify, app: app)
         XCTAssertTrue(verify.isEnabled)
+        XCTAssertTrue(verify.isHittable)
         verify.tap()
     }
 
