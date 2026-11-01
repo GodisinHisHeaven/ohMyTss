@@ -45,9 +45,15 @@ older SHA cannot be used. Its
 `apply_change` input defaults to false, which performs a read-only preflight.
 With explicit `true`, the workflow can add an exact `main` manual start condition
 only when Apple explicitly returns the existing manual condition as null. Missing
-or non-null conditions are rejected. Preflight logs only the condition's
-missing/null/non-null status and the names of missing required fields, never the
-field contents. The update request contains no other field.
+or non-null conditions are rejected for updates. Read-only preflight also accepts
+existing non-null conditions after the identity and required-action checks. It
+reports missing/null/non-null status and a conservative branch-coverage category:
+`exact main`, `covers main but broader`, `does not cover main`, `not configured`,
+or `unknown`. Unknown shapes and multiple patterns are not interpreted. It never
+prints the condition's contents. Coverage describes the visible branch rule;
+it does not establish before-and-after configuration equality, authorize a new
+build, or prove that a build can reach TestFlight. The update request contains no
+other field.
 
 Preflight checks the app, GitHub repository and Cloud branch, current main SHA,
 workflow state, Build/Test/Archive action names, platforms and schemes, and the
@@ -64,6 +70,9 @@ lock out App Store Connect, Xcode, or other clients: Apple does not document an
 atomic conditional PATCH here, so another edit could race between the final read
 and the update. The job never starts a build and does not automatically retry an
 uncertain PATCH; inspect the actual Cloud configuration before any later action.
+If a write returned but verification failed, the log reports only a fixed failure
+stage and error type, without server-supplied values. The write may still have
+applied; do not retry or start a build based on that failure alone.
 
 Apple's workflow API does not expose the TestFlight post-action configuration or
 its target groups. The sparse PATCH does not request changes to them, but readback
