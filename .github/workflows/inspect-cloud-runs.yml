@@ -1,0 +1,52 @@
+name: Inspect Xcode Cloud runs read-only
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: "Optional current-main or verified ancestor SHA to inspect"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Require protected main dispatch
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]
+          [[ "$GITHUB_REF" == refs/heads/main ]]
+          [[ "$GITHUB_REPOSITORY" == GodisinHisHeaven/ohMyTss ]]
+          [[ "$GITHUB_RUN_ATTEMPT" == 1 ]]
+
+      - name: Check out trusted main
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      # The Git ancestry subprocess runs before Apple secrets are exposed.
+      - name: Validate current main and requested SHA
+        id: preflight
+        env:
+          GH_READ_TOKEN: ${{ github.token }}
+          REQUESTED_SHA: ${{ inputs.commit_sha }}
+        run: python3 scripts/inspect_cloud_runs.py preflight
+
+      - name: Inspect Cloud runs with reads only
+        env:
+          GH_READ_TOKEN: ${{ github.token }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+          ASC_APP_ID: ${{ vars.ASC_APP_ID || '6755509363' }}
+          REQUESTED_SHA: ${{ inputs.commit_sha }}
+          TARGET_SHA: ${{ steps.preflight.outputs.target }}
+        run: python3 scripts/inspect_cloud_runs.py lookup

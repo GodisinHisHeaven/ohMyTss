@@ -31,6 +31,7 @@ class FakeStart(FakeConfiguration):
         self.list_count = 0
         self.on_second_list = None
         self.post_error = None
+        self.post_status = 201
         self.post_response = {"data": {"type": "ciBuildRuns", "id": NEW}}
 
     def all(self, path):
@@ -48,7 +49,7 @@ class FakeStart(FakeConfiguration):
         if self.post_error:
             raise self.post_error
         response = Response(self.post_response)
-        response.status = 201
+        response.status = self.post_status
         return response
 
 
@@ -151,7 +152,22 @@ class TestHistoricalStart(unittest.TestCase):
         self.assertEqual(self.api.requests, [])
 
     def test_post_errors_are_ambiguous_and_never_retried(self):
-        for failure in (HTTPError("https://example.invalid", 403, "secret", {}, None),
+        for code in (400, 401, 403, 404, 409, 422):
+            with self.subTest(code=code):
+                self.api = FakeStart()
+                self.api.post_error = HTTPError("https://example.invalid", code, "secret", {}, None)
+                with self.assertRaises(start.Unknown) as error: self.do_start()
+                self.assertEqual(len(self.api.requests), 1)
+                self.assertIn("POST rejected (HTTP %d)" % code, str(error.exception))
+                self.assertIn("no automatic retry", str(error.exception))
+                self.assertNotIn("secret", str(error.exception))
+                self.api = FakeStart()
+                self.api.post_status = code
+                with self.assertRaises(start.Unknown) as returned_error: self.do_start()
+                self.assertEqual(len(self.api.requests), 1)
+                self.assertIn("POST rejected (HTTP %d)" % code, str(returned_error.exception))
+        for failure in (HTTPError("https://example.invalid", 429, "secret", {}, None),
+                        HTTPError("https://example.invalid", 500, "secret", {}, None),
                         URLError("secret"), IncompleteRead(b"secret", 20), BadStatusLine("secret")):
             with self.subTest(kind=type(failure).__name__):
                 self.api = FakeStart()
@@ -181,6 +197,35 @@ class TestHistoricalStart(unittest.TestCase):
         self.assertIn("do not dispatch again", str(error.exception))
         self.assertNotIn("secret", str(error.exception))
         self.assertEqual(len(self.api.requests), 1)
+
+    def test_http_error_after_response_is_always_ambiguous(self):
+        for phase in ("read", "exit"):
+            with self.subTest(phase=phase):
+                self.api = FakeStart()
+                error = HTTPError("https://example.invalid", 403, "secret", {}, None)
+
+                class BrokenResponse(Response):
+                    status = 201
+                    def read(self, *args):
+                        if phase == "read":
+                            raise error
+                        return super().read(*args)
+                    def __exit__(self, *args):
+                        if phase == "exit":
+                            raise error
+                        return super().__exit__(*args)
+
+                def opened(request, timeout):
+                    self.api.requests.append(request)
+                    return BrokenResponse({"data": {"type": "ciBuildRuns", "id": NEW}})
+
+                self.api.opener.open = opened
+                with self.assertRaises(start.Unknown) as failure:
+                    self.do_start()
+                self.assertIn("may have created", str(failure.exception))
+                self.assertIn("do not dispatch again", str(failure.exception))
+                self.assertNotIn("secret", str(failure.exception))
+                self.assertEqual(len(self.api.requests), 1)
 
     def test_delayed_post_source_is_polled_without_reposting(self):
         self.api.new["attributes"]["sourceCommit"] = None

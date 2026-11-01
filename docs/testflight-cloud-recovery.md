@@ -71,6 +71,33 @@ distribution post-action and the intended internal group. The workflow API does
 not expose post-action settings, so this preflight cannot verify those settings
 or prove they remained unchanged. Only the real build verifies distribution.
 
+For future starts, an explicit Apple HTTP 400, 401, 403, 404, 409 or 422 is
+reported by its fixed status code; the job never retries automatically. Other
+responses, including 429, server errors, connection failures and malformed
+responses, remain uncertain and may represent a created run. This distinction
+does not establish the outcome or status of an earlier request.
+
+# Inspecting Cloud runs after an uncertain request
+
+Dispatch `Inspect Xcode Cloud runs read-only` on protected `main` with the current SHA or
+a full SHA proven to be an ancestor of that checkout. The empty input selects
+current main. The job checks the exact main checkout and ancestry before making
+read-only Apple requests, and refuses unrecognized responses. It paginates the
+product's runs and reports matching main runs using fixed status values, IDs and
+action summaries; other branch and pull-request runs are counted separately.
+Unrecognized reference types or pagination links stop the inspection rather than
+being treated as non-main or as the end of the list. Only branch names in a
+conservative ASCII subset are classified; other valid names may require a
+separate inspection.
+The result is a point-in-time, non-atomic observation, not a TestFlight release
+verification. Use the existing verifier to establish tests and distribution.
+
+An empty result means only that no matching main run is currently visible. Apple
+lists can lag and an already-sent request can still create a run. **Do not repeat
+a POST or dispatch another start solely because this read-only query is empty.**
+If a response is incomplete, malformed, or cannot be checked, the job reports an
+unknown result and makes no inference about the earlier request.
+
 # Configuring a manual main start condition
 
 The `Configure Xcode Cloud manual main` workflow is manual-dispatch only and
