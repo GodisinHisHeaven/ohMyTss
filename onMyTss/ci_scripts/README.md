@@ -61,11 +61,14 @@ python3 -B -m unittest discover -s onMyTss/ci_scripts/tests -v
 
 GitHub Actions runs **Verify TestFlight distribution** on each push to `main`.
 It checks the exact push commit against Xcode Cloud and App Store Connect: a
-successful cloud run with the required actions and the corresponding valid
-build in the internal **close door** group. It only reads Apple's APIs; Xcode
+successful cloud run with the required actions, the TestFlight internal testing
+post-action, and the corresponding valid build in the internal **close door**
+group. It only reads Apple's APIs; Xcode
 Cloud's existing branch trigger creates and distributes the build. This check
 does not create another build or require a browser login. Runs wait up to 90
-minutes and do not cancel earlier commits when a new commit is pushed.
+minutes and do not cancel earlier commits when a new commit is pushed. Xcode
+Cloud may itself cancel a build when a newer commit arrives; the canceled
+commit fails verification, while the newer commit is checked separately.
 
 Configure the repository's Actions secrets with an App Store Connect API key
 that can read this app, its Xcode Cloud data and internal TestFlight builds:
@@ -86,12 +89,13 @@ internal TestFlight availability, not App Store review or public release.
 
 The required cloud test and archive configuration above remains in Xcode Cloud;
 this GitHub check observes it and does not replace those gates. The API check
-establishes the resulting build and group state; it does not independently
-establish which post-action or person added that build to the group, or prove
-that a particular tester received an invitation or installed it.
+establishes that the TestFlight post-action succeeded and checks the resulting
+build and group state. It does not prove that a particular tester received an
+invitation or installed the build.
 The verifier does not distinguish Xcode Cloud workflows for the same main
 commit or prove that Branch Changes started the run. It requires an action
-named `Test - iOS`; if that action is renamed, verification returns unknown
-until the verifier is updated.
+named `Test - iOS` and a post-action named
+`TestFlight Internal Testing - iOS`; if either is renamed, verification returns
+unknown until the verifier is updated.
 
 Apple reference: [Writing custom build scripts](https://developer.apple.com/documentation/xcode/writing-custom-build-scripts).

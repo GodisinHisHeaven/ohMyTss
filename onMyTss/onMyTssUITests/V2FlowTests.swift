@@ -191,6 +191,56 @@ final class V2FlowTests: XCTestCase {
     }
 
     @MainActor
+    private func reachDashboardButton(_ element: XCUIElement, in app: XCUIApplication) -> Bool {
+        let navigationBar = app.navigationBars["Today"]
+        let tabBar = app.tabBars.firstMatch
+        guard navigationBar.exists else { return false }
+        let upper = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4))
+        let lower = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.6))
+        for attempt in 0...16 {
+            let viewport = app.frame
+            let tabFrame = tabBar.exists ? tabBar.frame : .zero
+            // On iPhone Duo the navigation controls can be a side rail, without
+            // a TabBar element. Only a wide bottom bar limits vertical space.
+            let hasBottomBar = !tabFrame.isEmpty && tabFrame.minY > navigationBar.frame.maxY
+                && tabFrame.width >= viewport.width * 0.5
+            let safeTop = navigationBar.frame.maxY + 8
+            let safeBottom = (hasBottomBar ? min(viewport.maxY, tabFrame.minY) : viewport.maxY) - 8
+            var rail = CGRect.null
+            if !hasBottomBar {
+                let frames = ["Today", "History", "Settings"].compactMap { name -> CGRect? in
+                    let button = app.buttons[name].firstMatch
+                    guard button.exists else { return nil }
+                    let frame = button.frame
+                    return !frame.isEmpty && frame.width < viewport.width * 0.5 ? frame : nil
+                }
+                if frames.count >= 2 {
+                    let bounds = frames.reduce(CGRect.null) { $0.union($1) }
+                    if bounds.height > bounds.width { rail = bounds }
+                }
+            }
+            var scrollDown = true
+            if element.exists {
+                let frame = element.frame
+                let centerOutsideRail = rail.isNull || frame.midX < rail.minX - 8 || frame.midX > rail.maxX + 8
+                if frame.width > 0, frame.height > 0, frame.minY >= safeTop, frame.maxY <= safeBottom,
+                   frame.midX >= viewport.minX + 8, frame.midX <= viewport.maxX - 8,
+                   centerOutsideRail, element.isHittable {
+                    return true
+                }
+                if frame.height > 0, frame.minY < safeTop { scrollDown = false }
+            }
+            if attempt == 16 { break }
+            if scrollDown {
+                lower.press(forDuration: 0.05, thenDragTo: upper)
+            } else {
+                upper.press(forDuration: 0.05, thenDragTo: lower)
+            }
+        }
+        return false
+    }
+
+    @MainActor
     func testRegionalReport_noneRightEditAndDelete() {
         let app = launch()
         app.buttons["today.more"].tap()
@@ -221,8 +271,15 @@ final class V2FlowTests: XCTestCase {
     func testStrengthCreateEditDelete_RIRZeroAndUnknown() {
         let app = launch()
         let record = app.buttons["today.strength"]
-        reach(record, in: app)
-        record.tap()
+        guard reachDashboardButton(record, in: app) else {
+            XCTFail("Record strength is not fully visible in the dashboard viewport")
+            return
+        }
+        record.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        guard app.navigationBars["Strength session"].waitForExistence(timeout: 5) else {
+            XCTFail("Record strength did not open the strength session sheet")
+            return
+        }
         let create = app.buttons["strength.createSession"]
         reach(create, in: app)
         create.tap()
