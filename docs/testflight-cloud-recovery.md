@@ -36,6 +36,41 @@ overlapping workflow runs; it cannot prevent a duplicate across separate dispatc
 when Apple's list is stale. A created run does not by itself prove that tests
 passed or that TestFlight distribution completed.
 
+# Starting current main using an older canceled run
+
+If the current main SHA has no Cloud run and the automatic branch condition is
+not available, `Start current main from historical Cloud run` can be dispatched
+manually on protected `main` with an explicitly confirmed start and a canceled
+main-branch run from an ancestor commit. The historical run is used only to
+identify and validate the app, active main ref and its sole current Cloud
+workflow; its build is not considered successful. A complete local checkout must
+prove ancestry, and the current main SHA must remain unchanged. The workflow must
+have the exact manual main condition and the required Build, iOS Test and Archive
+configuration. The job does not change the Cloud workflow and does not restore
+automatic push triggering.
+
+Before the one POST, the job reads the complete Apple product build list twice.
+It refuses an existing current-SHA run, a run with an unknown SHA, or a list in
+which the historical run is not visible. It also requires this to be the only
+GitHub dispatch of this dedicated workflow for the SHA, and forbids reruns.
+This may conservatively block a second attempt even when the first stopped before
+POST. GitHub dispatch history can also lag or be deleted, so it is not a durable
+idempotency ledger. GitHub workflow concurrency serializes this repository's
+recovery jobs, but Apple lists may lag and other clients are not locked out:
+absence from those reads cannot guarantee that no other run exists or is being
+created.
+
+Any lost or unclear POST response, later lookup failure, or main race must be
+investigated in Xcode Cloud. A returned run ID is retained in the log when known.
+**Never blindly dispatch again**: the original request may have created a run,
+including one not yet visible. The API starts a branch reference rather than an
+immutable SHA; checking main before and after and inspecting the created run can
+detect a race but cannot undo it. The job passes the created ID to the unchanged
+TestFlight verifier, which still requires successful Build, Test, Archive,
+distribution post-action and the intended internal group. The workflow API does
+not expose post-action settings, so this preflight cannot verify those settings
+or prove they remained unchanged. Only the real build verifies distribution.
+
 # Configuring a manual main start condition
 
 The `Configure Xcode Cloud manual main` workflow is manual-dispatch only and
