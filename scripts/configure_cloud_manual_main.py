@@ -65,7 +65,11 @@ def manual_main_coverage(condition):
         return "not configured"
     if not isinstance(condition, dict) or any(k != "source" for k in condition):
         return "unknown"
-    source = condition.get("source")
+    return branch_source_coverage(condition.get("source"))
+
+
+def branch_source_coverage(source):
+    """Classify the documented source rule; never print branch patterns."""
     if not isinstance(source, dict) or any(k not in {"isAllMatch", "patterns"} for k in source):
         return "unknown"
     match_all = source.get("isAllMatch")
@@ -87,6 +91,40 @@ def manual_main_coverage(condition):
     if prefix:
         return "covers main but broader" if "main".startswith(pattern) else "does not cover main"
     return "exact main" if pattern == "main" else "does not cover main"
+
+
+def report_automatic_branch(attributes):
+    """Describe only the current visible automatic branch settings."""
+    if "branchStartCondition" not in attributes:
+        print("Automatic branch condition: missing")
+        print("Automatic branch source coverage: unknown")
+        print("Automatic branch file rule: unknown")
+        print("Automatic branch autoCancel: unknown")
+        return
+    condition = attributes["branchStartCondition"]
+    if condition is None:
+        print("Automatic branch condition: null")
+        print("Automatic branch source coverage: not configured")
+        print("Automatic branch file rule: not configured")
+        print("Automatic branch autoCancel: not configured")
+        return
+    if not isinstance(condition, dict):
+        print("Automatic branch condition: unknown")
+        print("Automatic branch source coverage: unknown")
+        print("Automatic branch file rule: unknown")
+        print("Automatic branch autoCancel: unknown")
+        return
+    print("Automatic branch condition: configured (structure unverified)")
+    print("Automatic branch source coverage:", branch_source_coverage(condition.get("source")))
+    rule = condition.get("filesAndFoldersRule")
+    rule_status = ("missing" if "filesAndFoldersRule" not in condition else
+                   "null" if rule is None else "present" if isinstance(rule, dict) else "unknown")
+    print("Automatic branch file rule:", rule_status)
+    cancel = condition.get("autoCancel")
+    cancel_status = ("missing" if "autoCancel" not in condition else "null" if cancel is None else
+                     "enabled" if cancel is True else "disabled" if cancel is False else "unknown")
+    print("Automatic branch autoCancel:", cancel_status)
+    print("Automatic branch details describe visible settings only; they do not prove a build was triggered.")
 
 
 def safe_readback_type(error):
@@ -280,14 +318,17 @@ def configure(client, target, run_id, app, apply_change, current_main=github_bra
     refs = client.all("/v1/scmRepositories/" + repo_id + "/gitReferences?limit=200")
     require(sum(isinstance(x, dict) and x.get("id") == ref_id for x in refs) == 1,
             "Cloud main ref does not belong to workflow repository")
-    snapshot = checked_configuration(before, product_id, repo_id)
     before_attrs = attributes(before)
+    if not apply_change and "branchStartCondition" not in before_attrs:
+        print("Automatic branch condition: missing (preflight incomplete)")
+    snapshot = checked_configuration(before, product_id, repo_id)
     require(isinstance(before_attrs.get("lastModifiedDate"), str) and before_attrs["lastModifiedDate"],
             "Workflow modification timestamp unavailable")
     print("Preflight passed; TestFlight post-action settings are not exposed by this API.")
     print("Apple does not document an atomic conditional PATCH; concurrent edits may race.")
     if not apply_change:
         require(current_main("main") == target, "GitHub main changed during inspection")
+        report_automatic_branch(before_attrs)
         if historical:
             print("Historical run SHA is a reachable ancestor of current main; no build was verified.")
         coverage = (manual_main_coverage(before_attrs["manualBranchStartCondition"])

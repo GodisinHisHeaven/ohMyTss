@@ -62,6 +62,15 @@ it does not establish before-and-after configuration equality, authorize a new
 build, or prove that a build can reach TestFlight. The update request contains no
 other field.
 
+Read-only inspection also reports whether the automatic branch condition is
+missing, null, configured or unrecognized; its source's conservative main
+coverage; whether a file rule is missing, null, present or unrecognized; and the
+auto-cancel state. It does not print patterns or file-rule contents. These fields
+describe the current configuration only: they cannot establish why a specific push
+did or did not create a build, nor prove the settings were unchanged by a prior
+update. `configured` means only that an object was returned; its complete
+structure and effectiveness are not established by this report.
+
 Preflight checks the app, GitHub repository and Cloud branch, current main SHA,
 workflow state, Build/Test/Archive action names, platforms and schemes, and the
 required `Test - iOS` action's platform and test configuration. Test destinations

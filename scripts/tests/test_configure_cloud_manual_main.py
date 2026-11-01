@@ -216,6 +216,61 @@ class TestManualConfiguration(unittest.TestCase):
         self.assertEqual(self.api.requests, [])
         self.assertIn("Read-only mode", self.output.getvalue())
         self.assertIn("Manual branch coverage: not configured", self.output.getvalue())
+        self.assertIn("Automatic branch condition: configured (structure unverified)", self.output.getvalue())
+        self.assertIn("Automatic branch source coverage: covers main but broader", self.output.getvalue())
+        self.assertIn("Automatic branch file rule: missing", self.output.getvalue())
+        self.assertIn("Automatic branch autoCancel: enabled", self.output.getvalue())
+
+    def test_automatic_branch_safe_state_classification(self):
+        source_main = {"isAllMatch": False, "patterns": [{"pattern": "main", "isPrefix": False}]}
+        source_other = {"isAllMatch": False, "patterns": [{"pattern": "sensitive-branch", "isPrefix": False}]}
+        cases = [
+            ({}, ("missing", "unknown", "unknown", "unknown")),
+            ({"branchStartCondition": None}, ("null", "not configured", "not configured", "not configured")),
+            ({"branchStartCondition": "sensitive-branch"}, ("unknown", "unknown", "unknown", "unknown")),
+            ({"branchStartCondition": {"source": source_main, "filesAndFoldersRule": None, "autoCancel": False}},
+             ("configured (structure unverified)", "exact main", "null", "disabled")),
+            ({"branchStartCondition": {"source": source_other,
+                                       "filesAndFoldersRule": {"mode": "sensitive-file-rule"}, "autoCancel": True}},
+             ("configured (structure unverified)", "does not cover main", "present", "enabled")),
+            ({"branchStartCondition": {"source": {}, "filesAndFoldersRule": "sensitive-file-rule", "autoCancel": 1}},
+             ("configured (structure unverified)", "unknown", "unknown", "unknown")),
+            ({"branchStartCondition": {"source": source_main, "autoCancel": None}},
+             ("configured (structure unverified)", "exact main", "missing", "null")),
+        ]
+        labels = ("Automatic branch condition: ", "Automatic branch source coverage: ",
+                  "Automatic branch file rule: ", "Automatic branch autoCancel: ")
+        for attributes, expected in cases:
+            with self.subTest(expected=expected):
+                output = io.StringIO()
+                with redirect_stdout(output): config.report_automatic_branch(attributes)
+                for label, value in zip(labels, expected):
+                    self.assertIn(label + value, output.getvalue())
+                self.assertNotIn("sensitive-branch", output.getvalue())
+                self.assertNotIn("sensitive-file-rule", output.getvalue())
+
+    def test_automatic_reporting_is_read_only_and_absence_still_fails_existing_gate(self):
+        del self.api.workflow["attributes"]["branchStartCondition"]
+        with self.assertRaises(config.Unknown): self.check(False)
+        self.assertIn("Automatic branch condition: missing (preflight incomplete)", self.output.getvalue())
+        self.assertEqual(self.api.requests, [])
+        self.api = FakeConfiguration()
+        self.output = io.StringIO()
+        self.check(True)
+        self.assertNotIn("Automatic branch condition:", self.output.getvalue())
+        self.assertEqual(len(self.api.requests), 1)
+
+    def test_automatic_coverage_is_not_reported_when_other_preflight_checks_fail(self):
+        self.api.workflow["attributes"]["actions"][1]["isRequiredToPass"] = False
+        with self.assertRaises(config.Unknown): self.check(False)
+        self.assertNotIn("Automatic branch source coverage:", self.output.getvalue())
+        self.assertEqual(self.api.requests, [])
+        self.api = FakeConfiguration()
+        self.output = io.StringIO()
+        sequence = iter([SHA, "b" * 40])
+        with self.assertRaises(config.Unknown): self.check(False, main=lambda _: next(sequence))
+        self.assertNotIn("Automatic branch source coverage:", self.output.getvalue())
+        self.assertEqual(self.api.requests, [])
 
     def test_manual_coverage_classifies_only_documented_shapes(self):
         cases = [
