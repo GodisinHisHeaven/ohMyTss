@@ -58,6 +58,7 @@ final class V2Store {
     func saveSets(_ records: [StrengthSetRecord]) throws {
         // Validate the entire batch before inserting any row, preventing partial multi-set retries.
         var sessions: [Workout] = []
+        var sessionLookup: [String: Workout] = [:]
         for record in records {
             guard (1...500).contains(record.reps),
                   record.weightKG.map({ $0.isFinite && (0...1500).contains($0) }) ?? true,
@@ -65,9 +66,11 @@ final class V2Store {
                   record.effortRaw.map({ StrengthEffort(rawValue: $0) != nil }) ?? true,
                   record.manualRegionsRaw.allSatisfy({ Region(rawValue: $0) != nil }),
                   ExerciseCatalog.exercises.contains(where: { $0.id == record.exerciseID }) || !record.manualRegionsRaw.isEmpty,
-                  let session = try workout(record.sessionID), !session.isTombstoned, !session.isSuppressed else {
+                  let session = try sessionLookup[record.sessionID] ?? workout(record.sessionID),
+                  !session.isTombstoned, !session.isSuppressed else {
                 throw V2StoreError.invalidSet
             }
+            sessionLookup[record.sessionID] = session
             if !sessions.contains(where: { $0.id == session.id }) { sessions.append(session) }
         }
         // The UI's repeated-set operation is one session; refuse a cross-session batch rather than partially commit.

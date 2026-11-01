@@ -967,6 +967,149 @@ final class V2PersistenceTests: XCTestCase {
                        "Only the completed ten-minute run belongs to the input available before this session")
     }
 
+    func testSingleSessionRecalculationMatchesFullHistoryAcrossRunningWindow() throws {
+        let context = ModelContext(try container())
+        let now = start.addingTimeInterval(3_600)
+        let targetRun = imported(id: "target-run")
+        targetRun.workoutType = "Running"
+        let targetStrength = imported(id: "target-strength")
+        targetStrength.workoutType = "Strength"
+        context.insert(targetRun)
+        context.insert(targetStrength)
+
+        func addRun(_ id: String, offset: TimeInterval, endOffset: TimeInterval? = nil,
+                    deleted: Bool = false, suppressed: Bool = false, payload: Int = 0) {
+            let date = start.addingTimeInterval(offset)
+            let row = Workout(id: id, date: date.startOfDay, startTime: date, duration: 600,
+                              workoutType: "Running", tss: 10, calculationMethod: "duration", source: .healthKit)
+            row.isTombstoned = deleted
+            row.isSuppressed = suppressed
+            if payload == 1 {
+                row.featuresData = Data("{bad json".utf8)
+            } else if payload == 2 {
+                row.featuresData = nil
+            } else {
+                var features = WorkoutFeatures()
+                features.end = endOffset.map { start.addingTimeInterval($0) } ?? date.addingTimeInterval(600)
+                row.features = features
+            }
+            context.insert(row)
+        }
+        // The lower bound is inclusive; concurrent or unfinished runs cannot
+        // contribute, and invalid/missing payloads use the saved duration.
+        addRun("at-boundary", offset: -28 * 86_400)
+        addRun("outside-boundary", offset: -28 * 86_400 - 1)
+        addRun("finished", offset: -3_600)
+        addRun("ends-at-start", offset: -600, endOffset: 0)
+        addRun("unfinished", offset: -300, endOffset: 60)
+        addRun("same-start", offset: 0)
+        addRun("future", offset: 600)
+        addRun("deleted", offset: -7_200, deleted: true)
+        addRun("suppressed", offset: -10_800, suppressed: true)
+        addRun("invalid-json", offset: -2_400, payload: 1)
+        addRun("missing-payload", offset: -4_800, payload: 2)
+
+        let batch = try V2EstimateBatch(context: context, includePrevious: false)
+        let allResults = try batch.calculate(now: now)
+        for target in [targetRun, targetStrength] {
+            let expected = try XCTUnwrap(allResults.first { $0.sessionID == target.id })
+            let single = try XCTUnwrap(batch.calculate(now: now, sessionID: target.id).first)
+            XCTAssertEqual(single.inputData, expected.inputData)
+            XCTAssertEqual(single.payloadData, expected.payloadData)
+            let snapshot = try JSONDecoder().decode(V2SnapshotProbe.self, from: single.inputData)
+            XCTAssertEqual(snapshot.recentRunningMinutes, 50)
+        }
+    }
+
+    func testSingleSessionRecalculationHandlesNoPriorRunsAndInactiveTargets() throws {
+        let context = ModelContext(try container())
+        let target = imported(id: "target")
+        target.workoutType = "Strength"
+        let inactive = imported(id: "inactive")
+        inactive.isSuppressed = true
+        let deleted = imported(id: "deleted")
+        deleted.isTombstoned = true
+        context.insert(target)
+        context.insert(inactive)
+        context.insert(deleted)
+        let batch = try V2EstimateBatch(context: context, includePrevious: false)
+        let now = start.addingTimeInterval(3_600)
+        let full = try batch.calculate(now: now)
+        let single = try XCTUnwrap(batch.calculate(now: now, sessionID: target.id).first)
+        let expected = try XCTUnwrap(full.first { $0.sessionID == target.id })
+        XCTAssertEqual(single.inputData, expected.inputData)
+        XCTAssertEqual(single.payloadData, expected.payloadData)
+        XCTAssertNil(try JSONDecoder().decode(V2SnapshotProbe.self, from: single.inputData).recentRunningMinutes)
+        XCTAssertTrue(try batch.calculate(now: now, sessionID: inactive.id).isEmpty)
+        XCTAssertTrue(try batch.calculate(now: now, sessionID: deleted.id).isEmpty)
+        XCTAssertTrue(try batch.calculate(now: now, sessionID: "missing").isEmpty)
+    }
+
+    func testSingleSessionGarminAliasesMatchFullHistoryWithoutDuplicateVersion() throws {
+        let context = ModelContext(try container())
+        let now = start.addingTimeInterval(3_600)
+        let garmin = imported(id: "garmin")
+        garmin.workoutType = "Running"
+        garmin.sourceBundleIdentifier = "com.garmin.connect.mobile"
+        let strava = imported(id: "strava", source: .strava)
+        strava.workoutType = "Run"
+        strava.isSuppressed = true
+        strava.linkedSessionID = garmin.id
+        var stravaFeatures = strava.features
+        stravaFeatures.heartRate = [TimedValue(start: start, end: start.addingTimeInterval(600), value: 110)]
+        strava.features = stravaFeatures
+
+        let sourceDeleted = imported(id: "source-deleted")
+        sourceDeleted.isTombstoned = true
+        sourceDeleted.deletionOrigin = "source"
+        sourceDeleted.isSuppressed = true
+        sourceDeleted.linkedSessionID = garmin.id
+        sourceDeleted.userTags = ["retained-source-tag"]
+        let userDeleted = imported(id: "user-deleted")
+        userDeleted.isTombstoned = true
+        userDeleted.deletionOrigin = "user"
+        userDeleted.isSuppressed = true
+        userDeleted.linkedSessionID = garmin.id
+        userDeleted.userTags = ["deleted-user-tag"]
+        let prior = imported(id: "prior-run")
+        prior.workoutType = "Run"
+        prior.startTime = start.addingTimeInterval(-86_400)
+        prior.date = prior.startTime.startOfDay
+        var priorFeatures = WorkoutFeatures()
+        priorFeatures.end = prior.startTime.addingTimeInterval(600)
+        prior.features = priorFeatures
+        for row in [garmin, strava, sourceDeleted, userDeleted, prior] { context.insert(row) }
+        let retainedSet = StrengthSetRecord(sessionID: sourceDeleted.id, exerciseID: "squat", reps: 8, rir: 2)
+        let excludedSet = StrengthSetRecord(sessionID: userDeleted.id, exerciseID: "squat", reps: 4)
+        context.insert(retainedSet)
+        context.insert(excludedSet)
+        context.insert(LoadEstimateRecord(sessionID: garmin.id, version: "old-model", inputCutoff: start,
+                                          computedAt: start, payloadData: Data([1]), inputData: Data([2])))
+        context.insert(LoadEstimateRecord(sessionID: garmin.id, version: LoadModel.version, inputCutoff: start,
+                                          computedAt: start.addingTimeInterval(60), payloadData: Data([3]), inputData: Data([4])))
+        // Creating the thresholds singleton can save the fixture, so capture the
+        // batch only after all source and personal details have been inserted.
+        let batch = try V2EstimateBatch(context: context)
+        let full = try XCTUnwrap(batch.calculate(now: now).first { $0.sessionID == garmin.id })
+        let single = try XCTUnwrap(batch.calculate(now: now, sessionID: garmin.id).first)
+        XCTAssertEqual(single.inputData, full.inputData)
+        XCTAssertEqual(single.payloadData, full.payloadData)
+        let probe = try JSONDecoder().decode(SingleSessionAliasProbe.self, from: single.inputData)
+        XCTAssertEqual(probe.recentRunningMinutes, 10)
+        XCTAssertTrue(probe.tags.contains("retained-source-tag"))
+        XCTAssertFalse(probe.tags.contains("deleted-user-tag"))
+        XCTAssertEqual(probe.sets.map(\.id), [retainedSet.id])
+        XCTAssertEqual(probe.features.heartRate.first?.value, 150)
+
+        context.insert(LoadEstimateRecord(sessionID: garmin.id, version: single.value.version,
+                                          inputCutoff: single.value.inputCutoff, computedAt: now,
+                                          payloadData: single.payloadData, inputData: single.inputData))
+        try context.save()
+        let count = try context.fetch(FetchDescriptor<LoadEstimateRecord>()).count
+        try V2Store(context: context, clock: { now }).recalculate(garmin)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<LoadEstimateRecord>()).count, count)
+    }
+
     func testDiskReopenRetainsUserTombstoneAfterResync() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -1036,4 +1179,11 @@ private struct V2SnapshotProbe: Decodable {
     var features: WorkoutFeatures
     var tags: [String]
     var recentRunningMinutes: Double?
+}
+
+private struct SingleSessionAliasProbe: Decodable {
+    let features: WorkoutFeatures
+    let tags: [String]
+    let sets: [StrengthSetInput]
+    let recentRunningMinutes: Double?
 }
