@@ -200,6 +200,47 @@ final class V2FlowTests: XCTestCase {
         reach(save, in: app)
         save.tap()
         XCTAssertTrue(app.staticTexts["Intensity thresholds cleared."].waitForExistence(timeout: 5))
+
+        app.buttons["Today"].firstMatch.tap()
+        let missingThresholds = app.staticTexts["LT1 / LT2 not set"]
+        XCTAssertTrue(missingThresholds.waitForExistence(timeout: 10))
+        reach(missingThresholds, in: app)
+        XCTAssertFalse(low.exists)
+
+        app.buttons["Settings"].firstMatch.tap()
+        reach(lt1, in: app)
+        lt1.tap()
+        lt1.typeText("110")
+        app.buttons["settings.intensityDone"].tap()
+        reach(lt2, in: app)
+        lt2.tap()
+        lt2.typeText("140")
+        app.buttons["settings.intensityDone"].tap()
+        reach(save, in: app)
+        save.tap()
+        XCTAssertTrue(app.staticTexts["Intensity thresholds saved."].waitForExistence(timeout: 5))
+
+        app.buttons["Today"].firstMatch.tap()
+        XCTAssertTrue(high.waitForExistence(timeout: 15))
+        reach(high, in: app)
+        XCTAssertTrue(low.label.contains("0%"))
+        XCTAssertTrue(middle.label.contains("72%"))
+        XCTAssertTrue(high.label.contains("28%"))
+        XCTAssertFalse(missingThresholds.exists)
+
+        // Leave the persistent threshold settings clear for later tests.
+        app.buttons["Settings"].firstMatch.tap()
+        reach(lt1, in: app)
+        lt1.tap()
+        lt1.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 3))
+        app.buttons["settings.intensityDone"].tap()
+        reach(lt2, in: app)
+        lt2.tap()
+        lt2.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 3))
+        app.buttons["settings.intensityDone"].tap()
+        reach(save, in: app)
+        save.tap()
+        XCTAssertTrue(app.staticTexts["Intensity thresholds cleared."].waitForExistence(timeout: 5))
     }
 
     @MainActor
