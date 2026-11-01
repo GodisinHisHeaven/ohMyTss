@@ -35,3 +35,41 @@ until the outcome has been established in Xcode Cloud. Serialization only covers
 overlapping workflow runs; it cannot prevent a duplicate across separate dispatches
 when Apple's list is stale. A created run does not by itself prove that tests
 passed or that TestFlight distribution completed.
+
+# Configuring a manual main start condition
+
+The `Configure Xcode Cloud manual main` workflow is manual-dispatch only and
+runs from protected `main`. Supply the canceled current-main run ID. After this
+entrypoint's PR is merged, use a canceled run for the new main SHA; a run for an
+older SHA cannot be used. Its
+`apply_change` input defaults to false, which performs a read-only preflight.
+With explicit `true`, the workflow can add an exact `main` manual start condition
+only when Apple explicitly returns the existing manual condition as null. Missing
+or non-null conditions are rejected. Preflight logs only the condition's
+missing/null/non-null status and the names of missing required fields, never the
+field contents. The update request contains no other field.
+
+Preflight checks the app, GitHub repository and Cloud branch, current main SHA,
+workflow state, Build/Test/Archive action names, platforms and schemes, and the
+required `Test - iOS` action's platform and test configuration. Test destinations
+must have a documented kind; simulated destinations must identify their device
+type and runtime. This checks visible structure and before-and-after equality,
+not that a particular destination, scheme, or test plan actually ran successfully. The later build must meet the existing verification gate.
+It reads the workflow again immediately before one PATCH, then reads it back and
+compares all returned configuration attributes, relationship data, and included
+resource attributes. The modification timestamp and the intended manual condition
+are excluded from the post-update comparison. Missing key fields fail the check.
+Configuration and retry workflows share a GitHub concurrency group. This does not
+lock out App Store Connect, Xcode, or other clients: Apple does not document an
+atomic conditional PATCH here, so another edit could race between the final read
+and the update. The job never starts a build and does not automatically retry an
+uncertain PATCH; inspect the actual Cloud configuration before any later action.
+
+Apple's workflow API does not expose the TestFlight post-action configuration or
+its target groups. The sparse PATCH does not request changes to them, but readback
+cannot establish that those hidden settings stayed unchanged. A later real build
+must pass the existing TestFlight verification to confirm actual distribution to
+the intended internal group. That result validates the build, not an invisible
+before-and-after settings comparison. If the workflow restricts editing, Apple
+requires an Admin or App Manager; do not assume the existing Developer API key
+can edit it. A 403 is reported and must not trigger a permission change or retry.

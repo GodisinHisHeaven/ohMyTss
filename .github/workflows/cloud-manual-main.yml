@@ -1,0 +1,48 @@
+name: Configure Xcode Cloud manual main
+
+on:
+  workflow_dispatch:
+    inputs:
+      canceled_run_id:
+        description: "Canceled Cloud run ID for the current main commit"
+        required: true
+        type: string
+      apply_change:
+        description: "Add manual main only when the condition is explicitly null"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  configure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: testflight-cloud-recovery
+      cancel-in-progress: false
+    steps:
+      - name: Require protected main
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]
+          [[ "$GITHUB_REF" == refs/heads/main ]]
+          [[ "$GITHUB_REPOSITORY" == GodisinHisHeaven/ohMyTss ]]
+          [[ "$GITHUB_RUN_ATTEMPT" == 1 ]]
+      - name: Check out trusted main
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Inspect or configure manual main
+        env:
+          GH_READ_TOKEN: ${{ github.token }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+          ASC_APP_ID: ${{ vars.ASC_APP_ID || '6755509363' }}
+          CANCELED_RUN_ID: ${{ inputs.canceled_run_id }}
+          APPLY_CHANGE: ${{ inputs.apply_change }}
+        run: python3 scripts/configure_cloud_manual_main.py
