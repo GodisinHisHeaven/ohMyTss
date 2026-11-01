@@ -389,6 +389,9 @@ class DataStore {
     func prepareWorkoutEndpoints(
         incoming: [Workout], validateSources: (() throws -> Void)? = nil,
         byteLimit: Int = 16 * 1_024 * 1_024,
+        digestEntryLimit: Int = 4_096,
+        digestStagingByteLimit: Int = 4 * 1_024 * 1_024,
+        digestIDByteLimit: Int = 256,
         candidateIDs: @escaping @Sendable ([WorkoutEndpointCandidate]) async throws -> [String] = WorkoutEndpointPrewarmer.candidateIDs,
         decode: @escaping @Sendable ([WorkoutEndpointPayload]) async throws -> [PrewarmedWorkoutEndpoint] = WorkoutEndpointPrewarmer.decode
     ) async throws -> WorkoutPrewarmedEndpoints {
@@ -432,28 +435,57 @@ class DataStore {
         }
         let result = WorkoutPrewarmedEndpoints()
         let limit = max(0, byteLimit)
+        let digestLimit = max(0, digestEntryLimit)
+        let stagingLimit = max(0, digestStagingByteLimit)
+        let idLimit = max(0, digestIDByteLimit)
         var bytes = 0
+        var digestEntries = 0
+        var digestStagingBytes = 0
         var seen: [String: [Data?]] = [:]
         var pending: [WorkoutEndpointPayload] = []
         func enqueue(_ id: String, _ data: Data?) {
             guard !(seen[id] ?? []).contains(where: { $0 == data }) else { return }
             let count = data?.count ?? 0
-            guard count <= limit - bytes else { return }
-            bytes += count
-            seen[id, default: []].append(data)
-            pending.append(WorkoutEndpointPayload(id: id, data: data))
+            if count <= limit - bytes {
+                bytes += count
+                seen[id, default: []].append(data)
+                pending.append(WorkoutEndpointPayload(id: id, data: data))
+            } else if let data, digestEntries < digestLimit, id.utf8.count <= idLimit,
+                      count <= stagingLimit - digestStagingBytes {
+                // Keep overflow payloads only until this bounded batch has
+                // been decoded and hashed off the main actor.
+                digestEntries += 1
+                digestStagingBytes += count
+                pending.append(WorkoutEndpointPayload(id: id, data: data, retainRaw: false))
+            }
         }
-        for (offset, id) in ids.enumerated() {
+        // Query candidates in bounded groups instead of issuing a SwiftData
+        // fetch for every historical source. Apply the byte limit while reading
+        // each row, and release the managed models before suspending.
+        func enqueueBatch(_ batchIDs: [String]) throws {
+            let descriptor = FetchDescriptor<Workout>(predicate: #Predicate { batchIDs.contains($0.id) })
+            var persisted: [String: Workout] = [:]
+            for row in try modelContext.fetch(descriptor) where persisted[row.id] == nil {
+                persisted[row.id] = row
+            }
+            for id in batchIDs {
+                try Task.checkCancellation()
+                if let stored = persisted[id] { enqueue(id, stored.featuresData) }
+                for row in incomingByID[id] ?? [] { enqueue(id, row.featuresData) }
+            }
+        }
+        for offset in stride(from: 0, to: ids.count, by: 20) {
             try Task.checkCancellation()
-            if let stored = try fetchWorkout(byId: id) { enqueue(id, stored.featuresData) }
-            for row in incomingByID[id] ?? [] { enqueue(id, row.featuresData) }
-            if (offset + 1).isMultiple(of: 20) {
+            let batchIDs = Array(ids[offset..<min(offset + 20, ids.count)])
+            try enqueueBatch(batchIDs)
+            if batchIDs.count == 20 {
                 if !pending.isEmpty {
                     let decoded = try await decode(pending)
                     try Task.checkCancellation()
                     try validateSources?()
                     result.append(decoded)
                     pending.removeAll(keepingCapacity: true)
+                    digestStagingBytes = 0
                 } else {
                     try await Task.sleep(for: .milliseconds(1))
                     try validateSources?()
@@ -616,7 +648,10 @@ class DataStore {
         }
         let all = try allWorkouts()
         let external = all.filter { $0.source != WorkoutSource.manual.rawValue }
-        let endpoints = WorkoutEndpointCache(prewarmed: prewarmed)
+        // A weak endpoint anywhere in the same temporal candidate component
+        // can change its ambiguity graph and indirectly propagate a deletion.
+        let endpoints = WorkoutEndpointCache(prewarmed: prewarmed,
+                                             exactIDs: Self.deletionSensitiveIDs(external))
         // Re-evaluate associations after source corrections without allowing
         // an uncertain candidate or a transitive bridge to swallow a session.
         var groupForID = Dictionary(uniqueKeysWithValues: external.map { ($0.id, $0.id) })
@@ -641,6 +676,35 @@ class DataStore {
         }
         return applyWorkoutSourceGroups(all, groupForID: groupForID,
                                         mayFinalize: mayFinalize, unresolvedSources: unresolvedSources)
+    }
+
+    /// Any candidate connected by start times less than 60 seconds can affect
+    /// the same ambiguity component. Include source-deleted rows as well:
+    /// they can reattach to a surviving group before deletion propagation.
+    static func deletionSensitiveIDs(_ workouts: [Workout]) -> Set<String> {
+        guard workouts.contains(where: { $0.deletionOrigin == "user" }) else { return [] }
+        guard workouts.allSatisfy({ $0.startTime.timeIntervalSinceReferenceDate.isFinite }) else {
+            return Set(workouts.map(\.id))
+        }
+        let rows = workouts.sorted {
+            if $0.startTime != $1.startTime { return $0.startTime < $1.startTime }
+            return $0.id < $1.id
+        }
+        var exact = Set<String>()
+        var start = 0
+        while start < rows.count {
+            var end = start + 1
+            var hasUserDeletion = rows[start].deletionOrigin == "user"
+            while end < rows.count && rows[end].startTime.timeIntervalSince(rows[end - 1].startTime) < 60 {
+                hasUserDeletion = hasUserDeletion || rows[end].deletionOrigin == "user"
+                end += 1
+            }
+            if hasUserDeletion {
+                for row in rows[start..<end] { exact.insert(row.id) }
+            }
+            start = end
+        }
+        return exact
     }
 
     /// Apply only a complete plan without suspending. No context can observe a
@@ -975,11 +1039,16 @@ struct WorkoutChanges {
 /// A reconciliation pass compares the same rows more than once. Decode each
 /// full feature payload at most once in that synchronous pass, including nil
 /// or unreadable endpoints; discard the cache before any source can change.
-/// Endpoints decoded from exact raw payloads, retained only for one sync.
-/// More than one payload may exist for an ID while a source correction is
-/// pending. A stale value is never returned for different bytes.
+/// Endpoints retained only for one sync. Raw-byte matches are exact. Digest
+/// matches are only a performance hint and are disabled for any temporal
+/// component that can influence user deletion propagation.
 @MainActor final class WorkoutPrewarmedEndpoints {
     private var values: [String: [PrewarmedWorkoutEndpoint]] = [:]
+    private let digest: (Data) -> Data
+
+    init(digest: @escaping (Data) -> Data = WorkoutEndpointPrewarmer.digest) {
+        self.digest = digest
+    }
 
     nonisolated deinit {}
 
@@ -987,8 +1056,23 @@ struct WorkoutChanges {
         for entry in entries { values[entry.id, default: []].append(entry) }
     }
 
-    func matching(id: String, data: Data?) -> PrewarmedWorkoutEndpoint? {
-        values[id]?.first { $0.data == data }
+    func matching(id: String, data: Data?, allowDigest: Bool = false) -> PrewarmedWorkoutEndpoint? {
+        guard let entries = values[id] else { return nil }
+        for entry in entries {
+            if case let .exact(original) = entry.proof, original == data { return entry }
+        }
+        guard allowDigest, let data,
+              entries.contains(where: { entry in
+                  if case let .digest(count, _) = entry.proof { return count == data.count }
+                  return false
+              }) else { return nil }
+        let currentDigest = digest(data)
+        return entries.first { entry in
+            if case let .digest(count, expected) = entry.proof {
+                return count == data.count && expected == currentDigest
+            }
+            return false
+        }
     }
 }
 
@@ -996,8 +1080,12 @@ struct WorkoutChanges {
     private struct Value { let end: Date? }
     private var values: [ObjectIdentifier: Value] = [:]
     private let prewarmed: WorkoutPrewarmedEndpoints?
+    private let exactIDs: Set<String>
 
-    init(prewarmed: WorkoutPrewarmedEndpoints? = nil) { self.prewarmed = prewarmed }
+    init(prewarmed: WorkoutPrewarmedEndpoints? = nil, exactIDs: Set<String> = []) {
+        self.prewarmed = prewarmed
+        self.exactIDs = exactIDs
+    }
 
     nonisolated deinit {}
 
@@ -1005,7 +1093,8 @@ struct WorkoutChanges {
         let key = ObjectIdentifier(workout)
         if let cached = values[key] { return cached.end }
         let result: Date?
-        if let prewarmed, let entry = prewarmed.matching(id: workout.id, data: workout.featuresData) {
+        if let prewarmed, let entry = prewarmed.matching(id: workout.id, data: workout.featuresData,
+                                                        allowDigest: !exactIDs.contains(workout.id)) {
             result = entry.end
         } else {
             result = workout.features.end

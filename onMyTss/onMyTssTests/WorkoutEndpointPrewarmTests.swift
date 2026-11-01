@@ -80,6 +80,85 @@ final class WorkoutEndpointPrewarmTests: XCTestCase {
         XCTAssertEqual(strava.featuresData, original)
     }
 
+    func testBatchedLookupUsesCurrentRowsAndBothVersionsOfAnIncomingID() async throws {
+        let f = try fixture()
+        defer { withExtendedLifetime(f.container) {} }
+        let start = Date(timeIntervalSince1970: 1_750_000_000)
+        func payload(_ offset: Double) throws -> Data {
+            var features = WorkoutFeatures()
+            features.end = start.addingTimeInterval(offset)
+            return try JSONEncoder().encode(features)
+        }
+        let oldData = try payload(600)
+        let correctedData = try payload(900)
+        let incomingData = try payload(1200)
+        let identifiers = (0..<43).map { String(format: "row-%02d", $0) }
+        for id in identifiers {
+            let row = workout(id, .healthKit, start)
+            row.featuresData = oldData
+            f.context.insert(row)
+        }
+        try f.context.save()
+        let incoming = workout("new-source", .strava, start)
+        incoming.featuresData = incomingData
+        let gate = EndpointGate()
+        let requested = identifiers + ["missing", "new-source"]
+        let task = Task {
+            try await f.store.prepareWorkoutEndpoints(incoming: [incoming], candidateIDs: { _ in
+                await gate.pause()
+                return requested
+            })
+        }
+        await gate.waitUntilPaused()
+        let deleted = try XCTUnwrap(f.store.fetchWorkout(byId: "row-02"))
+        f.context.delete(deleted)
+        let corrected = try XCTUnwrap(f.store.fetchWorkout(byId: "row-21"))
+        corrected.featuresData = correctedData
+        let inserted = workout("new-source", .strava, start)
+        inserted.featuresData = correctedData
+        f.context.insert(inserted)
+        try f.context.save()
+        await gate.release()
+        let cache = try await task.value
+
+        XCTAssertNil(cache.matching(id: "row-02", data: oldData))
+        XCTAssertNil(cache.matching(id: "missing", data: nil))
+        XCTAssertEqual(cache.matching(id: "row-21", data: correctedData)?.end, start.addingTimeInterval(900))
+        XCTAssertNil(cache.matching(id: "row-21", data: oldData))
+        XCTAssertEqual(cache.matching(id: "row-42", data: oldData)?.end, start.addingTimeInterval(600))
+        XCTAssertEqual(cache.matching(id: "new-source", data: correctedData)?.end, start.addingTimeInterval(900))
+        XCTAssertEqual(cache.matching(id: "new-source", data: incomingData)?.end, start.addingTimeInterval(1200))
+    }
+
+    func testBatchedLookupKeepsStoredBeforeIncomingWithinBudget() async throws {
+        let f = try fixture()
+        defer { withExtendedLifetime(f.container) {} }
+        let start = Date(timeIntervalSince1970: 1_750_000_000)
+        var firstFeatures = WorkoutFeatures()
+        firstFeatures.end = start.addingTimeInterval(600)
+        let firstData = try JSONEncoder().encode(firstFeatures)
+        firstFeatures.end = start.addingTimeInterval(900)
+        let incomingData = try JSONEncoder().encode(firstFeatures)
+        let ids = (0..<23).map { String(format: "row-%02d", $0) }
+        for id in ids {
+            let row = workout(id, .healthKit, start)
+            if id != "row-22" { row.featuresData = firstData }
+            f.context.insert(row)
+        }
+        try f.context.save()
+        let incoming = workout("row-00", .healthKit, start)
+        incoming.featuresData = incomingData
+        let cache = try await f.store.prepareWorkoutEndpoints(
+            incoming: [incoming], byteLimit: firstData.count + incomingData.count,
+            candidateIDs: { _ in ids }
+        )
+        XCTAssertEqual(cache.matching(id: "row-00", data: firstData)?.end, start.addingTimeInterval(600))
+        XCTAssertEqual(cache.matching(id: "row-00", data: incomingData)?.end, start.addingTimeInterval(900))
+        XCTAssertNil(cache.matching(id: "row-01", data: firstData))
+        let empty = try XCTUnwrap(cache.matching(id: "row-22", data: nil))
+        XCTAssertNil(empty.end)
+    }
+
     func testCancellationAndChangedSourceBeforeWritingImport() async throws {
         for cancel in [true, false] {
             let f = try fixture()
