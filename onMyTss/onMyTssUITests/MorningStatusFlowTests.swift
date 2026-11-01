@@ -24,19 +24,24 @@ final class MorningStatusFlowTests: XCTestCase {
         XCTAssertEqual(app.secureTextFields.count, 0)
         let send = app.buttons["morning.sendCode"]
         XCTAssertFalse(send.isEnabled)
+        let done = app.buttons["Done"]
+        XCTAssertFalse(done.exists)
         phone.tap()
+        XCTAssertTrue(done.waitForExistence(timeout: 5))
         phone.typeText("20255")
         XCTAssertFalse(send.isEnabled)
         phone.typeText("50100")
         XCTAssertTrue(send.isEnabled)
-        app.buttons["Done"].tap()
-        let keyboardHidden = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "exists == false"), object: app.keyboards.firstMatch
+        done.tap()
+        let focusCleared = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: done
         )
-        XCTAssertEqual(XCTWaiter.wait(for: [keyboardHidden], timeout: 5), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [focusCleared], timeout: 5), .completed)
         attach(app, "Morning status phone entry — no SMS requested")
         let privacy = app.buttons["morning.privacy"]
         reach(privacy, app: app)
+        XCTAssertTrue(privacy.isEnabled)
+        XCTAssertTrue(privacy.isHittable)
         privacy.tap()
         XCTAssertTrue(app.navigationBars["Data and Privacy"].waitForExistence(timeout: 3))
         XCTAssertEqual(app.state, .runningForeground)
