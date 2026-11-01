@@ -181,10 +181,12 @@ final class WeeklyWorkoutSyncTests: XCTestCase {
         let suiteName = "ohmytss.weekly-tests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
-        let now = Date()
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        let now = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 3, day: 4, hour: 12)))
         let row = workout("manual", now, "Run")
         var reloads = 0
-        XCTAssertTrue(WeeklyWorkoutSync.publish(workouts: [row], now: now, sourceSyncedAt: now,
+        XCTAssertTrue(WeeklyWorkoutSync.publish(workouts: [row], now: now, calendar: calendar, sourceSyncedAt: now,
                                                 defaults: defaults, arguments: [], reload: { reloads += 1 }))
         let rawBefore = try XCTUnwrap(defaults.data(forKey: "weeklyWorkouts.v1"))
         XCTAssertTrue(WeeklyWorkoutSync.beginSourceSync(defaults: defaults, arguments: []))
@@ -202,7 +204,7 @@ final class WeeklyWorkoutSyncTests: XCTestCase {
         XCTAssertNil(WeeklyWorkoutSnapshot.load(defaults: restartedDefaults)?.sourceSyncedAt)
         let success = now.addingTimeInterval(60)
         XCTAssertTrue(WeeklyWorkoutSync.beginSourceSync(defaults: restartedDefaults, arguments: []))
-        XCTAssertTrue(WeeklyWorkoutSync.publish(workouts: [row], now: success, sourceSyncedAt: success,
+        XCTAssertTrue(WeeklyWorkoutSync.publish(workouts: [row], now: success, calendar: calendar, sourceSyncedAt: success,
                                                 defaults: restartedDefaults, arguments: [], reload: { reloads += 1 }))
         XCTAssertNil(WeeklyWorkoutSnapshot.load(defaults: restartedDefaults)?.sourceSyncedAt)
         let rawSuccess = try XCTUnwrap(restartedDefaults.data(forKey: "weeklyWorkouts.v1"))
@@ -222,10 +224,12 @@ final class WeeklyWorkoutSyncTests: XCTestCase {
         let suiteName = "ohmytss.weekly-tests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
-        let now = Date()
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        let now = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 3, day: 4, hour: 12)))
         let row = workout("manual", now, "Run")
         var reloads = 0
-        XCTAssertTrue(WeeklyWorkoutSync.publish(workouts: [row], now: now, sourceSyncedAt: now,
+        XCTAssertTrue(WeeklyWorkoutSync.publish(workouts: [row], now: now, calendar: calendar, sourceSyncedAt: now,
                                                 defaults: defaults, arguments: [], reload: { reloads += 1 }))
         XCTAssertTrue(WeeklyWorkoutSync.beginSourceSync(defaults: defaults, arguments: []))
         XCTAssertTrue(WeeklyWorkoutSync.invalidateSource(defaults: defaults, arguments: [], reload: { reloads += 1 }))
@@ -236,13 +240,41 @@ final class WeeklyWorkoutSyncTests: XCTestCase {
         XCTAssertTrue(WeeklyWorkoutSync.invalidateSource(defaults: defaults, arguments: [], reload: { reloads += 1 }))
         XCTAssertEqual(reloads, 2)
         let next = now.addingTimeInterval(60)
-        XCTAssertTrue(WeeklyWorkoutSync.publish(workouts: [row], now: next, sourceSyncedAt: next,
+        XCTAssertTrue(WeeklyWorkoutSync.publish(workouts: [row], now: next, calendar: calendar, sourceSyncedAt: next,
                                                 defaults: defaults, arguments: [], reload: { reloads += 1 }))
         XCTAssertNil(WeeklyWorkoutSnapshot.load(defaults: defaults)?.sourceSyncedAt)
         XCTAssertEqual(WeeklyWorkoutSourceState.load(defaults: defaults),
                        WeeklyWorkoutSourceState(invalid: true, inFlight: true))
         XCTAssertFalse(WeeklyWorkoutSync.invalidateSource(defaults: nil, arguments: [], reload: { reloads += 1 }))
         XCTAssertEqual(reloads, 2)
+    }
+
+    func testPublishingAcrossMidnightReloadsWhileSourceRemainsInvalid() throws {
+        let suiteName = "ohmytss.weekly-tests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        calendar.firstWeekday = 2
+        let before = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 10, day: 31,
+                                                                      hour: 23, minute: 59, second: 54)))
+        let after = before.addingTimeInterval(60)
+        let row = workout("manual", before, "Run")
+        var reloads = 0
+        XCTAssertTrue(WeeklyWorkoutSync.publish(workouts: [row], now: before, calendar: calendar,
+                                                sourceSyncedAt: before, defaults: defaults,
+                                                arguments: [], reload: { reloads += 1 }))
+        XCTAssertTrue(WeeklyWorkoutSync.beginSourceSync(defaults: defaults, arguments: []))
+        XCTAssertTrue(WeeklyWorkoutSync.invalidateSource(defaults: defaults, arguments: [], reload: { reloads += 1 }))
+        XCTAssertEqual(reloads, 2)
+        XCTAssertTrue(WeeklyWorkoutSync.publish(workouts: [row], now: after, calendar: calendar,
+                                                sourceSyncedAt: after, defaults: defaults,
+                                                arguments: [], reload: { reloads += 1 }))
+        XCTAssertEqual(reloads, 3)
+        XCTAssertEqual(WeeklyWorkoutSourceState.load(defaults: defaults),
+                       WeeklyWorkoutSourceState(invalid: true, inFlight: true))
+        XCTAssertNil(WeeklyWorkoutSnapshot.load(defaults: defaults)?.sourceSyncedAt)
+        XCTAssertEqual(WeeklyWorkoutSnapshot.load(defaults: defaults)?.records.map(\.workoutType), ["Run"])
     }
 
     func testInterruptedSyncIsMarkedInvalidOnNextLaunch() throws {
