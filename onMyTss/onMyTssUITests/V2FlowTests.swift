@@ -191,6 +191,34 @@ final class V2FlowTests: XCTestCase {
     }
 
     @MainActor
+    private func reachDashboardButton(_ element: XCUIElement, in app: XCUIApplication) -> Bool {
+        let navigationBar = app.navigationBars["Today"]
+        let tabBar = app.tabBars.firstMatch
+        guard navigationBar.exists, tabBar.exists else { return false }
+        let upper = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4))
+        let lower = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.6))
+        for attempt in 0...16 {
+            let safeTop = navigationBar.frame.maxY + 8
+            let safeBottom = tabBar.frame.minY - 8
+            var scrollDown = true
+            if element.exists {
+                let frame = element.frame
+                if frame.height > 0, frame.minY >= safeTop, frame.maxY <= safeBottom, element.isHittable {
+                    return true
+                }
+                if frame.height > 0, frame.minY < safeTop { scrollDown = false }
+            }
+            if attempt == 16 { break }
+            if scrollDown {
+                lower.press(forDuration: 0.05, thenDragTo: upper)
+            } else {
+                upper.press(forDuration: 0.05, thenDragTo: lower)
+            }
+        }
+        return false
+    }
+
+    @MainActor
     func testRegionalReport_noneRightEditAndDelete() {
         let app = launch()
         app.buttons["today.more"].tap()
@@ -221,8 +249,15 @@ final class V2FlowTests: XCTestCase {
     func testStrengthCreateEditDelete_RIRZeroAndUnknown() {
         let app = launch()
         let record = app.buttons["today.strength"]
-        reach(record, in: app)
+        guard reachDashboardButton(record, in: app) else {
+            XCTFail("Record strength is not fully visible above the tab bar")
+            return
+        }
         record.tap()
+        guard app.navigationBars["Strength session"].waitForExistence(timeout: 5) else {
+            XCTFail("Record strength did not open the strength session sheet")
+            return
+        }
         let create = app.buttons["strength.createSession"]
         reach(create, in: app)
         create.tap()
