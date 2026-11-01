@@ -288,11 +288,29 @@ class DataStore {
         var features = incoming.features
         let unreadable = Set(features.failedChannels + features.unavailableChannels)
         var featuresData = incoming.featuresData ?? existing.featuresData
-        if let data = incoming.featuresData, data != existing.featuresData {
+        let correctedStravaWithoutElapsed = incoming.source == WorkoutSource.strava.rawValue
+            && existing.source == WorkoutSource.strava.rawValue
+            && incoming.startTime != existing.startTime
+            && (incoming.featuresData == nil || unreadable.contains("elapsed"))
+        if incoming.featuresData == nil && correctedStravaWithoutElapsed {
+            // No incoming payload: keep the old channels but not an end tied
+            // to the old start. Mark its elapsed time as unavailable.
+            var retained = existing.features
+            if retained.end != nil {
+                retained.end = nil
+                if !retained.unavailableChannels.contains("elapsed") { retained.unavailableChannels.append("elapsed") }
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.sortedKeys]
+                featuresData = try encoder.encode(retained)
+            }
+        } else if let data = incoming.featuresData,
+                  data != existing.featuresData || (correctedStravaWithoutElapsed && features.end != nil) {
             let prior = existing.features
             if incoming.source == WorkoutSource.strava.rawValue && existing.source == WorkoutSource.strava.rawValue
                 && unreadable.contains("elapsed") {
-                features.end = prior.end
+                // An old absolute end cannot describe a corrected start when
+                // the new source record does not report its elapsed time.
+                features.end = incoming.startTime == existing.startTime ? prior.end : nil
             }
             if unreadable.contains("heartRate") { features.heartRate = prior.heartRate }
             if unreadable.contains("power") { features.power = prior.power }
