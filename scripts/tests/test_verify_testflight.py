@@ -76,6 +76,55 @@ class TestVerification(unittest.TestCase):
                     self.check()
                 run["attributes"] = old
 
+    def test_canceled_reason_is_safe_and_does_not_change_failure(self):
+        run = self.api.lists["/v1/ciProducts/product/buildRuns?sort=-number&limit=200"][0]
+        run["attributes"]["completionStatus"] = "CANCELED"
+        for reason, expected in [("USER_REQUESTED", "USER_REQUESTED"), (None, "unavailable"),
+                                 ("fake-token\n::warning::injected", "unavailable"),
+                                 ({"value": "USER_REQUESTED"}, "unavailable"),
+                                 ("X" * 65, "unavailable")]:
+            with self.subTest(reason=reason):
+                run["attributes"]["cancelReason"] = reason
+                with self.assertRaises(verify.Failed) as error:
+                    self.check()
+                self.assertEqual(str(error.exception), "Xcode Cloud run was canceled (cancelReason: %s)" % expected)
+
+    def test_canceled_cli_reports_safe_reason_and_failure_exit(self):
+        run = self.api.lists["/v1/ciProducts/product/buildRuns?sort=-number&limit=200"][0]
+        run["attributes"].update(completionStatus="CANCELED", cancelReason="USER_REQUESTED")
+        env = {"ASC_ISSUER_ID": "issuer", "ASC_KEY_ID": "key", "ASC_PRIVATE_KEY": "private"}
+        output = io.StringIO()
+        with patch.dict(os.environ, env), patch.object(verify, "Client", return_value=self.api), redirect_stderr(output):
+            status = verify.main(["--app-id", "app", "--group", "close door", "--commit", SHA])
+        self.assertEqual(status, 1)
+        self.assertIn("cancelReason: USER_REQUESTED", output.getvalue())
+        self.assertNotIn("private", output.getvalue())
+
+    def test_expected_run_waits_for_visibility_and_new_failure_is_not_masked(self):
+        expected = "22222222-2222-4222-8222-222222222222"
+        runs = self.api.lists["/v1/ciProducts/product/buildRuns?sort=-number&limit=200"]
+        # The old run is canceled: do not fail until the requested run appears.
+        runs[0]["attributes"]["completionStatus"] = "CANCELED"
+        with self.assertRaises(verify.Retry):
+            verify.verify_once(self.api, "app", "close door", SHA, expected)
+        # Ordinary verification retains its existing immediate failure behavior.
+        with self.assertRaises(verify.Failed):
+            self.check()
+        # An older success must not mask the newly visible failed run.
+        runs[0]["attributes"]["completionStatus"] = "SUCCEEDED"
+        runs.append(item(expected, number=38, sourceCommit={"commitSha": SHA}, isPullRequestBuild=False,
+                         executionProgress="COMPLETE", completionStatus="FAILED"))
+        self.api.singles["/v1/ciBuildRuns/" + expected + "?include=sourceBranchOrTag"] = branch_response(expected)
+        with self.assertRaises(verify.Failed):
+            verify.verify_once(self.api, "app", "close door", SHA, expected)
+        # Even when the expected run succeeded, a still newer failure wins.
+        runs[-1]["attributes"]["completionStatus"] = "SUCCEEDED"
+        runs.append(item("newer", number=39, sourceCommit={"commitSha": SHA}, isPullRequestBuild=False,
+                         executionProgress="COMPLETE", completionStatus="FAILED"))
+        self.api.singles["/v1/ciBuildRuns/newer?include=sourceBranchOrTag"] = branch_response("newer")
+        with self.assertRaises(verify.Failed):
+            verify.verify_once(self.api, "app", "close door", SHA, expected)
+
     def test_newer_failed_retry_does_not_hide_behind_older_success(self):
         runs = self.api.lists["/v1/ciProducts/product/buildRuns?sort=-number&limit=200"]
         runs.append(item("new", number=38, sourceCommit={"commitSha": SHA}, isPullRequestBuild=False,
