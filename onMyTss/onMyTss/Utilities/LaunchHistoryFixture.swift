@@ -9,8 +9,10 @@ enum LaunchHistoryFixture {
                      sourceAlreadyKnown: Bool = false) throws {
         let context = ModelContext(container)
         let now = Date()
+        let linkedHistoryFixture = ProcessInfo.processInfo.arguments.contains("--v2-large-history-linked-fixture")
         context.insert(UserThresholds(hasCompletedOnboarding: true))
-        for index in 0..<1000 {
+        // Keep the total at 1,000 while reserving one row for a duplicate.
+        for index in 0..<(linkedHistoryFixture ? 999 : 1000) {
             let start = now.addingTimeInterval(-Double(index + 1) * 86400)
             let workout = Workout(id: "synthetic-launch-\(index)", date: start.startOfDay,
                                   startTime: start, duration: 3600, workoutType: "Run", tss: 50,
@@ -18,6 +20,12 @@ enum LaunchHistoryFixture {
             // Synthetic IDs are not HealthKit UUIDs, so the sync fixture must
             // represent sources already identified by a previous sync.
             if sourceAlreadyKnown { workout.sourceBundleIdentifier = "com.example.synthetic-workouts" }
+            if linkedHistoryFixture && index == 0 {
+                workout.sourceBundleIdentifier = "com.garmin.connect.mobile"
+                var features = WorkoutFeatures()
+                features.end = start.addingTimeInterval(3600)
+                workout.features = features
+            }
             workout.sessionGroupID = workout.id
             context.insert(workout)
             guard includeEstimates else { continue }
@@ -27,6 +35,20 @@ enum LaunchHistoryFixture {
             context.insert(LoadEstimateRecord(sessionID: workout.id, version: value.version,
                                               inputCutoff: value.inputCutoff, computedAt: now,
                                               payloadData: try JSONEncoder().encode(value), inputData: Data()))
+        }
+        if linkedHistoryFixture {
+            let start = now.addingTimeInterval(-86400)
+            let alias = Workout(id: "synthetic-launch-strava-alias", date: start.startOfDay,
+                                startTime: start, duration: 3600, workoutType: "Run", tss: 40,
+                                calculationMethod: "duration", source: .strava)
+            var features = WorkoutFeatures()
+            features.end = start.addingTimeInterval(3600)
+            alias.features = features
+            alias.userTags = ["history-sentinel-tag"]
+            context.insert(alias)
+            context.insert(StrengthSetRecord(sessionID: alias.id, exerciseID: "squat", reps: 8, rir: 1))
+            context.insert(LocalObservation(regionRaw: "quads", sideRaw: "left", severity: 2,
+                                            observedAt: start, sessionID: alias.id))
         }
         try context.save()
     }

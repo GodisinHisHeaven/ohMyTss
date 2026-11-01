@@ -4,6 +4,44 @@ import XCTest
 /// These tests require a real Apple simulator and are not runnable on Linux.
 final class V2FlowTests: XCTestCase {
     @MainActor
+    func testOfflineRepairKeepsThousandDiskRecordsBrowsable() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--v2-ui-tests", "--v2-large-history", "--v2-disk-history",
+                               "--v2-history-repair-fixture", "--v2-large-history-linked-fixture"]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Today"].waitForExistence(timeout: 30))
+        let repairStatus = app.descendants(matching: .any)["history.repair.status"].firstMatch
+        let finished = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: repairStatus)
+        XCTAssertEqual(XCTWaiter.wait(for: [finished], timeout: 120), .completed,
+                       "The durable local repair must finish before its results are checked.")
+
+        app.buttons["Settings"].firstMatch.tap()
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5))
+        app.buttons["History"].firstMatch.tap()
+        XCTAssertTrue(app.navigationBars["History"].waitForExistence(timeout: 5))
+        app.buttons["Today"].firstMatch.tap()
+        let garmin = app.buttons["today.workout.synthetic-launch-0"]
+        XCTAssertTrue(reachDashboardButton(garmin, in: app))
+        XCTAssertFalse(app.buttons["today.workout.synthetic-launch-strava-alias"].exists)
+        garmin.tap()
+        XCTAssertTrue(app.navigationBars["Run"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Legacy TSS: 50.0")).firstMatch.exists)
+
+        let linkedTags = app.descendants(matching: .any)["activity.linkedTags"].firstMatch
+        reach(linkedTags, in: app)
+        XCTAssertTrue(linkedTags.label.contains("history-sentinel-tag") || app.staticTexts["history-sentinel-tag"].exists)
+        let linkedSet = app.descendants(matching: .any)["activity.linkedSet"].firstMatch
+        reach(linkedSet, in: app)
+        XCTAssertTrue(linkedSet.label.contains("Squat") || app.staticTexts["Squat"].exists)
+        XCTAssertEqual(app.buttons.matching(identifier: "activity.linkedSet").count, 0)
+        XCTAssertTrue(app.staticTexts["Sets from linked sources are shown here but cannot be edited here yet."].exists)
+        let linkedReport = app.descendants(matching: .any)["activity.linkedReport"].firstMatch
+        reach(linkedReport, in: app)
+        XCTAssertTrue(linkedReport.label.contains("Front thighs") || app.staticTexts["Front thighs · Left"].exists)
+        XCTAssertTrue(app.staticTexts["Reports from linked sources retain their original activity. Edit them in report history."].exists)
+    }
+
+    @MainActor
     func testLinkedPersonalDetailsRemainVisibleAndReadOnly() {
         let app = XCUIApplication()
         app.launchArguments = ["--v2-ui-tests", "--v2-rpe-demo", "--v2-linked-details-fixture"]
@@ -30,10 +68,24 @@ final class V2FlowTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Reports from linked sources retain their original activity. Edit them in report history."].exists)
 
         let ownSet = app.buttons["activity.ownSet"].firstMatch
-        reach(ownSet, in: app)
+        // A row can report isHittable while its tap point is obscured by
+        // navigation chrome after scrolling up from a linked report.
+        guard reachDashboardButton(ownSet, in: app, navigationTitle: "Swim") else {
+            XCTFail("Canonical set did not reach the unobscured viewport: \(ownSet.frame)\n\(app.debugDescription)")
+            return
+        }
         XCTAssertTrue(ownSet.isEnabled)
+        print("UI_CANONICAL_SET frame=\(ownSet.frame) nav=\(app.navigationBars["Swim"].frame) tabs=\(app.tabBars.firstMatch.frame)")
         ownSet.tap()
-        XCTAssertTrue(app.navigationBars["Edit set"].waitForExistence(timeout: 5))
+        let opened = app.navigationBars["Edit set"].waitForExistence(timeout: 10)
+        if !opened {
+            let screenshot = XCTAttachment(screenshot: app.screenshot())
+            screenshot.name = "Canonical set editor did not open"
+            screenshot.lifetime = .keepAlways
+            add(screenshot)
+            print("UI_CANONICAL_SET_FAILURE \(app.debugDescription)")
+        }
+        XCTAssertTrue(opened)
     }
 
     @MainActor
@@ -224,8 +276,9 @@ final class V2FlowTests: XCTestCase {
     }
 
     @MainActor
-    private func reachDashboardButton(_ element: XCUIElement, in app: XCUIApplication) -> Bool {
-        let navigationBar = app.navigationBars["Today"]
+    private func reachDashboardButton(_ element: XCUIElement, in app: XCUIApplication,
+                                      navigationTitle: String = "Today") -> Bool {
+        let navigationBar = app.navigationBars[navigationTitle]
         let tabBar = app.tabBars.firstMatch
         guard navigationBar.exists else { return false }
         let upper = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4))
