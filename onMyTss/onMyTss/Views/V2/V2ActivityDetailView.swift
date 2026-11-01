@@ -35,7 +35,23 @@ struct V2ActivityDetailView: View {
         return type.contains("cycl") || type.contains("ride") || type.contains("bike")
     }
 
+    /// Keep personal details attached to their original source while a local
+    /// grouping is provisional. A later source correction can split it again.
+    private var linkedSources: [Workout] {
+        guard isActive else { return [] }
+        // A source deletion does not erase personal details, but a user
+        // deletion must not bring that record or its descendants back here.
+        let graph = WorkoutLinkGraph(workouts.filter { !$0.isTombstoned || $0.deletionOrigin == "source" }
+            .map { .init(id: $0.id, parentID: $0.linkedSessionID) })
+        let ids = graph.relatedIDs(to: workout.id)
+        return workouts.filter { $0.id != workout.id && ids.contains($0.id) }.sorted { $0.id < $1.id }
+    }
+
     var body: some View {
+        let linked = linkedSources
+        let linkedIDs = Set(linked.map(\.id))
+        let linkedSets = allSets.filter { linkedIDs.contains($0.sessionID) }
+        let linkedReports = observations.filter { $0.sessionID.map { linkedIDs.contains($0) } == true }
         SwissList {
             if workout.isSuppressed || workout.isTombstoned {
                 Section("Archived or linked activity") {
@@ -107,10 +123,23 @@ struct V2ActivityDetailView: View {
                     .disabled(workout.isSuppressed || workout.isTombstoned)
                 }
             }
+            if linked.contains(where: { !$0.userTags.isEmpty }) {
+                Section("Details from linked sources") {
+                    Text("These details stay with their original records. Changes above affect only this activity record.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    ForEach(linked.filter { !$0.userTags.isEmpty }) { source in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("\(source.workoutType) · \(source.source)").font(.caption).foregroundStyle(.secondary)
+                            Text(source.userTags.joined(separator: ", "))
+                        }
+                        .accessibilityIdentifier("activity.linkedTags")
+                    }
+                }
+            }
             Section("Strength sets") {
                 Text(isActive ? "Adding details supplements this session. It does not add its imported cardio contribution again." : "Retained strength log; excluded from current totals.")
                     .font(.caption).foregroundStyle(.secondary)
-                if sets.isEmpty { Text("No sets recorded").foregroundStyle(.secondary) }
+                if sets.isEmpty && linkedSets.isEmpty { Text("No sets recorded").foregroundStyle(.secondary) }
                 ForEach(sets) { set in
                     Button { editingSet = set } label: {
                         VStack(alignment: .leading, spacing: 4) {
@@ -118,7 +147,20 @@ struct V2ActivityDetailView: View {
                             Text(setDescription(set)).font(.caption).foregroundStyle(.secondary)
                         }
                     }.foregroundStyle(.primary)
+                    .accessibilityIdentifier("activity.ownSet")
                     .disabled(workout.isSuppressed || workout.isTombstoned)
+                }
+                if !linkedSets.isEmpty {
+                    Text("Sets from linked sources are shown here but cannot be edited here yet.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    ForEach(linkedSets) { set in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(V2Presentation.exerciseName(set.exerciseID)).font(.headline)
+                            Text(setDescription(set)).font(.caption)
+                            Text("Linked source · view only").font(.caption).foregroundStyle(.secondary)
+                        }
+                        .accessibilityIdentifier("activity.linkedSet")
+                    }
                 }
                 if isActive {
                     Button("Add sets", systemImage: "plus") { addSet = true }
@@ -142,6 +184,14 @@ struct V2ActivityDetailView: View {
                 if isActive { Button("Record a regional report") { addReport = true } }
                 ForEach(observations.filter { $0.sessionID == workout.id }) { report in
                     V2ObservationRow(observation: report)
+                }
+                if !linkedReports.isEmpty {
+                    Text("Reports from linked sources retain their original activity. Edit them in report history.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    ForEach(linkedReports) { report in
+                        V2ObservationRow(observation: report)
+                            .accessibilityIdentifier("activity.linkedReport")
+                    }
                 }
                 if isActive { NavigationLink("View and edit report history") { ObservationHistoryView() } }
             }

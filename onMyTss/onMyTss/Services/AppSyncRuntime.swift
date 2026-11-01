@@ -62,6 +62,13 @@ final class AppSyncRuntime: BodyBatteryEngineProtocol {
         }
         let newContainer = try ohMyTssApp.makeModelContainer()
         let store = DataStore(modelContext: newContainer.mainContext)
+        let state = try store.fetchAppState()
+        if LocalWorkoutHistoryRepair.isRequired(state),
+           WeeklyWorkoutSync.allowsPublishing(arguments: ProcessInfo.processInfo.arguments),
+           !WeeklyWorkoutSync.invalidateSource() {
+            volatilePending = true
+            logger.error("Could not invalidate widget data for local history repair")
+        }
         var health = HealthKitManager()
         #if DEBUG
         let arguments = ProcessInfo.processInfo.arguments
@@ -80,6 +87,12 @@ final class AppSyncRuntime: BodyBatteryEngineProtocol {
         // Treat an unreadable retry file as pending, never as an empty queue.
         if volatilePending { return true }
         do { return try pending.pendingRevision() != nil } catch { return true }
+    }
+
+    /// Uses the same engine gate as foreground and background source sync.
+    func repairLocalWorkoutHistoryIfNeeded() async throws {
+        guard let engine else { throw BackgroundSyncError.incomplete }
+        try await engine.repairLocalWorkoutHistoryIfNeeded()
     }
 
     func recomputeAll() async throws {

@@ -44,6 +44,10 @@ enum LaunchHistoryFixture {
             context.insert(UserThresholds(hasCompletedOnboarding: true))
         }
         let state = AppState(lastComputationDate: now)
+        if !ProcessInfo.processInfo.arguments.contains("--v2-history-repair-fixture") {
+            // This dashboard fixture represents already reconciled history.
+            state.localWorkoutRepairVersion = LocalWorkoutHistoryRepair.currentVersion
+        }
         context.insert(state)
         for index in 0..<30 {
             let date = Calendar.current.date(byAdding: .day, value: -index, to: now.startOfDay)!
@@ -68,6 +72,46 @@ enum LaunchHistoryFixture {
         }
         if includeStrengthSets {
             context.insert(StrengthSetRecord(sessionID: "synthetic-dashboard-2", exerciseID: "bench_press", reps: 8, rir: 2))
+        }
+        if ProcessInfo.processInfo.arguments.contains("--v2-linked-details-fixture") {
+            let start = now.addingTimeInterval(-300)
+            let garmin = Workout(id: "synthetic-linked-garmin", date: start.startOfDay, startTime: start,
+                                 duration: 240, workoutType: "Swim", tss: 12,
+                                 calculationMethod: "duration", source: .healthKit)
+            garmin.sourceBundleIdentifier = "com.garmin.connect.mobile"
+            let strava = Workout(id: "synthetic-linked-strava", date: start.startOfDay, startTime: start,
+                                 duration: 240, workoutType: "Swim", tss: 12,
+                                 calculationMethod: "duration", source: .strava, isSuppressed: true)
+            strava.linkedSessionID = garmin.id
+            strava.userTags = ["paddles"]
+            strava.isTombstoned = true
+            strava.deletionOrigin = "source"
+            let manual = Workout(id: "synthetic-linked-manual", date: start.startOfDay, startTime: start,
+                                 duration: 240, workoutType: "Swim", tss: 12,
+                                 calculationMethod: "duration", source: .manual, isSuppressed: true)
+            manual.linkedSessionID = strava.id
+            let removed = Workout(id: "synthetic-linked-user-deleted", date: start.startOfDay, startTime: start,
+                                  duration: 240, workoutType: "Swim", tss: 12,
+                                  calculationMethod: "duration", source: .manual, isSuppressed: true)
+            removed.linkedSessionID = garmin.id
+            removed.isTombstoned = true
+            removed.deletionOrigin = "user"
+            removed.userTags = ["deleted-fixture-tag"]
+            let legacyRemoved = Workout(id: "synthetic-linked-legacy-deleted", date: start.startOfDay, startTime: start,
+                                        duration: 240, workoutType: "Swim", tss: 12,
+                                        calculationMethod: "duration", source: .manual, isSuppressed: true)
+            legacyRemoved.linkedSessionID = garmin.id
+            legacyRemoved.isTombstoned = true
+            legacyRemoved.userTags = ["legacy-deleted-fixture-tag"]
+            context.insert(garmin)
+            context.insert(strava)
+            context.insert(manual)
+            context.insert(removed)
+            context.insert(legacyRemoved)
+            context.insert(StrengthSetRecord(sessionID: garmin.id, exerciseID: "squat", reps: 5, rir: 2))
+            context.insert(StrengthSetRecord(sessionID: manual.id, exerciseID: "bench_press", reps: 8, rir: 1))
+            context.insert(LocalObservation(regionRaw: "quads", sideRaw: "left", severity: 2,
+                                            observedAt: start, sessionID: strava.id))
         }
         for (region, side, rpe, age) in [
             ("quads", "left", 8, 0), ("quads", "right", 5, 0),

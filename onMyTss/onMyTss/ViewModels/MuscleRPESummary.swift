@@ -21,23 +21,35 @@ struct MuscleRPESummary {
         return calendar.date(byAdding: .day, value: -6, to: today) ?? today
     }
 
+    static func sourceCutoff(for now: Date, calendar: Calendar = .current) -> Date {
+        cutoff(for: now, calendar: calendar).addingTimeInterval(-60)
+    }
+
     init(records: [MuscleRPERecord], workouts: [Workout] = [], sets: [StrengthSetRecord] = [],
          now: Date = Date(), calendar: Calendar = .current) {
         let cutoff = Self.cutoff(for: now, calendar: calendar)
         let recent = workouts.filter {
             !$0.isTombstoned && !$0.isSuppressed && $0.startTime >= cutoff && $0.startTime <= now
         }
-        let sessions = Dictionary(recent.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let byID = Dictionary(workouts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let graph = WorkoutLinkGraph(workouts.filter { !$0.isTombstoned || $0.deletionOrigin == "source" }
+            .map { .init(id: $0.id, parentID: $0.linkedSessionID) })
+        var sessions: [String: Workout] = [:]
         let setsBySession = Dictionary(grouping: sets, by: \.sessionID)
         for workout in recent {
-            let inputs = (setsBySession[workout.id] ?? []).map {
+            let related = graph.relatedIDs(to: workout.id).compactMap { byID[$0] }.filter {
+                !$0.isTombstoned || $0.deletionOrigin == "source"
+            }
+            for row in related { sessions[row.id] = workout }
+            let inputs = related.flatMap { setsBySession[$0.id] ?? [] }.map {
                 StrengthSetInput(exerciseID: $0.exerciseID, reps: $0.reps, weightKG: $0.weightKG,
                                  rir: $0.rir, effort: $0.effortRaw.flatMap(StrengthEffort.init(rawValue:)),
                                  manualRegions: $0.manualRegionsRaw.compactMap(Region.init(rawValue:)))
             }
+            let tags = WorkoutTagProjection.merged(related.map(\.userTags))
             let load = LoadModel.estimate(type: workout.workoutType, start: workout.startTime,
                 duration: workout.duration, distance: workout.distance, features: WorkoutFeatures(),
-                sets: inputs, tags: workout.userTags, maxHeartRate: nil, now: now)
+                sets: inputs, tags: tags, maxHeartRate: nil, now: now)
             for region in load.regions {
                 let grade: MuscleEffortGrade
                 switch region.level {

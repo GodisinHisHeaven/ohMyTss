@@ -78,7 +78,12 @@ struct MainTabView: View {
                 catch { return }
             }
         }
-        .task(id: MorningSyncTrigger(isActive: scenePhase == .active, computedAt: appStates.first?.lastComputationDate)) {
+        .task(id: MorningSyncTrigger(isActive: scenePhase == .active,
+                                     computedAt: appStates.first?.lastComputationDate,
+                                     repairVersion: appStates.first?.localWorkoutRepairVersion,
+                                     repairInProgress: appStates.first?.localWorkoutRepairInProgress,
+                                     sourceFinalizationPending: appStates.first?.pendingWorkoutSourceFinalization,
+                                     computationInProgress: appStates.first?.isComputationInProgress)) {
             await syncMorningSummaryIfActive()
         }
     }
@@ -88,13 +93,20 @@ struct MainTabView: View {
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--v2-ui-tests") { return }
         #endif
+        // Do not start a network request for a provisional local history.
+        guard let state = try? dataStore.fetchAppState(), !state.isComputationInProgress,
+              !state.pendingWorkoutSourceFinalization, !LocalWorkoutHistoryRepair.isRequired(state) else { return }
         await morningSync.sync(store: dataStore)
     }
 }
 
-private struct MorningSyncTrigger: Equatable {
+struct MorningSyncTrigger: Equatable {
     let isActive: Bool
     let computedAt: Date?
+    let repairVersion: Int?
+    let repairInProgress: Bool?
+    let sourceFinalizationPending: Bool?
+    let computationInProgress: Bool?
 }
 
 // MARK: - Previews

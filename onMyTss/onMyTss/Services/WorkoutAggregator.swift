@@ -386,7 +386,14 @@ final class WorkoutAggregator {
             )
 
             var features = WorkoutFeatures()
-            features.end = startTime.addingTimeInterval(Double(max(activity.elapsedTime, activity.movingTime)))
+            if let elapsed = activity.reportedElapsedTime,
+               elapsed > 0, elapsed >= max(0, activity.movingTime) {
+                features.end = startTime.addingTimeInterval(Double(elapsed))
+            } else {
+                // A moving duration is not an elapsed end when pauses exist.
+                // Signal the missing channel so an existing end is retained.
+                features.unavailableChannels.append("elapsed")
+            }
             features.provenance = ["Strava activity summary; no timestamped HR, power or cadence stream. Cardio Load is unknown until supported samples are available."]
             // Strava summaries cannot supply co-timed power/cadence or a grade
             // distribution. Do not create fake constant time series from means.
@@ -450,17 +457,19 @@ final class WorkoutAggregator {
     }
 
     /// Used for both definite matches and unknown-type ambiguity checks.
-    static func hasMatchingTiming(_ first: Workout, _ second: Workout) -> Bool {
+    static func hasMatchingTiming(_ first: Workout, _ second: Workout,
+                                  end: (Workout) -> Date? = { $0.features.end }) -> Bool {
         guard abs(first.startTime.timeIntervalSince(second.startTime)) < 60,
               first.duration.isFinite, second.duration.isFinite,
               first.duration > 0, second.duration > 0 else { return false }
         // Strava records moving time as duration; HealthKit can include pauses.
-        // Where both ends are present they must agree, even when moving times match.
-        if let firstEnd = first.features.end, let secondEnd = second.features.end {
+        // Compare actual end timestamps, not elapsed lengths: source start
+        // timestamps may differ even when both records end at the same instant.
+        if let firstEnd = end(first), let secondEnd = end(second) {
             let firstElapsed = firstEnd.timeIntervalSince(first.startTime)
             let secondElapsed = secondEnd.timeIntervalSince(second.startTime)
             return firstElapsed.isFinite && secondElapsed.isFinite && firstElapsed > 0 && secondElapsed > 0
-                && abs(firstElapsed - secondElapsed) < 5
+                && abs(firstEnd.timeIntervalSince(secondEnd)) < 5
         }
         return abs(first.duration - second.duration) < 5
     }
@@ -468,23 +477,7 @@ final class WorkoutAggregator {
     /// Normalize workout type for comparison
     /// Maps similar types to same value (e.g., "Ride" and "Cycling" both become "cycling")
     static func normalizeWorkoutType(_ type: String) -> String {
-        let lowercased = type.lowercased()
-
-        if lowercased.contains("cycl") || lowercased.contains("bike") || lowercased.contains("ride") {
-            return "cycling"
-        } else if lowercased.contains("run") {
-            return "running"
-        } else if lowercased.contains("swim") {
-            return "swimming"
-        } else if lowercased.contains("strength") || lowercased.contains("weighttraining") {
-            return "strength"
-        } else if lowercased.contains("walk") {
-            return "walking"
-        } else if lowercased == "hike" || lowercased == "hiking" {
-            return "hiking"
-        }
-
-        return lowercased
+        WorkoutSourceMatching.normalizeType(type)
     }
 
     // MARK: - Helper Methods

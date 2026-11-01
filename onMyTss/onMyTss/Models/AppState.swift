@@ -24,6 +24,9 @@ final class AppState {
     var healthKitSourceBackfillVersion: Int = 0
     var pendingHealthKitSourceBackfillIDs: [String] = []
     var pendingWorkoutSourceFinalization: Bool = false
+    // Independent of remote source cursors: interrupted local repairs can run offline.
+    var localWorkoutRepairVersion: Int = 0
+    var localWorkoutRepairInProgress: Bool = false
     var lastRecoverySyncDate: Date?
 
     var lastSyncMessage: String?

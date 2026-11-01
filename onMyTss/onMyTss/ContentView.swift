@@ -14,6 +14,10 @@ struct ContentView: View {
     @State private var isLoading = true
     @State private var engine: (any BodyBatteryEngineProtocol)?
     @State private var dataStore: DataStore?
+    @State private var historyRepairPending = false
+    @State private var historyRepairRunning = false
+    @Environment(\.scenePhase) private var scenePhase
+    @Query private var appStates: [AppState]
 
     init(engine: (any BodyBatteryEngineProtocol)? = nil, dataStore: DataStore? = nil) {
         _engine = State(initialValue: engine)
@@ -40,12 +44,49 @@ struct ContentView: View {
                 OnboardingContainerView {
                     hasCompletedOnboarding = true
 
+                    Task { await repairLocalHistory() }
+
                     // Today exposes explicit Sync; manual recording is immediately available offline.
                 }
             }
         }
+        .safeAreaInset(edge: .top) {
+            if !isLoading && hasCompletedOnboarding && historyRepairPending {
+                HStack(spacing: 8) {
+                    Text(historyRepairRunning
+                         ? "Updating history. Some training totals may be inaccurate."
+                         : "History update incomplete. Some training totals may be inaccurate.")
+                        .font(.caption)
+                    if !historyRepairRunning {
+                        Button("Retry") { Task { await repairLocalHistory(recoverSources: true) } }
+                            .accessibilityIdentifier("history.repair.retry")
+                    }
+                }
+                .padding(8)
+                .frame(maxWidth: .infinity)
+                .background(.thinMaterial)
+                .accessibilityIdentifier("history.repair.status")
+            }
+        }
         .task {
             await initializeApp()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active && historyRepairPending && !isLoading {
+                Task { await repairLocalHistory() }
+            }
+        }
+        .onChange(of: appStates.first?.isComputationInProgress) { _, inProgress in
+            if inProgress == true { historyRepairPending = true }
+            if inProgress == false && historyRepairPending && !isLoading {
+                Task { await repairLocalHistory() }
+            }
+        }
+        .onChange(of: appStates.first?.pendingWorkoutSourceFinalization) { _, pending in
+            if pending == true { historyRepairPending = true }
+            if pending == false && historyRepairPending && !isLoading {
+                Task { await repairLocalHistory() }
+            }
         }
     }
 
@@ -85,7 +126,56 @@ struct ContentView: View {
             hasCompletedOnboarding = false
         }
 
+        // Expose saved data without waiting for network access. The warning
+        // remains visible until all local derived data has been rebuilt.
+        if hasCompletedOnboarding {
+            historyRepairPending = true
+        }
         isLoading = false
+        if hasCompletedOnboarding { await repairLocalHistory() }
+    }
+
+    private func repairLocalHistory(recoverSources: Bool = false) async {
+        guard hasCompletedOnboarding, !historyRepairRunning else { return }
+        #if DEBUG
+        let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("--v2-ui-tests") && !arguments.contains("--v2-history-repair-fixture") {
+            historyRepairPending = false
+            return
+        }
+        #endif
+        historyRepairPending = true
+        historyRepairRunning = true
+        defer { historyRepairRunning = false }
+        do {
+            let performRepair: @MainActor () async throws -> Void = {
+                if let runtime = engine as? AppSyncRuntime {
+                    try await runtime.repairLocalWorkoutHistoryIfNeeded()
+                } else if let concrete = engine as? BodyBatteryEngine {
+                    try await concrete.repairLocalWorkoutHistoryIfNeeded()
+                }
+            }
+            if recoverSources, let dataStore, let engine {
+                let state = try dataStore.fetchAppState()
+                try await LocalWorkoutHistoryRepair.retry(state: state, isProcessing: { engine.isProcessing }, synchronize: {
+                    try await engine.incrementalUpdate()
+                }, repair: performRepair)
+            } else {
+                try await performRepair()
+            }
+            if let dataStore {
+                let state = try dataStore.fetchAppState()
+                historyRepairPending = state.localWorkoutRepairInProgress ||
+                    state.localWorkoutRepairVersion < LocalWorkoutHistoryRepair.currentVersion ||
+                    state.isComputationInProgress || state.pendingWorkoutSourceFinalization
+            } else {
+                historyRepairPending = false
+            }
+        } catch {
+            // Keep the warning and persisted retry marker; saved history is
+            // still available while source recovery or local repair is retried.
+            historyRepairPending = true
+        }
     }
 }
 

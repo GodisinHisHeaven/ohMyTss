@@ -16,6 +16,7 @@ nonisolated struct V2EstimateBatch: Sendable {
         let isGarmin: Bool
         let linkedID: String?
         let deleted: Bool
+        let deletionOrigin: String?
         let suppressed: Bool
     }
 
@@ -49,7 +50,7 @@ nonisolated struct V2EstimateBatch: Sendable {
             Session(id: $0.id, startTime: $0.startTime, duration: $0.duration, type: $0.workoutType,
                     distance: $0.distance, featuresData: $0.featuresData, tags: $0.userTags.sorted(),
                     source: $0.source, isGarmin: WorkoutAggregator.isGarminSource($0), linkedID: $0.linkedSessionID,
-                    deleted: $0.isTombstoned, suppressed: $0.isSuppressed)
+                    deleted: $0.isTombstoned, deletionOrigin: $0.deletionOrigin, suppressed: $0.isSuppressed)
         }
         sets = try context.fetch(FetchDescriptor<StrengthSetRecord>()).sorted { $0.id.uuidString < $1.id.uuidString }.map {
             RecordedSet(sessionID: $0.sessionID,
@@ -96,7 +97,8 @@ nonisolated struct V2EstimateBatch: Sendable {
             return (start: $0.startTime, end: end, duration: $0.duration)
         }
         let byID = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0) })
-        let children = Dictionary(grouping: sessions.filter { $0.linkedID != nil }, by: { $0.linkedID! })
+        // A user-deleted node and its descendants must not contribute to an active group.
+        let children = Dictionary(grouping: sessions.filter { $0.linkedID != nil && !($0.deleted && $0.deletionOrigin != "source") }, by: { $0.linkedID! })
         var result: [Pending] = []
         for session in sessions where !session.deleted && !session.suppressed && (sessionID == nil || session.id == sessionID) {
             try Task.checkCancellation()
@@ -200,13 +202,17 @@ nonisolated struct V2EstimateBatch: Sendable {
             }
             let recordedSets = sets.filter { ids.contains($0.sessionID) }
             let inputs = recordedSets.map(\.input)
+            // Read attached labels through the current logical group without
+            // migrating them. A later source correction can split that group.
+            let tagSources = ids.compactMap { byID[$0] }.filter { !$0.deleted || $0.deletionOrigin == "source" }
+            let groupTags = WorkoutTagProjection.merged(tagSources.map(\.tags))
             let priorRuns = runningHistory.filter {
                 $0.start < session.startTime && $0.start >= session.startTime.addingTimeInterval(-28 * 86400)
                     && $0.end <= session.startTime
             }
             let recentMinutes: Double? = priorRuns.isEmpty ? nil : priorRuns.reduce(0) { $0 + $1.duration / 60 }
             let snapshot = EstimateInput(type: session.type, start: session.startTime, duration: session.duration,
-                                         distance: session.distance, features: features, sets: inputs, tags: session.tags,
+                                         distance: session.distance, features: features, sets: inputs, tags: groupTags,
                                          maxHeartRate: maxHeartRate, recentRunningMinutes: recentMinutes,
                                          setRevisions: recordedSets.map { SetRevision(id: $0.input.id, recordedAt: $0.recordedAt, updatedAt: $0.updatedAt) },
                                          thresholdsModifiedAt: thresholdsModifiedAt,
@@ -214,7 +220,7 @@ nonisolated struct V2EstimateBatch: Sendable {
             let inputData = try encoder.encode(snapshot)
             if previous[session.id]?.inputData == inputData && previous[session.id]?.version == LoadModel.version { continue }
             let value = LoadModel.estimate(type: session.type, start: session.startTime, duration: session.duration,
-                                           distance: session.distance, features: features, sets: inputs, tags: session.tags,
+                                           distance: session.distance, features: features, sets: inputs, tags: groupTags,
                                            maxHeartRate: maxHeartRate, now: now, recentRunningMinutes: recentMinutes)
             result.append(Pending(sessionID: session.id, value: value, inputData: inputData, payloadData: try encoder.encode(value)))
         }

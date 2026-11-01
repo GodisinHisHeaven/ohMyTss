@@ -4,6 +4,39 @@ import XCTest
 /// These tests require a real Apple simulator and are not runnable on Linux.
 final class V2FlowTests: XCTestCase {
     @MainActor
+    func testLinkedPersonalDetailsRemainVisibleAndReadOnly() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--v2-ui-tests", "--v2-rpe-demo", "--v2-linked-details-fixture"]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Today"].waitForExistence(timeout: 10))
+        let workout = app.buttons["today.workout.synthetic-linked-garmin"]
+        XCTAssertTrue(reachDashboardButton(workout, in: app))
+        workout.tap()
+        XCTAssertTrue(app.navigationBars["Swim"].waitForExistence(timeout: 5))
+
+        let linkedTags = app.descendants(matching: .any)["activity.linkedTags"].firstMatch
+        reach(linkedTags, in: app)
+        XCTAssertTrue(linkedTags.label.localizedCaseInsensitiveContains("paddles") || app.staticTexts["paddles"].exists)
+        XCTAssertFalse(app.staticTexts["deleted-fixture-tag"].exists)
+        XCTAssertFalse(app.staticTexts["legacy-deleted-fixture-tag"].exists)
+
+        let linkedSet = app.descendants(matching: .any)["activity.linkedSet"].firstMatch
+        reach(linkedSet, in: app)
+        XCTAssertTrue(app.staticTexts["Sets from linked sources are shown here but cannot be edited here yet."].exists)
+        XCTAssertEqual(app.buttons.matching(identifier: "activity.linkedSet").count, 0)
+
+        let linkedReport = app.descendants(matching: .any)["activity.linkedReport"].firstMatch
+        reach(linkedReport, in: app)
+        XCTAssertTrue(app.staticTexts["Reports from linked sources retain their original activity. Edit them in report history."].exists)
+
+        let ownSet = app.buttons["activity.ownSet"].firstMatch
+        reach(ownSet, in: app)
+        XCTAssertTrue(ownSet.isEnabled)
+        ownSet.tap()
+        XCTAssertTrue(app.navigationBars["Edit set"].waitForExistence(timeout: 5))
+    }
+
+    @MainActor
     func testSyncWithThousandSavedActivitiesKeepsTabsUsable() {
         let app = XCUIApplication()
         app.launchArguments = ["--v2-ui-tests", "--v2-large-history", "--v2-disk-history", "--v2-sync-fixture"]

@@ -5,6 +5,48 @@ import HealthKit
 
 @MainActor
 final class ActivitySyncTests: XCTestCase {
+    func testHistoricalEndpointReconciliationAndSourceCorrectionRebuildTotals() async throws {
+        let fixture = try SyncFixture()
+        let start = fixture.clock.now.addingDays(-100).startOfDay.addingTimeInterval(3600)
+        let garmin = Workout(id: "old-garmin", date: start.startOfDay, startTime: start,
+                             duration: 600, workoutType: "Running", tss: 25,
+                             calculationMethod: "duration", source: .healthKit)
+        garmin.sourceBundleIdentifier = "com.garmin.connect.mobile"
+        var healthFeatures = WorkoutFeatures()
+        healthFeatures.end = start.addingTimeInterval(600)
+        garmin.features = healthFeatures
+        let strava = Workout(id: "old-strava", date: start.startOfDay,
+                             startTime: start.addingTimeInterval(30), duration: 570,
+                             workoutType: "Run", tss: 35, calculationMethod: "duration", source: .strava)
+        var stravaFeatures = WorkoutFeatures()
+        stravaFeatures.end = start.addingTimeInterval(600)
+        strava.features = stravaFeatures
+        fixture.context.insert(garmin)
+        fixture.context.insert(strava)
+        try fixture.context.save()
+
+        let changes = try fixture.store.finalizeWorkoutSources()
+        XCTAssertFalse(changes.isEmpty)
+        XCTAssertFalse(garmin.isSuppressed)
+        XCTAssertTrue(strava.isSuppressed)
+        XCTAssertEqual(strava.linkedSessionID, garmin.id)
+        try await fixture.store.refreshLegacyLoadHistory(from: start.startOfDay, now: fixture.clock.now)
+        XCTAssertEqual(try fixture.store.fetchDayAggregate(for: start)?.totalTSS, 25)
+
+        // An upstream correction can disprove the match; both rows must return
+        // to totals without losing either original source record.
+        stravaFeatures.end = start.addingTimeInterval(900)
+        strava.features = stravaFeatures
+        let corrected = try fixture.store.reconcileWorkoutSources()
+        XCTAssertFalse(corrected.isEmpty)
+        XCTAssertFalse(garmin.isSuppressed)
+        XCTAssertFalse(strava.isSuppressed)
+        XCTAssertNil(strava.linkedSessionID)
+        try await fixture.store.refreshLegacyLoadHistory(from: start.startOfDay, now: fixture.clock.now)
+        XCTAssertEqual(try fixture.store.fetchDayAggregate(for: start)?.totalTSS, 60)
+        XCTAssertEqual(Set(try fixture.store.allWorkouts().map(\.id)), Set([garmin.id, strava.id]))
+    }
+
     func testStravaConnectedDuringHealthReadDefersFinalizationUntilRetry() async throws {
         let fixture = try SyncFixture()
         let start = fixture.clock.now.addingTimeInterval(-3600)
@@ -286,7 +328,7 @@ final class ActivitySyncTests: XCTestCase {
         try fixture.context.save()
         try await fixture.engine.incrementalUpdate()
         XCTAssertTrue(state.pendingHealthKitSourceBackfillIDs.isEmpty)
-        XCTAssertEqual(set.sessionID, strava.id)
+        XCTAssertEqual(set.sessionID, health.id)
         XCTAssertEqual(try fixture.context.fetchCount(FetchDescriptor<StrengthSetRecord>()), 1)
     }
 
@@ -596,8 +638,8 @@ final class ActivitySyncTests: XCTestCase {
         try fixture.context.save()
         try await V2Store(context: fixture.context).refreshEstimates()
         XCTAssertEqual(row.sessionID, health.id)
-        try await fixture.store.refreshV2Estimates(finalizeAliases: true)
-        XCTAssertEqual(row.sessionID, strava.id)
+        try await fixture.store.refreshV2Estimates()
+        XCTAssertEqual(row.sessionID, health.id)
     }
 
     func testAmbiguityInLaterImportBatchDoesNotDeleteEarlierSource() async throws {
@@ -685,7 +727,18 @@ final class ActivitySyncTests: XCTestCase {
         XCTAssertTrue(try XCTUnwrap(fixture.store.fetchWorkout(byId: hike.uuid.uuidString)).isSuppressed)
         XCTAssertEqual(try fixture.store.fetchDayAggregate(for: date)?.workoutCount, 2)
         XCTAssertEqual(try fixture.store.fetchWorkout(byId: unknown.uuid.uuidString)?.workoutType, "Other")
-        XCTAssertEqual(try fixture.store.fetchWorkout(byId: "historical-strava-hike")?.userTags, ["personal"])
+        let savedHike = try XCTUnwrap(fixture.store.fetchWorkout(byId: hike.uuid.uuidString))
+        let canonical = try XCTUnwrap(fixture.store.fetchWorkout(byId: "historical-strava-hike"))
+        XCTAssertEqual(savedHike.userTags, ["personal"])
+        XCTAssertTrue(canonical.userTags.isEmpty)
+        XCTAssertEqual(savedHike.linkedSessionID, canonical.id)
+        XCTAssertEqual(note.sessionID, savedHike.id)
+        let graph = WorkoutLinkGraph(try fixture.store.allWorkouts().map { .init(id: $0.id, parentID: $0.linkedSessionID) })
+        XCTAssertTrue(graph.relatedIDs(to: canonical.id).contains(try XCTUnwrap(note.sessionID)))
+        let pending = try V2EstimateBatch(context: fixture.context, includePrevious: false).calculate(now: fixture.clock.now)
+        let estimate = try XCTUnwrap(pending.first { $0.sessionID == canonical.id })
+        let estimateInput = try XCTUnwrap(JSONSerialization.jsonObject(with: estimate.inputData) as? [String: Any])
+        XCTAssertEqual(estimateInput["tags"] as? [String], ["personal"])
         XCTAssertEqual(try fixture.context.fetch(FetchDescriptor<LocalObservation>()).first?.id, note.id)
         XCTAssertEqual(state.healthKitTypeBackfillVersion, 1)
         XCTAssertTrue(state.pendingHealthKitTypeBackfillIDs.isEmpty)

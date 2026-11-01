@@ -132,16 +132,18 @@ enum WeeklyWorkoutSync {
                         defaults: UserDefaults? = UserDefaults(suiteName: WeeklyWorkoutSnapshot.appGroup),
                         arguments: [String] = ProcessInfo.processInfo.arguments,
                         reload: () -> Void = { WidgetCenter.shared.reloadTimelines(ofKind: WeeklyWorkoutSnapshot.kind) }) -> Bool {
-        guard allowsPublishing(arguments: arguments),
-              let week = calendar.dateInterval(of: .weekOfYear, for: now),
-              let workouts = try? store.fetchWeeklyWidgetWorkouts(from: week.start, to: week.end) else { return false }
+        guard !Task.isCancelled, allowsPublishing(arguments: arguments) else { return false }
         let state: AppState
         let auth: StravaAuth?
         do {
             state = try store.fetchAppState()
             auth = try store.fetchStravaAuth()
         } catch { return false }
-        guard !state.isComputationInProgress else { return false }
+        guard !state.isComputationInProgress, !state.pendingWorkoutSourceFinalization,
+              !LocalWorkoutHistoryRepair.isRequired(state) else { return false }
+        guard let week = calendar.dateInterval(of: .weekOfYear, for: now),
+              let workouts = try? store.fetchWeeklyWidgetWorkouts(from: week.start, to: week.end),
+              !Task.isCancelled else { return false }
         let sourceSyncedAt = sourceSyncDate(state: state, auth: auth)
         return publish(workouts: workouts, now: now, calendar: calendar, sourceSyncedAt: sourceSyncedAt,
                        defaults: defaults, arguments: arguments, reload: reload)
@@ -165,6 +167,7 @@ struct WeeklyWorkoutObserver: View {
 private struct WeeklyWorkoutDayObserver: View {
     let now: Date
     let isActive: Bool
+    @Environment(\.modelContext) private var context
     @Query private var workouts: [Workout]
     @Query private var appStates: [AppState]
     @Query private var stravaAuths: [StravaAuth]
@@ -181,7 +184,10 @@ private struct WeeklyWorkoutDayObserver: View {
     }
 
     var body: some View {
-        let canPublish = isActive && !(appStates.first?.isComputationInProgress ?? false)
+        let canPublish = isActive && appStates.first.map {
+            !$0.isComputationInProgress && !$0.pendingWorkoutSourceFinalization &&
+                !LocalWorkoutHistoryRepair.isRequired($0)
+        } == true
         let sourceSyncedAt = WeeklyWorkoutSync.sourceSyncDate(state: appStates.first, auth: stravaAuths.first)
         let trigger = Trigger(day: Calendar.current.startOfDay(for: now),
                               timeZone: Calendar.current.timeZone.identifier,
@@ -190,8 +196,10 @@ private struct WeeklyWorkoutDayObserver: View {
                                   Activity(id: $0.id, date: $0.startTime, type: $0.workoutType)
                               })
         Color.clear.task(id: trigger) {
-            guard canPublish else { return }
-            WeeklyWorkoutSync.publish(workouts: workouts, now: now, sourceSyncedAt: sourceSyncedAt)
+            guard canPublish, !Task.isCancelled else { return }
+            // The task can start after the state used to construct its trigger
+            // changed. Re-fetch the marker and workouts before publishing.
+            WeeklyWorkoutSync.publish(store: DataStore(modelContext: context), now: now)
         }
     }
 

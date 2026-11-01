@@ -26,8 +26,12 @@ struct MorningAppSummary: Equatable {
         calendar.timeZone = zone
         let start = calendar.startOfDay(for: now)
         let end = calendar.date(byAdding: .day, value: 1, to: start)!
+        let state = try store.fetchAppState()
+        // Do not upload provisional history while its local repair is pending.
+        guard !state.isComputationInProgress, !state.pendingWorkoutSourceFinalization,
+              !LocalWorkoutHistoryRepair.isRequired(state) else { return nil }
         let days = try store.fetchDayAggregates(from: start, to: end)
-        let lastComputation = try store.fetchAppState().lastComputationDate
+        let lastComputation = state.lastComputationDate
         let readiness = TodayReadiness(days: days, lastComputation: lastComputation, now: now, calendar: calendar)
         let score = readiness.updatedAt == nil ? nil : readiness.score
         let sleep = readiness.updatedAt == nil ? nil : readiness.day?.sleepDuration.flatMap {
