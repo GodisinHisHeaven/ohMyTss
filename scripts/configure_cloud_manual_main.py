@@ -24,6 +24,50 @@ REQUIRED_FIELDS = ("name", "branchStartCondition", "tagStartCondition", "pullReq
 REQUIRED_RELATIONSHIPS = ("product", "repository", "xcodeVersion", "macOsVersion")
 
 
+def manual_main_coverage(condition):
+    """Classify only documented branch coverage without exposing the pattern."""
+    if condition is None:
+        return "not configured"
+    if not isinstance(condition, dict) or any(k != "source" for k in condition):
+        return "unknown"
+    source = condition.get("source")
+    if not isinstance(source, dict) or any(k not in {"isAllMatch", "patterns"} for k in source):
+        return "unknown"
+    match_all = source.get("isAllMatch")
+    if type(match_all) is not bool:
+        return "unknown"
+    patterns = source.get("patterns")
+    if match_all:
+        return "covers main but broader" if patterns is None else "unknown"
+    # Apple documents the behavior of each pattern but does not specify how
+    # multiple patterns interact, so report those shapes conservatively.
+    if not isinstance(patterns, list) or len(patterns) != 1:
+        return "unknown"
+    entry = patterns[0]
+    if not isinstance(entry, dict) or any(k not in {"pattern", "isPrefix"} for k in entry):
+        return "unknown"
+    pattern, prefix = entry.get("pattern"), entry.get("isPrefix")
+    if not isinstance(pattern, str) or not pattern or len(pattern) > 1024 or type(prefix) is not bool:
+        return "unknown"
+    if prefix:
+        return "covers main but broader" if "main".startswith(pattern) else "does not cover main"
+    return "exact main" if pattern == "main" else "does not cover main"
+
+
+def safe_readback_type(error):
+    """Return a fixed label; never include exception text or server data."""
+    if isinstance(error, HTTPError): return "http-error"
+    if isinstance(error, URLError): return "network-error"
+    if isinstance(error, HTTPException): return "http-protocol-error"
+    if isinstance(error, Retry): return "retryable-read-error"
+    if isinstance(error, Unknown): return "validation-error"
+    if isinstance(error, OSError): return "os-error"
+    if isinstance(error, ValueError): return "invalid-value"
+    if isinstance(error, TypeError): return "invalid-type"
+    if isinstance(error, AttributeError): return "missing-attribute"
+    return "other"
+
+
 def valid_destination(destination):
     # Apple documents CiTestDestination kinds MAC and SIMULATOR. Simulators
     # must identify both device type and runtime for this conservative preflight.
@@ -194,13 +238,17 @@ def configure(client, target, run_id, app, apply_change, current_main=github_bra
     before_attrs = attributes(before)
     require(isinstance(before_attrs.get("lastModifiedDate"), str) and before_attrs["lastModifiedDate"],
             "Workflow modification timestamp unavailable")
-    require("manualBranchStartCondition" in before_attrs and before_attrs["manualBranchStartCondition"] is None,
-            "Existing manual branch condition is non-null or could not be read")
     print("Preflight passed; TestFlight post-action settings are not exposed by this API.")
     print("Apple does not document an atomic conditional PATCH; concurrent edits may race.")
     if not apply_change:
+        coverage = (manual_main_coverage(before_attrs["manualBranchStartCondition"])
+                    if "manualBranchStartCondition" in before_attrs else "unknown")
+        print("Manual branch coverage:", coverage)
+        print("Coverage is diagnostic only; it does not prove build or TestFlight readiness.")
         print("Read-only mode; no workflow updated or build started.")
         return
+    require("manualBranchStartCondition" in before_attrs and before_attrs["manualBranchStartCondition"] is None,
+            "Existing manual branch condition is non-null or could not be read")
     require(current_main("main") == target, "GitHub main changed before PATCH")
     # Refresh immediately before the write; never overwrite a newly set condition
     # or any configuration that changed after the original preflight.
@@ -231,16 +279,25 @@ def configure(client, target, run_id, app, apply_change, current_main=github_bra
         raise Unknown("PATCH outcome unknown; inspect configuration before any retry") from None
     if not isinstance(payload, dict) or not isinstance(payload.get("data"), dict):
         raise Unknown("PATCH may have applied; inspect configuration before any retry")
+    stage = "workflow-read"
     try:
         after, after_included = read_workflow(client, workflow_id)
+        stage = "included-resources-comparison"
         require(after_included == before_included, "Included workflow configuration changed")
+        stage = "manual-condition-comparison"
         require(attributes(after).get("manualBranchStartCondition") == CONDITION,
                 "Manual condition readback differs")
-        require(checked_configuration(after, product_id, repo_id) == snapshot,
+        stage = "other-configuration-validation"
+        actual_snapshot = checked_configuration(after, product_id, repo_id)
+        stage = "other-configuration-comparison"
+        require(actual_snapshot == snapshot,
                 "Other visible workflow configuration changed")
+        stage = "main-commit-check"
         require(current_main("main") == target, "GitHub main changed during update")
-    except (Unknown, Retry, OSError, ValueError, TypeError, AttributeError, HTTPException):
-        raise Unknown("PATCH may have applied but readback failed; inspect before retrying or starting a build") from None
+    except Exception as error:
+        raise Unknown("PATCH may have applied but readback failed "
+                      "(stage: " + stage + "; type: " + safe_readback_type(error) + "); "
+                      "inspect before retrying or starting a build") from None
     print("Manual main condition confirmed; all other API-visible workflow fields are unchanged.")
     print("No build started; a real build and TestFlight verification remain required.")
 

@@ -83,6 +83,76 @@ class TestManualConfiguration(unittest.TestCase):
         self.check(False)
         self.assertEqual(self.api.requests, [])
         self.assertIn("Read-only mode", self.output.getvalue())
+        self.assertIn("Manual branch coverage: not configured", self.output.getvalue())
+
+    def test_manual_coverage_classifies_only_documented_shapes(self):
+        cases = [
+            (None, "not configured"),
+            ({"source": {"isAllMatch": True}}, "covers main but broader"),
+            ({"source": {"isAllMatch": True, "patterns": None}}, "covers main but broader"),
+            ({"source": {"isAllMatch": False, "patterns": [{"pattern": "main", "isPrefix": False}]}}, "exact main"),
+            ({"source": {"isAllMatch": False, "patterns": [{"pattern": "ma", "isPrefix": True}]}}, "covers main but broader"),
+            ({"source": {"isAllMatch": False, "patterns": [{"pattern": "main", "isPrefix": True}]}}, "covers main but broader"),
+            ({"source": {"isAllMatch": False, "patterns": [{"pattern": "Main", "isPrefix": False}]}}, "does not cover main"),
+            ({"source": {"isAllMatch": False, "patterns": [{"pattern": "refs/heads/main", "isPrefix": False}]}}, "does not cover main"),
+            ({"source": {"isAllMatch": False, "patterns": [{"pattern": "main/", "isPrefix": True}]}}, "does not cover main"),
+            ({"source": {"isAllMatch": True, "patterns": []}}, "unknown"),
+            ({"source": {"isAllMatch": False, "patterns": []}}, "unknown"),
+            ({"source": {"isAllMatch": False, "patterns": [{"pattern": "main", "isPrefix": False},
+                                                            {"pattern": "other", "isPrefix": False}]}}, "unknown"),
+            ({"source": {"isAllMatch": False, "patterns": [{"pattern": "", "isPrefix": True}]}}, "unknown"),
+            ({"source": {"isAllMatch": 1}}, "unknown"),
+            ({"source": {"isAllMatch": False, "patterns": [{"pattern": "main", "isPrefix": 0}]}}, "unknown"),
+            ({"source": {"isAllMatch": False, "patterns": [{"pattern": "main", "isPrefix": False,
+                                                              "future": "sensitive-pattern"}]}}, "unknown"),
+            ({"source": {"isAllMatch": False, "patterns": [{"pattern": "main", "isPrefix": False,
+                                                              "future": None}]}}, "unknown"),
+            ({"source": {"isAllMatch": True}, "future": None}, "unknown"),
+            ({"source": {"isAllMatch": False, "patterns": [None]}}, "unknown"),
+            ({"source": {"isAllMatch": False, "patterns": "main"}}, "unknown"),
+            ({"source": {"patterns": []}}, "unknown"),
+            ({"source": {}, "unexpected": "sensitive-pattern"}, "unknown"),
+            ({}, "unknown"),
+            ("sensitive-pattern", "unknown"),
+        ]
+        for condition, expected in cases:
+            with self.subTest(expected=expected, shape=type(condition).__name__):
+                self.assertEqual(config.manual_main_coverage(condition), expected)
+
+    def test_read_only_reports_safe_coverage_without_patch_for_existing_condition(self):
+        cases = [
+            ({"source": {"isAllMatch": False, "patterns": [{"pattern": "main", "isPrefix": False}]}}, "exact main"),
+            ({"source": {"isAllMatch": True}}, "covers main but broader"),
+            ({"source": {"isAllMatch": False, "patterns": [{"pattern": "sensitive-pattern", "isPrefix": False}]}}, "does not cover main"),
+            ({"unexpected": "sensitive-pattern"}, "unknown"),
+            ("missing", "unknown"),
+        ]
+        for condition, expected in cases:
+            with self.subTest(expected=expected):
+                self.api = FakeConfiguration()
+                self.output = io.StringIO()
+                if condition == "missing":
+                    del self.api.workflow["attributes"]["manualBranchStartCondition"]
+                else:
+                    self.api.workflow["attributes"]["manualBranchStartCondition"] = condition
+                self.check(False)
+                self.assertEqual(self.api.requests, [])
+                self.assertIn("Manual branch coverage: " + expected, self.output.getvalue())
+                self.assertIn("Read-only mode", self.output.getvalue())
+                self.assertNotIn("sensitive-pattern", self.output.getvalue())
+
+    def test_read_only_does_not_classify_before_identity_and_action_validation(self):
+        for change in (lambda c: c.old["attributes"].update(sourceCommit={"commitSha": "b" * 40}),
+                       lambda c: c.repo["attributes"].update(httpCloneUrl="https://evil.invalid/x"),
+                       lambda c: c.workflow["attributes"]["actions"][1].update(isRequiredToPass=False)):
+            with self.subTest(change=change):
+                self.api = FakeConfiguration()
+                self.output = io.StringIO()
+                self.api.workflow["attributes"]["manualBranchStartCondition"] = copy.deepcopy(config.CONDITION)
+                change(self.api)
+                with self.assertRaises(config.Unknown): self.check(False)
+                self.assertNotIn("Manual branch coverage:", self.output.getvalue())
+                self.assertEqual(self.api.requests, [])
 
     def test_sparse_main_only_patch_and_readback(self):
         self.check()
@@ -230,6 +300,61 @@ class TestManualConfiguration(unittest.TestCase):
                 with self.assertRaises(config.Unknown) as error: self.check()
                 self.assertIn("may have applied", str(error.exception))
                 self.assertEqual(len(self.api.requests), 1)
+
+    def test_readback_reports_safe_stage_and_type_without_values(self):
+        changes = [
+            (lambda w: w["attributes"].update(manualBranchStartCondition={"source": "sensitive-value"}),
+             "manual-condition-comparison"),
+            (lambda w: w["attributes"]["actions"][1].update(isRequiredToPass=False),
+             "other-configuration-validation"),
+            (lambda w: w["attributes"]["branchStartCondition"].update(autoCancel=False),
+             "other-configuration-comparison"),
+        ]
+        for change, stage in changes:
+            with self.subTest(stage=stage):
+                self.api = FakeConfiguration()
+                self.api.mutate_after = change
+                with self.assertRaises(config.Unknown) as error: self.check()
+                self.assertIn("stage: " + stage, str(error.exception))
+                self.assertIn("type: validation-error", str(error.exception))
+                self.assertIn("may have applied", str(error.exception))
+                self.assertNotIn("sensitive-value", str(error.exception))
+                self.assertEqual(len(self.api.requests), 1)
+        self.api = FakeConfiguration()
+        self.api.mutate_included_after = lambda repo: repo["attributes"].update(repositoryName="sensitive-value")
+        with self.assertRaises(config.Unknown) as error: self.check()
+        self.assertIn("stage: included-resources-comparison", str(error.exception))
+        self.assertNotIn("sensitive-value", str(error.exception))
+        self.assertEqual(len(self.api.requests), 1)
+
+    def test_readback_transport_and_unexpected_exceptions_never_leak_or_retry(self):
+        failures = [(IncompleteRead(b"sensitive-value", 30), "http-protocol-error"),
+                    (config.Retry("sensitive-value"), "retryable-read-error"),
+                    (config.Unknown("sensitive-value"), "validation-error"),
+                    (ValueError("sensitive-value"), "invalid-value"),
+                    (KeyError("sensitive-value"), "other")]
+        for failure, label in failures:
+            with self.subTest(label=label):
+                self.api = FakeConfiguration()
+                original = self.api.get
+                def failed_readback(path):
+                    if path == config.workflow_path(WORKFLOW) and self.api.reads == 2:
+                        raise failure
+                    return original(path)
+                self.api.get = failed_readback
+                with self.assertRaises(config.Unknown) as error: self.check()
+                self.assertIn("stage: workflow-read", str(error.exception))
+                self.assertIn("type: " + label, str(error.exception))
+                self.assertIn("may have applied", str(error.exception))
+                self.assertNotIn("sensitive-value", str(error.exception))
+                self.assertEqual(len(self.api.requests), 1)
+
+    def test_main_change_after_patch_reports_stage_without_retry(self):
+        sequence = iter([SHA, SHA, "b" * 40])
+        with self.assertRaises(config.Unknown) as error: self.check(main=lambda _: next(sequence))
+        self.assertIn("stage: main-commit-check", str(error.exception))
+        self.assertIn("may have applied", str(error.exception))
+        self.assertEqual(len(self.api.requests), 1)
 
     def test_included_resource_change_fails_after_single_patch(self):
         self.api.mutate_included_after = lambda repo: repo["attributes"].update(repositoryName="changed")
