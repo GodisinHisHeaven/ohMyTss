@@ -334,6 +334,7 @@ final class WeeklyWorkoutSyncTests: XCTestCase {
         context.insert(workout("deleted", now, "Swim", deleted: true))
         try context.save()
         let store = onMyTss.DataStore(modelContext: context)
+        try store.fetchAppState().localWorkoutRepairVersion = LocalWorkoutHistoryRepair.currentVersion
         var reloads = 0
         XCTAssertTrue(WeeklyWorkoutSync.publish(store: store, now: now, calendar: calendar, defaults: defaults,
                                                 arguments: [], reload: { reloads += 1 }))
@@ -344,6 +345,71 @@ final class WeeklyWorkoutSyncTests: XCTestCase {
                                                  arguments: [], reload: { reloads += 1 }))
         XCTAssertEqual(WeeklyWorkoutSnapshot.load(defaults: defaults), original)
         XCTAssertEqual(reloads, 1)
+    }
+
+    func testStorePublicationWaitsForRepairAndPreservesExistingWidget() throws {
+        let suiteName = "ohmytss.weekly-tests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let now = Date()
+        let container = try ModelContainer(for: Schema(AppSchema.models), configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let context = ModelContext(container)
+        let store = onMyTss.DataStore(modelContext: context)
+        let state = try store.fetchAppState()
+        let original = workout("old", now, "Run")
+        XCTAssertTrue(WeeklyWorkoutSync.publish(workouts: [original], now: now, sourceSyncedAt: now,
+                                                defaults: defaults, arguments: [], reload: {}))
+        let saved = try XCTUnwrap(defaults.data(forKey: "weeklyWorkouts.v1"))
+        XCTAssertTrue(WeeklyWorkoutSync.invalidateSource(defaults: defaults, arguments: [], reload: {}))
+        context.insert(workout("new", now, "Ride"))
+        try context.save()
+        XCTAssertFalse(WeeklyWorkoutSync.publish(store: store, now: now, defaults: defaults, arguments: [], reload: {}))
+        XCTAssertEqual(defaults.data(forKey: "weeklyWorkouts.v1"), saved)
+        XCTAssertNil(WeeklyWorkoutSnapshot.load(defaults: defaults)?.sourceSyncedAt)
+        state.localWorkoutRepairVersion = LocalWorkoutHistoryRepair.currentVersion
+        state.localWorkoutRepairInProgress = true
+        XCTAssertFalse(WeeklyWorkoutSync.publish(store: store, now: now, defaults: defaults, arguments: [], reload: {}))
+        state.localWorkoutRepairInProgress = false
+        state.pendingWorkoutSourceFinalization = true
+        XCTAssertFalse(WeeklyWorkoutSync.publish(store: store, now: now, defaults: defaults, arguments: [], reload: {}))
+        state.pendingWorkoutSourceFinalization = false
+        XCTAssertTrue(WeeklyWorkoutSync.publish(store: store, now: now, defaults: defaults, arguments: [], reload: {}))
+        XCTAssertEqual(WeeklyWorkoutSnapshot.load(defaults: defaults)?.records.map(\.workoutType), ["Ride"])
+        XCTAssertNil(WeeklyWorkoutSnapshot.load(defaults: defaults)?.sourceSyncedAt)
+    }
+
+    func testCancelledOrStaleObserverCannotPublishIntermediateHistory() async throws {
+        let suiteName = "ohmytss.weekly-tests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let now = Date()
+        let container = try ModelContainer(for: Schema(AppSchema.models), configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let context = ModelContext(container)
+        let store = onMyTss.DataStore(modelContext: context)
+        let state = try store.fetchAppState()
+        state.localWorkoutRepairVersion = LocalWorkoutHistoryRepair.currentVersion
+        context.insert(workout("current", now, "Ride"))
+        try context.save()
+        XCTAssertTrue(WeeklyWorkoutSync.publish(workouts: [workout("previous", now, "Run")], now: now,
+                                                defaults: defaults, arguments: [], reload: {}))
+        let saved = try XCTUnwrap(defaults.data(forKey: "weeklyWorkouts.v1"))
+        // A task created while publication was allowed may execute only after
+        // repair starts. It must re-read the marker rather than trust its trigger.
+        let triggerWasPublishable = true
+        state.localWorkoutRepairInProgress = true
+        XCTAssertTrue(triggerWasPublishable)
+        XCTAssertFalse(WeeklyWorkoutSync.publish(store: store, now: now, defaults: defaults, arguments: [], reload: {}))
+        XCTAssertEqual(defaults.data(forKey: "weeklyWorkouts.v1"), saved)
+        state.localWorkoutRepairInProgress = false
+        let cancelled = Task { @MainActor in
+            WeeklyWorkoutSync.publish(store: store, now: now, defaults: defaults, arguments: [], reload: {})
+        }
+        cancelled.cancel()
+        let published = await cancelled.value
+        XCTAssertFalse(published)
+        XCTAssertEqual(defaults.data(forKey: "weeklyWorkouts.v1"), saved)
+        XCTAssertTrue(WeeklyWorkoutSync.publish(store: store, now: now, defaults: defaults, arguments: [], reload: {}))
+        XCTAssertEqual(WeeklyWorkoutSnapshot.load(defaults: defaults)?.records.map(\.workoutType), ["Ride"])
     }
 
 }

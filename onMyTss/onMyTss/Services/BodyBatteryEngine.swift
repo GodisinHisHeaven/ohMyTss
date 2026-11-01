@@ -56,6 +56,26 @@ class BodyBatteryEngine {
         try await synchronize()
     }
 
+    /// Offline history repair shares the same gate as every source sync.
+    /// No HealthKit or network access is needed for a completed local store.
+    func repairLocalWorkoutHistoryIfNeeded(reconcile: (@MainActor () async throws -> Void)? = nil) async throws {
+        while isProcessing {
+            try Task.checkCancellation()
+            try await Task.sleep(for: .milliseconds(200))
+        }
+        try Task.checkCancellation()
+        isProcessing = true
+        defer { isProcessing = false }
+        let key = dataStore.workoutMaintenanceKey
+        try await WorkoutMaintenanceGate.acquire(key, kind: .localRepair)
+        defer { WorkoutMaintenanceGate.release(key) }
+        let operation = reconcile ?? {
+            _ = try await self.dataStore.repairWorkoutSourcesLocally()
+        }
+        let repair = LocalWorkoutHistoryRepair(store: dataStore, reconcile: operation, clock: clock)
+        try await repair.run()
+    }
+
     private func synchronize() async throws {
         // A manual request can arrive while automatic synchronization is running.
         // Wait for it rather than reporting a false failure or dropping a settings change.
@@ -65,6 +85,9 @@ class BodyBatteryEngine {
         }
         isProcessing = true
         defer { isProcessing = false }
+        let key = dataStore.workoutMaintenanceKey
+        try await WorkoutMaintenanceGate.acquire(key, kind: .sourceSync)
+        defer { WorkoutMaintenanceGate.release(key) }
         lastSyncHadWarnings = true
         lastSyncRequiresRetry = true
         do {
@@ -114,20 +137,22 @@ class BodyBatteryEngine {
                 workoutAggregator.latestImportedWorkouts.filter { $0.source != WorkoutSource.strava.rawValue }
             let deleted = workoutAggregator.latestDeletedHealthKitIDs +
                 (connectionStable ? workoutAggregator.latestDeletedStravaIDs : [])
+            let validateSources: (() throws -> Void)? = connectionStable ? {
+                guard try sameStravaConnection() else { throw EngineError.stravaConnectionChanged }
+            } : nil
+            let endpoints = try await dataStore.prepareWorkoutEndpoints(incoming: imported, validateSources: validateSources)
             var changes = try await dataStore.applyImportedWorkouts(
                 imported, deletedIDs: deleted, finalize: false,
-                validateSources: connectionStable ? {
-                    guard try sameStravaConnection() else { throw EngineError.stravaConnectionChanged }
-                } : nil
+                validateSources: validateSources, prewarmed: endpoints
             )
-            let typeBackfill = try await backfillHealthKitTypes(state: state, sourceAvailable: workoutAggregator.latestHealthKitAnchor != nil)
+            let typeBackfill = try await backfillHealthKitTypes(state: state, sourceAvailable: workoutAggregator.latestHealthKitAnchor != nil, prewarmed: endpoints)
             changes.formUnion(typeBackfill.changes)
-            let sourceBackfill = try await backfillHealthKitSources(state: state, sourceAvailable: workoutAggregator.latestHealthKitAnchor != nil)
+            let sourceBackfill = try await backfillHealthKitSources(state: state, sourceAvailable: workoutAggregator.latestHealthKitAnchor != nil, prewarmed: endpoints)
             changes.formUnion(sourceBackfill.changes)
             try Task.checkCancellation()
             if connectionStable { connectionStable = try sameStravaConnection() }
             completeSources = completeSources && connectionStable
-            if completeSources { changes.formUnion(try dataStore.finalizeWorkoutSources()) }
+            if completeSources { changes.formUnion(try dataStore.finalizeWorkoutSources(prewarmed: endpoints)) }
             var appliedThresholdRevision: Date? = thresholdsChanged || interrupted ? nil : initialThresholdRevision
             var recoveryWarnings: [String] = []
             var recoveryNeedsRetry = false
@@ -146,8 +171,7 @@ class BodyBatteryEngine {
                 if connectionStable { connectionStable = try sameStravaConnection() }
                 completeSources = completeSources && connectionStable
                 if !changes.isEmpty || interrupted || (pendingFinalization && completeSources) {
-                    try await dataStore.refreshV2Estimates(finalizeAliases: completeSources,
-                                                           validateFinalization: sameStravaConnection)
+                    try await dataStore.refreshV2Estimates()
                 }
                 else { try await dataStore.backfillV2Estimates() }
                 // Settings may change while queries or calculations are suspended.
@@ -238,7 +262,7 @@ class BodyBatteryEngine {
     /// Import source metadata for old HealthKit rows in bounded, resumable batches.
     /// The persisted computation marker forces a full rebuild if work is interrupted
     /// after saving metadata but before the derived history is rebuilt.
-    private func backfillHealthKitSources(state: AppState, sourceAvailable: Bool) async throws
+    private func backfillHealthKitSources(state: AppState, sourceAvailable: Bool, prewarmed: WorkoutPrewarmedEndpoints) async throws
         -> (changes: WorkoutChanges, warnings: [String]) {
         var changes = WorkoutChanges()
         if state.healthKitSourceBackfillVersion < 1 {
@@ -342,7 +366,7 @@ class BodyBatteryEngine {
             try await Task.sleep(for: .milliseconds(1))
         }
         if !changes.isEmpty {
-            changes.formUnion(try dataStore.reconcileWorkoutSources(applySideEffects: false))
+            changes.formUnion(try dataStore.reconcileWorkoutSources(applySideEffects: false, prewarmed: prewarmed))
             try dataStore.saveAppState(state)
         }
         let warnings = state.pendingHealthKitSourceBackfillIDs.isEmpty ? []
@@ -367,7 +391,7 @@ class BodyBatteryEngine {
 
     /// Revisit older HealthKit rows imported before these activity types were mapped.
     /// The checkpoint is committed only after derived history has been rebuilt.
-    private func backfillHealthKitTypes(state: AppState, sourceAvailable: Bool) async throws
+    private func backfillHealthKitTypes(state: AppState, sourceAvailable: Bool, prewarmed: WorkoutPrewarmedEndpoints) async throws
         -> (pending: [String], changes: WorkoutChanges, warnings: [String]) {
         let pending: [String]
         if state.healthKitTypeBackfillVersion < 1 {
@@ -412,7 +436,7 @@ class BodyBatteryEngine {
             row.workoutType = type
             changes.include(row)
         }
-        if !changes.isEmpty { changes.formUnion(try dataStore.reconcileWorkoutSources()) }
+        if !changes.isEmpty { changes.formUnion(try dataStore.reconcileWorkoutSources(prewarmed: prewarmed)) }
         let remainder = Array(pending.dropFirst(batch.count)) + batch.filter { !resolved.contains($0) }
         let warnings = batch.contains { !resolved.contains($0) }
             ? ["Some older HealthKit workout types are unreadable. Saved history is retained; retry sync."] : []

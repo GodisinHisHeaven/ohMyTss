@@ -6,6 +6,105 @@ import HealthKit
 
 @MainActor
 final class SettingsResetConcurrencyTests: XCTestCase {
+    func testLocalHistoryRepairWaitsForInFlightSourceSync() async throws {
+        let fixture = try ResetFixture(count: 1, pauseQuery: true)
+        try fixture.store.saveWorkout(fixture.manualWorkout())
+        var sourceFinished = false
+        let source = Task { defer { sourceFinished = true }; try await fixture.engine.incrementalUpdate() }
+        defer { fixture.health.release(); source.cancel() }
+        try await waitFor { fixture.health.waiting || sourceFinished }
+        XCTAssertTrue(fixture.health.waiting)
+
+        var repairFinished = false
+        let repair = Task { defer { repairFinished = true }; try await fixture.runtime.repairLocalWorkoutHistoryIfNeeded() }
+        defer { repair.cancel() }
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertFalse(repairFinished)
+        XCTAssertFalse(try fixture.store.fetchAppState().localWorkoutRepairInProgress)
+
+        fixture.health.release()
+        try await source.value
+        try await repair.value
+        XCTAssertEqual(try fixture.store.fetchAppState().localWorkoutRepairVersion, LocalWorkoutHistoryRepair.currentVersion)
+    }
+
+    func testSourceSyncWaitsForInFlightLocalHistoryRepair() async throws {
+        let fixture = try ResetFixture(count: 1, pauseQuery: true)
+        try fixture.store.saveWorkout(fixture.manualWorkout())
+        let gate = LocalRepairGate()
+        let repair = Task {
+            try await fixture.engine.repairLocalWorkoutHistoryIfNeeded(reconcile: { await gate.wait() })
+        }
+        defer { gate.release(); repair.cancel(); fixture.health.release() }
+        try await waitFor { gate.waiting }
+        XCTAssertTrue(fixture.runtime.isProcessing)
+        XCTAssertTrue(try fixture.store.fetchAppState().localWorkoutRepairInProgress)
+
+        var sourceFinished = false
+        let source = Task { defer { sourceFinished = true }; try await fixture.engine.incrementalUpdate() }
+        defer { source.cancel() }
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertFalse(sourceFinished)
+        XCTAssertFalse(fixture.health.waiting, "Source reads must not begin during local repair")
+        gate.release()
+        try await repair.value
+        try await waitFor { fixture.health.waiting || sourceFinished }
+        XCTAssertTrue(fixture.health.waiting)
+        fixture.health.release()
+        try await source.value
+    }
+
+    func testRepairProtectsWorkoutMutationsButFailureDoesNotPermanentlyLockEditing() async throws {
+        let fixture = try ResetFixture(count: 0, pauseQuery: false)
+        let original = fixture.manualWorkout()
+        try fixture.store.saveWorkout(original)
+        let gate = LocalRepairGate()
+        let repair = Task {
+            try await fixture.engine.repairLocalWorkoutHistoryIfNeeded(reconcile: {
+                await gate.wait()
+                throw LocalRepairTestError.failed
+            })
+        }
+        defer { gate.release(); repair.cancel() }
+        try await waitFor { gate.waiting }
+        XCTAssertThrowsError(try fixture.store.deleteWorkout(original)) { error in
+            guard case .localRepairInProgress? = error as? WorkoutMutationError else { return XCTFail("Unexpected error: \(error)") }
+        }
+        XCTAssertThrowsError(try V2Store(context: fixture.context).createStrengthSession(start: Date().addingTimeInterval(-60), duration: 30))
+        XCTAssertFalse(original.isTombstoned)
+        gate.release()
+        do { try await repair.value; XCTFail("Injected failure must propagate") }
+        catch LocalRepairTestError.failed { }
+        XCTAssertTrue(try fixture.store.fetchAppState().localWorkoutRepairInProgress)
+        // Durable retry state does not permanently lock user edits.
+        try fixture.store.deleteWorkout(original)
+        XCTAssertTrue(original.isTombstoned)
+    }
+
+    func testDifferentEngineForSameContainerWaitsForLocalRepair() async throws {
+        let fixture = try ResetFixture(count: 1, pauseQuery: true)
+        try fixture.store.saveWorkout(fixture.manualWorkout())
+        let secondStore = onMyTss.DataStore(modelContext: ModelContext(fixture.container))
+        let secondEngine = BodyBatteryEngine(healthKitManager: fixture.health, dataStore: secondStore,
+                                             stravaAuthManager: ResetToken())
+        let gate = LocalRepairGate()
+        let repair = Task { try await fixture.engine.repairLocalWorkoutHistoryIfNeeded(reconcile: { await gate.wait() }) }
+        defer { gate.release(); repair.cancel(); fixture.health.release() }
+        try await waitFor { gate.waiting }
+        var sourceFinished = false
+        let source = Task { defer { sourceFinished = true }; try await secondEngine.incrementalUpdate() }
+        defer { source.cancel() }
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertFalse(sourceFinished)
+        XCTAssertFalse(fixture.health.waiting)
+        gate.release()
+        try await repair.value
+        try await waitFor { fixture.health.waiting || sourceFinished }
+        XCTAssertTrue(fixture.health.waiting)
+        fixture.health.release()
+        try await source.value
+    }
+
     func testResetWaitsForInFlightHealthKitQueryAndAllowsInterruptedRecovery() async throws {
         let fixture = try ResetFixture(count: 1, pauseQuery: true)
         let saved = fixture.manualWorkout()
@@ -36,22 +135,40 @@ final class SettingsResetConcurrencyTests: XCTestCase {
     }
 
     func testResetWaitsForActualBoundedImportAndPreservesSavedRows() async throws {
-        let fixture = try ResetFixture(count: 400, pauseQuery: false)
+        // Twenty-one inputs require two real 20-row batches; the gate makes the
+        // first committed batch observable without racing a timer or polling
+        // the entire database while HealthKit inputs are being converted.
+        let fixture = try ResetFixture(count: 21, pauseQuery: false)
+        let gate = LocalRepairGate()
+        fixture.store.importedBatchDidSaveForTesting = { count in
+            if count == 20 { await gate.wait() }
+        }
         var finished = false
         let task = Task { defer { finished = true }; try await fixture.engine.incrementalUpdate() }
-        defer { task.cancel() }
-        try await waitFor { try fixture.store.allWorkouts().count >= 20 || finished }
+        defer { gate.release(); task.cancel(); fixture.store.importedBatchDidSaveForTesting = nil }
+        try await waitFor { gate.waiting || finished }
+        guard gate.waiting else {
+            if finished { try await task.value }
+            XCTFail("The import did not reach its first committed batch; converted HealthKit inputs: \(fixture.health.featuresRead)/21")
+            return
+        }
         XCTAssertFalse(finished, "The test must exercise a live import batch")
         XCTAssertTrue(fixture.runtime.isProcessing)
-        let before = try fixture.store.allWorkouts().count
-        XCTAssertGreaterThanOrEqual(before, 20)
+        let before = Set(try fixture.store.allWorkouts().map(\.id))
+        XCTAssertEqual(before.count, 20)
+        XCTAssertTrue(try fixture.store.fetchAppState().isComputationInProgress)
         await fixture.viewModel.resetAllData()
         XCTAssertTrue(fixture.viewModel.errorMessage?.contains("Sync is in progress") == true)
-        XCTAssertGreaterThanOrEqual(try fixture.store.allWorkouts().count, before)
+        XCTAssertNil(fixture.viewModel.successMessage)
+        XCTAssertEqual(Set(try fixture.store.allWorkouts().map(\.id)), before)
 
         task.cancel()
-        do { try await task.value } catch is CancellationError { } catch { throw error }
+        gate.release()
+        do { try await task.value; XCTFail("Cancellation must stop the next import batch") }
+        catch is CancellationError { } catch { throw error }
         XCTAssertFalse(fixture.runtime.isProcessing)
+        XCTAssertEqual(Set(try fixture.store.allWorkouts().map(\.id)), before)
+        XCTAssertTrue(try fixture.store.fetchAppState().isComputationInProgress)
         await fixture.viewModel.resetAllData()
         XCTAssertNil(fixture.viewModel.errorMessage)
         XCTAssertTrue(try fixture.store.allWorkouts().isEmpty)
@@ -65,6 +182,16 @@ final class SettingsResetConcurrencyTests: XCTestCase {
         XCTFail("Timed out waiting for sync")
     }
 }
+
+@MainActor
+private final class LocalRepairGate {
+    private var continuation: CheckedContinuation<Void, Never>?
+    var waiting: Bool { continuation != nil }
+    func wait() async { await withCheckedContinuation { continuation = $0 } }
+    func release() { continuation?.resume(); continuation = nil }
+}
+
+private enum LocalRepairTestError: Error { case failed }
 
 @MainActor
 private final class ResetFixture {
@@ -104,6 +231,7 @@ private final class ResetHealthSource: HealthKitManager {
     private let pauseQuery: Bool
     private var continuation: CheckedContinuation<Void, Never>?
     var waiting: Bool { continuation != nil }
+    private(set) var featuresRead = 0
 
     init(count: Int, pauseQuery: Bool) {
         self.pauseQuery = pauseQuery
@@ -118,7 +246,10 @@ private final class ResetHealthSource: HealthKitManager {
         if pauseQuery { await withCheckedContinuation { continuation = $0 } }
         return (workouts, [], HKQueryAnchor(fromValue: 1))
     }
-    override func fetchWorkoutFeatures(for workout: HKWorkout) async throws -> WorkoutFeatures { WorkoutFeatures() }
+    override func fetchWorkoutFeatures(for workout: HKWorkout) async throws -> WorkoutFeatures {
+        featuresRead += 1
+        return WorkoutFeatures()
+    }
     override func fetchHRVSamples(from startDate: Date, to endDate: Date) async throws -> [HKQuantitySample] { [] }
     override func fetchRestingHeartRateSamples(from startDate: Date, to endDate: Date) async throws -> [HKQuantitySample] { [] }
     override func fetchSleepSamples(from startDate: Date, to endDate: Date) async throws -> [HKCategorySample] { [] }

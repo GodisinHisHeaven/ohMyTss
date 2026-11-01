@@ -10,6 +10,24 @@ import XCTest
 
 final class StravaDecodingTests: XCTestCase {
 
+    func testReportedElapsedTimeDistinguishesUnknownAndRoundTrips() throws {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        for (fragment, reported) in [("", nil), (",\"elapsed_time\":null", nil),
+                                     (",\"elapsed_time\":720", 720),
+                                     (",\"elapsed_time\":500", 500)] as [(String, Int?)] {
+            let json = "{\"id\":12,\"moving_time\":600\(fragment)}".data(using: .utf8)!
+            let activity = try decoder.decode(StravaActivity.self, from: json)
+            XCTAssertEqual(activity.reportedElapsedTime, reported)
+            XCTAssertEqual(activity.elapsedTime, reported ?? 600)
+            let roundTrip = try decoder.decode(StravaActivity.self, from: encoder.encode(activity))
+            XCTAssertEqual(roundTrip.reportedElapsedTime, reported)
+            XCTAssertEqual(roundTrip.elapsedTime, activity.elapsedTime)
+        }
+    }
+
     func testActivityDecodesWithMissingFields() throws {
         let json = """
         [

@@ -13,6 +13,11 @@ import SwiftData
 class DataStore {
     private var modelContext: ModelContext
 
+    #if DEBUG
+    /// Allows concurrency tests to pause after a batch is actually committed.
+    var importedBatchDidSaveForTesting: (@MainActor (Int) async -> Void)?
+    #endif
+
     // Avoid the older Swift runtime's isolated-deinit crash (swiftlang/swift#88036).
     nonisolated deinit {}
 
@@ -24,15 +29,35 @@ class DataStore {
         self.modelContext = ModelContext(modelContainer)
     }
 
+    var workoutMaintenanceKey: ObjectIdentifier { ObjectIdentifier(modelContext.container) }
+
+    func ensureLocalRepairAllowsMutation() throws {
+        if WorkoutMaintenanceGate.isRepairing(workoutMaintenanceKey) {
+            throw WorkoutMutationError.localRepairInProgress
+        }
+    }
+
     // MARK: - DayAggregate Operations
 
+    /// Avoid manufacturing an empty historical day for a fresh installation.
+    func hasSavedTrainingHistory() throws -> Bool {
+        var workout = FetchDescriptor<Workout>()
+        workout.fetchLimit = 1
+        if !((try modelContext.fetch(workout)).isEmpty) { return true }
+        var day = FetchDescriptor<DayAggregate>()
+        day.fetchLimit = 1
+        return !((try modelContext.fetch(day)).isEmpty)
+    }
+
     func saveDayAggregate(_ dayAggregate: DayAggregate) throws {
+        try ensureLocalRepairAllowsMutation()
         modelContext.insert(dayAggregate)
         try modelContext.save()
     }
 
     /// Batch save multiple day aggregates in a single transaction for better performance
     func saveDayAggregatesBatch(_ dayAggregates: [DayAggregate]) throws {
+        try ensureLocalRepairAllowsMutation()
         for aggregate in dayAggregates {
             // Avoid duplicating an existing day; if it exists, the fetched instance is already tracked
             if try fetchDayAggregate(for: aggregate.date) == nil {
@@ -87,11 +112,13 @@ class DataStore {
     }
 
     func deleteDayAggregate(_ dayAggregate: DayAggregate) throws {
+        try ensureLocalRepairAllowsMutation()
         modelContext.delete(dayAggregate)
         try modelContext.save()
     }
 
     func deleteAllDayAggregates() throws {
+        try ensureLocalRepairAllowsMutation()
         let descriptor = FetchDescriptor<DayAggregate>()
         let allAggregates = try modelContext.fetch(descriptor)
         for aggregate in allAggregates {
@@ -187,6 +214,7 @@ class DataStore {
     }
 
     func resetAppState() throws {
+        try ensureLocalRepairAllowsMutation()
         let appState = try fetchAppState()
         appState.lastHealthKitSyncDate = nil
         appState.healthKitAnchor = nil
@@ -197,6 +225,8 @@ class DataStore {
         appState.healthKitSourceBackfillVersion = 0
         appState.pendingHealthKitSourceBackfillIDs = []
         appState.pendingWorkoutSourceFinalization = false
+        appState.localWorkoutRepairVersion = 0
+        appState.localWorkoutRepairInProgress = false
         appState.lastRecoverySyncDate = nil
         appState.lastComputationDate = nil
         appState.isComputationInProgress = false
@@ -217,7 +247,9 @@ class DataStore {
     /// Identity upserts preserve user data and deletion tombstones. Identical
     /// source responses do not dirty a model or trigger history reconciliation.
     @discardableResult
-    func saveWorkouts(_ workouts: [Workout], reconcileSideEffects: Bool? = nil) throws -> WorkoutChanges {
+    func saveWorkouts(_ workouts: [Workout], reconcileSideEffects: Bool? = nil,
+                      prewarmed: WorkoutPrewarmedEndpoints? = nil) throws -> WorkoutChanges {
+        try ensureLocalRepairAllowsMutation()
         var changes = WorkoutChanges()
         for workout in workouts {
             if let existing = try fetchWorkout(byId: workout.id) {
@@ -231,7 +263,7 @@ class DataStore {
             }
         }
         if !changes.isEmpty {
-            changes.formUnion(try reconcileWorkoutSources(applySideEffects: reconcileSideEffects))
+            changes.formUnion(try reconcileWorkoutSources(applySideEffects: reconcileSideEffects, prewarmed: prewarmed))
             try modelContext.save()
         }
         return changes
@@ -256,8 +288,30 @@ class DataStore {
         var features = incoming.features
         let unreadable = Set(features.failedChannels + features.unavailableChannels)
         var featuresData = incoming.featuresData ?? existing.featuresData
-        if let data = incoming.featuresData, data != existing.featuresData {
+        let correctedStravaWithoutElapsed = incoming.source == WorkoutSource.strava.rawValue
+            && existing.source == WorkoutSource.strava.rawValue
+            && incoming.startTime != existing.startTime
+            && (incoming.featuresData == nil || unreadable.contains("elapsed"))
+        if incoming.featuresData == nil && correctedStravaWithoutElapsed {
+            // No incoming payload: keep the old channels but not an end tied
+            // to the old start. Mark its elapsed time as unavailable.
+            var retained = existing.features
+            if retained.end != nil {
+                retained.end = nil
+                if !retained.unavailableChannels.contains("elapsed") { retained.unavailableChannels.append("elapsed") }
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.sortedKeys]
+                featuresData = try encoder.encode(retained)
+            }
+        } else if let data = incoming.featuresData,
+                  data != existing.featuresData || (correctedStravaWithoutElapsed && features.end != nil) {
             let prior = existing.features
+            if incoming.source == WorkoutSource.strava.rawValue && existing.source == WorkoutSource.strava.rawValue
+                && unreadable.contains("elapsed") {
+                // An old absolute end cannot describe a corrected start when
+                // the new source record does not report its elapsed time.
+                features.end = incoming.startTime == existing.startTime ? prior.end : nil
+            }
             if unreadable.contains("heartRate") { features.heartRate = prior.heartRate }
             if unreadable.contains("power") { features.power = prior.power }
             if unreadable.contains("cadence") { features.cadence = prior.cadence }
@@ -329,16 +383,114 @@ class DataStore {
         return true
     }
 
+    /// Decode endpoints off the main actor before inserting or merging any
+    /// source row. Prewarming is a bounded hint: changed, new, or oversized
+    /// payloads fall back to the normal synchronous full decoder.
+    func prepareWorkoutEndpoints(
+        incoming: [Workout], validateSources: (() throws -> Void)? = nil,
+        byteLimit: Int = 16 * 1_024 * 1_024,
+        candidateIDs: @escaping @Sendable ([WorkoutEndpointCandidate]) async throws -> [String] = WorkoutEndpointPrewarmer.candidateIDs,
+        decode: @escaping @Sendable ([WorkoutEndpointPayload]) async throws -> [PrewarmedWorkoutEndpoint] = WorkoutEndpointPrewarmer.decode
+    ) async throws -> WorkoutPrewarmedEndpoints {
+        try Task.checkCancellation()
+        try validateSources?()
+        let total = try modelContext.fetchCount(FetchDescriptor<Workout>())
+        var candidates: [WorkoutEndpointCandidate] = []
+        func candidate(_ row: Workout) -> WorkoutEndpointCandidate {
+            WorkoutEndpointCandidate(id: row.id, start: row.startTime, duration: row.duration,
+                                     type: row.workoutType, source: row.source)
+        }
+        // Fetch by page so the main actor yields without retaining a page of
+        // managed models across suspension. Concurrent inserts/deletions can
+        // only cause a cache miss, never an incorrect match.
+        func persistedPage(_ offset: Int) throws -> [WorkoutEndpointCandidate] {
+            var descriptor = FetchDescriptor<Workout>(sortBy: [SortDescriptor(\.id)])
+            descriptor.fetchOffset = offset
+            descriptor.fetchLimit = 50
+            return try modelContext.fetch(descriptor).map(candidate)
+        }
+        for offset in stride(from: 0, to: total, by: 50) {
+            candidates.append(contentsOf: try persistedPage(offset))
+            try await Task.sleep(for: .milliseconds(1))
+            try validateSources?()
+        }
+        for offset in stride(from: 0, to: incoming.count, by: 50) {
+            candidates.append(contentsOf: incoming[offset..<min(offset + 50, incoming.count)].map(candidate))
+            try await Task.sleep(for: .milliseconds(1))
+            try validateSources?()
+        }
+        let ids = try await candidateIDs(candidates)
+        try Task.checkCancellation()
+        try validateSources?()
+        var incomingByID: [String: [Workout]] = [:]
+        for offset in stride(from: 0, to: incoming.count, by: 50) {
+            for row in incoming[offset..<min(offset + 50, incoming.count)] {
+                incomingByID[row.id, default: []].append(row)
+            }
+            try await Task.sleep(for: .milliseconds(1))
+            try validateSources?()
+        }
+        let result = WorkoutPrewarmedEndpoints()
+        let limit = max(0, byteLimit)
+        var bytes = 0
+        var seen: [String: [Data?]] = [:]
+        var pending: [WorkoutEndpointPayload] = []
+        func enqueue(_ id: String, _ data: Data?) {
+            guard !(seen[id] ?? []).contains(where: { $0 == data }) else { return }
+            let count = data?.count ?? 0
+            guard count <= limit - bytes else { return }
+            bytes += count
+            seen[id, default: []].append(data)
+            pending.append(WorkoutEndpointPayload(id: id, data: data))
+        }
+        for (offset, id) in ids.enumerated() {
+            try Task.checkCancellation()
+            if let stored = try fetchWorkout(byId: id) { enqueue(id, stored.featuresData) }
+            for row in incomingByID[id] ?? [] { enqueue(id, row.featuresData) }
+            if (offset + 1).isMultiple(of: 20) {
+                if !pending.isEmpty {
+                    let decoded = try await decode(pending)
+                    try Task.checkCancellation()
+                    try validateSources?()
+                    result.append(decoded)
+                    pending.removeAll(keepingCapacity: true)
+                } else {
+                    try await Task.sleep(for: .milliseconds(1))
+                    try validateSources?()
+                }
+            }
+        }
+        if !pending.isEmpty {
+            let decoded = try await decode(pending)
+            try Task.checkCancellation()
+            try validateSources?()
+            result.append(decoded)
+        }
+        try Task.checkCancellation()
+        try validateSources?()
+        return result
+    }
+
     /// Bounded imports combine both sources. Reconcile before committing each
     /// batch, so cancellation never leaves duplicate active source rows. Each yield
     /// allows navigation and Settings to run during a large first import.
     func applyImportedWorkouts(_ workouts: [Workout], deletedIDs: [String], finalize: Bool = true,
-                               validateSources: (() throws -> Void)? = nil) async throws -> WorkoutChanges {
+                               validateSources: (() throws -> Void)? = nil,
+                               prewarmed: WorkoutPrewarmedEndpoints? = nil) async throws -> WorkoutChanges {
+        let endpoints: WorkoutPrewarmedEndpoints?
+        if let prewarmed { endpoints = prewarmed }
+        else if !workouts.isEmpty || !deletedIDs.isEmpty || finalize {
+            endpoints = try await prepareWorkoutEndpoints(incoming: workouts, validateSources: validateSources)
+        } else { endpoints = nil }
         var changes = WorkoutChanges()
         for offset in stride(from: 0, to: workouts.count, by: 20) {
             try Task.checkCancellation()
             try validateSources?()
-            changes.formUnion(try saveWorkouts(Array(workouts[offset..<min(offset + 20, workouts.count)]), reconcileSideEffects: false))
+            changes.formUnion(try saveWorkouts(Array(workouts[offset..<min(offset + 20, workouts.count)]),
+                                              reconcileSideEffects: false, prewarmed: endpoints))
+            #if DEBUG
+            await importedBatchDidSaveForTesting?(min(offset + 20, workouts.count))
+            #endif
             try await Task.sleep(for: .milliseconds(1))
         }
         for offset in stride(from: 0, to: deletedIDs.count, by: 20) {
@@ -347,19 +499,19 @@ class DataStore {
             let deleted = try applySourceDeletions(Array(deletedIDs[offset..<min(offset + 20, deletedIDs.count)]), rebuildHistory: false)
             changes.formUnion(deleted)
             if !deleted.isEmpty {
-                changes.formUnion(try reconcileWorkoutSources(applySideEffects: false))
+                changes.formUnion(try reconcileWorkoutSources(applySideEffects: false, prewarmed: endpoints))
                 try modelContext.save()
             }
             try await Task.sleep(for: .milliseconds(1))
         }
-        if finalize { changes.formUnion(try finalizeWorkoutSources()) }
+        if finalize { changes.formUnion(try finalizeWorkoutSources(prewarmed: endpoints)) }
         return changes
     }
 
     /// Reconcile even when no source changed, to repair groups from older versions.
     @discardableResult
-    func finalizeWorkoutSources() throws -> WorkoutChanges {
-        let changes = try reconcileWorkoutSources(applySideEffects: true)
+    func finalizeWorkoutSources(prewarmed: WorkoutPrewarmedEndpoints? = nil) throws -> WorkoutChanges {
+        let changes = try reconcileWorkoutSources(applySideEffects: true, prewarmed: prewarmed)
         if !changes.isEmpty { try modelContext.save() }
         return changes
     }
@@ -369,6 +521,10 @@ class DataStore {
     /// Unknown HealthKit apps can still match one Strava row, as before, but
     /// cannot establish that two HealthKit rows came from different apps.
     static func matchingWorkoutGroups(_ workouts: [Workout]) -> [[Workout]] {
+        matchingWorkoutGroups(workouts, endpoints: WorkoutEndpointCache())
+    }
+
+    private static func matchingWorkoutGroups(_ workouts: [Workout], endpoints: WorkoutEndpointCache) -> [[Workout]] {
         let rows = workouts.sorted {
             if $0.startTime != $1.startTime { return $0.startTime < $1.startTime }
             return $0.id < $1.id
@@ -377,7 +533,7 @@ class DataStore {
         for index in rows.indices {
             var other = index + 1
             while other < rows.count && rows[other].startTime.timeIntervalSince(rows[index].startTime) < 60 {
-                if possibleDuplicate(rows[index], rows[other]) {
+                if possibleDuplicate(rows[index], rows[other], endpoints: endpoints) {
                     neighbors[index].append(other)
                     neighbors[other].append(index)
                 }
@@ -398,7 +554,7 @@ class DataStore {
             var complete = true
             for left in members.indices {
                 for right in members.indices where right > left {
-                    if !definiteDuplicate(members[left], members[right]) { complete = false }
+                    if !definiteDuplicate(members[left], members[right], endpoints: endpoints) { complete = false }
                 }
             }
             if complete { result.append(members) }
@@ -407,17 +563,28 @@ class DataStore {
         return result
     }
 
-    private static func possibleDuplicate(_ first: Workout, _ second: Workout) -> Bool {
-        guard WorkoutAggregator.hasMatchingTiming(first, second) else { return false }
+    private static func possibleDuplicate(_ first: Workout, _ second: Workout,
+                                          endpoints: WorkoutEndpointCache) -> Bool {
         let firstType = WorkoutAggregator.normalizeWorkoutType(first.workoutType)
         let secondType = WorkoutAggregator.normalizeWorkoutType(second.workoutType)
-        if firstType == secondType { return !firstType.isEmpty }
-        return (first.source == WorkoutSource.healthKit.rawValue && firstType == "other") ||
-            (second.source == WorkoutSource.healthKit.rawValue && secondType == "other")
+        let compatible: Bool
+        if firstType == secondType { compatible = !firstType.isEmpty }
+        else {
+            compatible = (first.source == WorkoutSource.healthKit.rawValue && firstType == "other") ||
+                (second.source == WorkoutSource.healthKit.rawValue && secondType == "other")
+        }
+        guard compatible else { return false }
+        return WorkoutAggregator.hasMatchingTiming(first, second, end: endpoints.end)
     }
 
-    private static func definiteDuplicate(_ first: Workout, _ second: Workout) -> Bool {
-        guard possibleDuplicate(first, second) else { return false }
+    private static func definiteDuplicate(_ first: Workout, _ second: Workout,
+                                          endpoints: WorkoutEndpointCache) -> Bool {
+        guard possibleDuplicate(first, second, endpoints: endpoints) else { return false }
+        // Keep uncertain deletion candidates in the ambiguity graph, but
+        // never group them without both actual endpoints.
+        if first.deletionOrigin == "user" || second.deletionOrigin == "user" {
+            guard endpoints.end(first) != nil && endpoints.end(second) != nil else { return false }
+        }
         let type = WorkoutAggregator.normalizeWorkoutType(first.workoutType)
         guard type != "other", type == WorkoutAggregator.normalizeWorkoutType(second.workoutType) else { return false }
         let healthKit = WorkoutSource.healthKit.rawValue
@@ -433,7 +600,9 @@ class DataStore {
     /// Compare only temporally adjacent sources, instead of searching every
     /// historical row for every activity. Recompute logical groups after corrections.
     @discardableResult
-    func reconcileWorkoutSources(applySideEffects: Bool? = nil) throws -> WorkoutChanges {
+    func reconcileWorkoutSources(applySideEffects: Bool? = nil,
+                                 prewarmed: WorkoutPrewarmedEndpoints? = nil) throws -> WorkoutChanges {
+        try ensureLocalRepairAllowsMutation()
         // While an import is suspended, other UI actions may reconcile through
         // another DataStore using the same context. They must not finalize an
         // incomplete batch either. The completed import explicitly opts in.
@@ -443,14 +612,15 @@ class DataStore {
         if let applySideEffects { mayFinalize = applySideEffects }
         else {
             mayFinalize = state?.isComputationInProgress != true && state?.pendingWorkoutSourceFinalization != true
+                && state?.localWorkoutRepairInProgress != true
         }
         let all = try allWorkouts()
-        let before = Dictionary(uniqueKeysWithValues: all.map { ($0.id, WorkoutCanonicalState($0)) })
         let external = all.filter { $0.source != WorkoutSource.manual.rawValue }
+        let endpoints = WorkoutEndpointCache(prewarmed: prewarmed)
         // Re-evaluate associations after source corrections without allowing
         // an uncertain candidate or a transitive bridge to swallow a session.
         var groupForID = Dictionary(uniqueKeysWithValues: external.map { ($0.id, $0.id) })
-        for members in Self.matchingWorkoutGroups(external.filter { $0.deletionOrigin != "source" }) {
+        for members in Self.matchingWorkoutGroups(external.filter { $0.deletionOrigin != "source" }, endpoints: endpoints) {
             guard let group = members.map(\.id).min() else { continue }
             for row in members { groupForID[row.id] = group }
         }
@@ -462,13 +632,23 @@ class DataStore {
             guard let previousGroup = row.sessionGroupID else { continue }
             let survivors = (previousGroups[previousGroup] ?? []).filter {
                 $0.id != row.id && $0.deletionOrigin != "source" &&
-                $0.sessionGroupID == previousGroup && Self.definiteDuplicate(row, $0)
+                $0.sessionGroupID == previousGroup && Self.definiteDuplicate(row, $0, endpoints: endpoints)
             }
             let survivorGroups = Set(survivors.compactMap { groupForID[$0.id] })
             if survivorGroups.count == 1, let group = survivorGroups.first {
                 groupForID[row.id] = group
             }
         }
+        return applyWorkoutSourceGroups(all, groupForID: groupForID,
+                                        mayFinalize: mayFinalize, unresolvedSources: unresolvedSources)
+    }
+
+    /// Apply only a complete plan without suspending. No context can observe a
+    /// partially applied group through an intervening main-actor operation.
+    private func applyWorkoutSourceGroups(_ all: [Workout], groupForID: [String: String],
+                                          mayFinalize: Bool, unresolvedSources: Set<String>) -> WorkoutChanges {
+        let before = Dictionary(uniqueKeysWithValues: all.map { ($0.id, WorkoutCanonicalState($0)) })
+        let external = all.filter { $0.source != WorkoutSource.manual.rawValue }
         for row in external {
             let group = groupForID[row.id] ?? row.id
             if row.sessionGroupID != group { row.sessionGroupID = group }
@@ -490,11 +670,6 @@ class DataStore {
                 if leftPriority != rightPriority { return leftPriority > rightPriority }
                 return $0.id < $1.id
             }.first
-            if let canonical, groupMayFinalize {
-                let tags = Array(Set(members.flatMap(\.userTags))).sorted()
-                if canonical.userTags != tags { canonical.userTags = tags }
-                for alias in members where alias.id != canonical.id && !alias.userTags.isEmpty { alias.userTags = [] }
-            }
             for row in members {
                 let suppressed = row.isTombstoned || row.id != canonical?.id
                 let link = row.id == canonical?.id ? nil : canonical?.id
@@ -509,6 +684,50 @@ class DataStore {
         var changes = WorkoutChanges()
         for row in all where before[row.id] != WorkoutCanonicalState(row) { changes.include(row) }
         return changes
+    }
+
+    /// Repair existing history without reading network sources. Expensive
+    /// decoding and grouping use immutable values away from the main actor.
+    /// The owner must retain its durable repair marker until derived history
+    /// has also been rebuilt successfully.
+    @discardableResult
+    func repairWorkoutSourcesLocally(
+        makePlan: @escaping @Sendable ([WorkoutSourceMatchInput]) async throws -> [String: String] = WorkoutSourceMatching.detachedPlan
+    ) async throws -> WorkoutChanges {
+        while true {
+            try Task.checkCancellation()
+            let initialRows = try allWorkouts()
+            let snapshot = Self.sourceMatchSnapshot(initialRows)
+            let plan = try await makePlan(snapshot)
+            try Task.checkCancellation()
+            let currentRows = try allWorkouts()
+            guard snapshot == Self.sourceMatchSnapshot(currentRows) else {
+                // Any concurrent source correction, deletion, tagging, or new
+                // row invalidates the whole plan; no mutations have occurred.
+                try await Task.sleep(for: .milliseconds(1))
+                continue
+            }
+            // Do not suspend between validating the inputs and applying the
+            // plan. Source-deletion and personal-data side effects remain
+            // deferred until connected sources have been finalized.
+            let changes = applyWorkoutSourceGroups(currentRows, groupForID: plan,
+                                                   mayFinalize: false, unresolvedSources: [])
+            if !changes.isEmpty { try modelContext.save() }
+            return changes
+        }
+    }
+
+    private static func sourceMatchSnapshot(_ rows: [Workout]) -> [WorkoutSourceMatchInput] {
+        rows.map { row in
+            WorkoutSourceMatchInput(
+                id: row.id, date: row.date, start: row.startTime, duration: row.duration,
+                type: row.workoutType, source: row.source, sourceBundleIdentifier: row.sourceBundleIdentifier,
+                deviceManufacturer: row.deviceManufacturer, deviceName: row.deviceName,
+                featuresData: row.source == WorkoutSource.manual.rawValue ? nil : row.featuresData,
+                deletionOrigin: row.deletionOrigin, groupID: row.sessionGroupID, linkedID: row.linkedSessionID,
+                isTombstoned: row.isTombstoned, isSuppressed: row.isSuppressed, userTags: row.userTags
+            )
+        }.sorted { $0.id < $1.id }
     }
 
     func allWorkouts() throws -> [Workout] {
@@ -563,6 +782,7 @@ class DataStore {
     }
 
     func ensureWorkoutMutationAllowed(for workout: Workout? = nil) throws {
+        try ensureLocalRepairAllowsMutation()
         let state = try modelContext.fetch(FetchDescriptor<AppState>()).first
         if state?.isComputationInProgress == true || state?.pendingWorkoutSourceFinalization == true {
             throw WorkoutMutationError.syncInProgress
@@ -604,6 +824,7 @@ class DataStore {
 
     @discardableResult
     func applySourceDeletions(_ ids: [String], rebuildHistory: Bool = true) throws -> WorkoutChanges {
+        try ensureLocalRepairAllowsMutation()
         var changes = WorkoutChanges()
         for id in ids {
             if let row = try fetchWorkout(byId: id), !row.isTombstoned {
@@ -622,6 +843,7 @@ class DataStore {
     }
 
     func deleteAllWorkouts() throws {
+        try ensureLocalRepairAllowsMutation()
         let descriptor = FetchDescriptor<Workout>()
         let allWorkouts = try modelContext.fetch(descriptor)
         for workout in allWorkouts {
@@ -633,6 +855,7 @@ class DataStore {
     /// Summary-only legacy days stay intact; affected days and their dependent
     /// CTL/ATL tail are rebuilt from persisted canonical sessions.
     func rebuildLegacyLoadHistory(now: Date = Date()) throws {
+        try ensureLocalRepairAllowsMutation()
         let rebuild = try LegacyHistoryRebuilder(context: modelContext, from: nil, now: now)
         while try !rebuild.applyBatch() {}
     }
@@ -692,12 +915,10 @@ class DataStore {
         try await V2Store(context: modelContext).backfillEstimates()
     }
 
-    func refreshV2Estimates(finalizeAliases: Bool = false,
-                            validateFinalization: (() throws -> Bool)? = nil) async throws {
+    func refreshV2Estimates() async throws {
         // Older focused unit-test containers may intentionally include only the legacy schema.
         guard modelContext.container.schema.entities.contains(where: { $0.name == "LoadEstimateRecord" }) else { return }
-        try await V2Store(context: modelContext).refreshEstimates(finalizeAliases: finalizeAliases,
-                                                                  validateFinalization: validateFinalization)
+        try await V2Store(context: modelContext).refreshEstimates()
     }
 
     // MARK: - StravaAuth Operations
@@ -731,11 +952,14 @@ class DataStore {
 
 enum WorkoutMutationError: LocalizedError {
     case syncInProgress
+    case localRepairInProgress
 
     var errorDescription: String? {
         switch self {
         case .syncInProgress:
             return "Activity sync is incomplete. Sync all connected sources, then try again."
+        case .localRepairInProgress:
+            return "Workout history is updating. Try again shortly."
         }
     }
 }
@@ -746,6 +970,49 @@ struct WorkoutChanges {
     var isEmpty: Bool { ids.isEmpty }
     mutating func include(_ row: Workout) { ids.insert(row.id); dates.insert(row.date) }
     mutating func formUnion(_ other: Self) { ids.formUnion(other.ids); dates.formUnion(other.dates) }
+}
+
+/// A reconciliation pass compares the same rows more than once. Decode each
+/// full feature payload at most once in that synchronous pass, including nil
+/// or unreadable endpoints; discard the cache before any source can change.
+/// Endpoints decoded from exact raw payloads, retained only for one sync.
+/// More than one payload may exist for an ID while a source correction is
+/// pending. A stale value is never returned for different bytes.
+@MainActor final class WorkoutPrewarmedEndpoints {
+    private var values: [String: [PrewarmedWorkoutEndpoint]] = [:]
+
+    nonisolated deinit {}
+
+    func append(_ entries: [PrewarmedWorkoutEndpoint]) {
+        for entry in entries { values[entry.id, default: []].append(entry) }
+    }
+
+    func matching(id: String, data: Data?) -> PrewarmedWorkoutEndpoint? {
+        values[id]?.first { $0.data == data }
+    }
+}
+
+@MainActor private final class WorkoutEndpointCache {
+    private struct Value { let end: Date? }
+    private var values: [ObjectIdentifier: Value] = [:]
+    private let prewarmed: WorkoutPrewarmedEndpoints?
+
+    init(prewarmed: WorkoutPrewarmedEndpoints? = nil) { self.prewarmed = prewarmed }
+
+    nonisolated deinit {}
+
+    func end(_ workout: Workout) -> Date? {
+        let key = ObjectIdentifier(workout)
+        if let cached = values[key] { return cached.end }
+        let result: Date?
+        if let prewarmed, let entry = prewarmed.matching(id: workout.id, data: workout.featuresData) {
+            result = entry.end
+        } else {
+            result = workout.features.end
+        }
+        values[key] = Value(end: result)
+        return result
+    }
 }
 
 private struct WorkoutCanonicalState: Equatable {

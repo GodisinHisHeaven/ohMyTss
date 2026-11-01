@@ -3,6 +3,19 @@ import SwiftData
 @testable import onMyTss
 
 final class MorningAppSummaryTests: XCTestCase {
+    #if DEBUG
+    @MainActor
+    func testDashboardFixtureProvidesConfirmedSummaryButStillHonorsPendingRepair() throws {
+        let container = try ModelContainer(for: Schema(AppSchema.models), configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        try LaunchHistoryFixture.seedDashboard(in: container)
+        let store = DataStore(modelContainer: container)
+        let state = try store.fetchAppState()
+        XCTAssertEqual(state.localWorkoutRepairVersion, LocalWorkoutHistoryRepair.currentVersion)
+        XCTAssertNotNil(try MorningAppSummary.make(store: store, timezone: TimeZone.current.identifier))
+        state.localWorkoutRepairInProgress = true
+        XCTAssertNil(try MorningAppSummary.make(store: store, timezone: TimeZone.current.identifier))
+    }
+    #endif
     @MainActor
     private func store() throws -> onMyTss.DataStore {
         let container = try ModelContainer(for: Schema(AppSchema.models), configurations: ModelConfiguration(isStoredInMemoryOnly: true))
@@ -16,6 +29,7 @@ final class MorningAppSummaryTests: XCTestCase {
         let day = DayAggregate(date: Calendar.current.startOfDay(for: now), totalTSS: 60, bodyBatteryScore: 72, sleepDuration: 7.5)
         try store.saveDayAggregate(day)
         let state = try store.fetchAppState()
+        state.localWorkoutRepairVersion = LocalWorkoutHistoryRepair.currentVersion
         state.lastComputationDate = now
         for (id, age, duration) in [("recent", 3600.0, 1800.0), ("old", 8*86400.0, 1800.0),
                                     ("suppressed", 3600.0, 1800.0), ("future", -3600.0, 1800.0)] {
@@ -36,10 +50,68 @@ final class MorningAppSummaryTests: XCTestCase {
     @MainActor
     func testMissingOrUncomputedRecoveryNeverUploadsDefaultScore() throws {
         let store = try store()
+        try store.fetchAppState().localWorkoutRepairVersion = LocalWorkoutHistoryRepair.currentVersion
         XCTAssertNil(try MorningAppSummary.make(store: store, timezone: TimeZone.current.identifier))
         try store.saveDayAggregate(DayAggregate(date: Date().startOfDay, bodyBatteryScore: 50, sleepDuration: 8))
         XCTAssertNil(try MorningAppSummary.make(store: store, timezone: TimeZone.current.identifier))
         XCTAssertNil(try MorningAppSummary.make(store: store, timezone: "Invalid/Zone"))
+    }
+
+    @MainActor
+    func testSummaryWaitsForLocalHistoryRepair() throws {
+        let store = try store()
+        let now = Date()
+        try store.saveDayAggregate(DayAggregate(date: now.startOfDay, totalTSS: 30, bodyBatteryScore: 72))
+        let state = try store.fetchAppState()
+        state.lastComputationDate = now
+        XCTAssertNil(try MorningAppSummary.make(store: store, timezone: TimeZone.current.identifier, now: now))
+        state.localWorkoutRepairVersion = LocalWorkoutHistoryRepair.currentVersion
+        state.localWorkoutRepairInProgress = true
+        XCTAssertNil(try MorningAppSummary.make(store: store, timezone: TimeZone.current.identifier, now: now))
+        state.localWorkoutRepairInProgress = false
+        state.pendingWorkoutSourceFinalization = true
+        XCTAssertNil(try MorningAppSummary.make(store: store, timezone: TimeZone.current.identifier, now: now))
+        state.pendingWorkoutSourceFinalization = false
+        XCTAssertEqual(try MorningAppSummary.make(store: store, timezone: TimeZone.current.identifier, now: now)?.readinessScore, 72)
+    }
+
+    @MainActor
+    func testRepairCompletionChangesMorningSyncTriggerWithoutNewSourceSync() {
+        let computedAt = Date()
+        let pending = MorningSyncTrigger(isActive: true, computedAt: computedAt,
+                                         repairVersion: 0, repairInProgress: true,
+                                         sourceFinalizationPending: false, computationInProgress: false)
+        let ready = MorningSyncTrigger(isActive: true, computedAt: computedAt,
+                                       repairVersion: LocalWorkoutHistoryRepair.currentVersion,
+                                       repairInProgress: false,
+                                       sourceFinalizationPending: false, computationInProgress: false)
+        XCTAssertNotEqual(pending, ready, "Finishing offline repair must reschedule summary sync")
+    }
+
+    @MainActor
+    func testConsentedSummaryIsNotUploadedUntilRepairCompletes() async throws {
+        let store = try store()
+        let now = Date()
+        try store.saveDayAggregate(DayAggregate(date: now.startOfDay, totalTSS: 30, bodyBatteryScore: 72))
+        let state = try store.fetchAppState()
+        state.lastComputationDate = now
+        let api = MorningServiceStub()
+        var raw = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(morningFixtureJSON.utf8)) as? [String: Any])
+        raw["timezone"] = TimeZone.current.identifier
+        raw["data_source"] = "app"
+        raw["app_summary_consent"] = true
+        raw["sms_enabled"] = true
+        api.json = String(decoding: try JSONSerialization.data(withJSONObject: raw), as: UTF8.self)
+        let sync = MorningSummarySync(api: api, tokenStore: MorningSessionStub(token: "fixture"))
+        await sync.sync(store: store)
+        XCTAssertTrue(api.uploadedSummaries.isEmpty)
+        state.localWorkoutRepairVersion = LocalWorkoutHistoryRepair.currentVersion
+        state.localWorkoutRepairInProgress = true
+        await sync.sync(store: store)
+        XCTAssertTrue(api.uploadedSummaries.isEmpty)
+        state.localWorkoutRepairInProgress = false
+        await sync.sync(store: store)
+        XCTAssertEqual(api.uploadedSummaries.count, 1)
     }
 
     @MainActor

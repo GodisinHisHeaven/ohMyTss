@@ -459,7 +459,7 @@ final class V2PersistenceTests: XCTestCase {
         context.insert(set)
         context.insert(observation)
         try context.save()
-        try await v2.refreshEstimates(finalizeAliases: true)
+        try await v2.refreshEstimates()
         XCTAssertEqual(health.userTags, ["saved-tag"])
         XCTAssertTrue(strava.userTags.isEmpty)
         XCTAssertEqual(set.sessionID, health.id)
@@ -474,10 +474,11 @@ final class V2PersistenceTests: XCTestCase {
 
         state.pendingHealthKitSourceBackfillIDs = []
         _ = try store.finalizeWorkoutSources()
-        try await v2.refreshEstimates(finalizeAliases: true)
-        XCTAssertEqual(strava.userTags, ["saved-tag"])
-        XCTAssertEqual(set.sessionID, strava.id)
-        XCTAssertEqual(observation.sessionID, strava.id)
+        try await v2.refreshEstimates()
+        XCTAssertTrue(strava.userTags.isEmpty)
+        XCTAssertEqual(health.userTags, ["saved-tag"])
+        XCTAssertEqual(set.sessionID, health.id)
+        XCTAssertEqual(observation.sessionID, health.id)
     }
 
     func testUnresolvedSourceDoesNotSpreadUserTombstoneUntilResolved() throws {
@@ -516,8 +517,8 @@ final class V2PersistenceTests: XCTestCase {
         try store.applyHealthKitDeletions([garmin.id])
         try await v2.refreshEstimates()
         XCTAssertEqual(try store.fetchWorkoutsForDay(start).map(\.id), [strava.id])
-        XCTAssertEqual(set.sessionID, strava.id)
-        XCTAssertEqual(observation.sessionID, strava.id)
+        XCTAssertEqual(set.sessionID, garmin.id)
+        XCTAssertEqual(observation.sessionID, garmin.id)
         XCTAssertTrue(garmin.isTombstoned)
         XCTAssertFalse(apple.isTombstoned)
     }
@@ -574,13 +575,15 @@ final class V2PersistenceTests: XCTestCase {
         let first = imported(id: "bridge-first", tss: 25)
         let second = imported(id: "bridge-second", tss: 30)
         second.startTime = start.addingTimeInterval(100)
+        second.duration = 500
         var secondFeatures = second.features
-        secondFeatures.end = second.startTime.addingTimeInterval(600)
+        secondFeatures.end = start.addingTimeInterval(600)
         second.features = secondFeatures
         let bridge = imported(id: "bridge-strava", source: .strava, tss: 35)
         bridge.startTime = start.addingTimeInterval(50)
+        bridge.duration = 550
         var bridgeFeatures = bridge.features
-        bridgeFeatures.end = bridge.startTime.addingTimeInterval(600)
+        bridgeFeatures.end = start.addingTimeInterval(600)
         bridge.features = bridgeFeatures
         XCTAssertTrue(WorkoutAggregator.areDuplicates(first, bridge))
         XCTAssertTrue(WorkoutAggregator.areDuplicates(second, bridge))
@@ -732,7 +735,7 @@ final class V2PersistenceTests: XCTestCase {
         XCTAssertEqual(try context.fetch(FetchDescriptor<Workout>()).count, 1)
     }
 
-    func testCanonicalSourceSwitchAndDeletionRetainUserRowsOnSurvivingSource() async throws {
+    func testCanonicalSourceSwitchAndDeletionRetainUserRowsOnOriginalSource() async throws {
         let context = ModelContext(try container())
         let dataStore = DataStore(modelContext: context)
         let store = V2Store(context: context)
@@ -744,8 +747,18 @@ final class V2PersistenceTests: XCTestCase {
         try store.saveObservation(report)
         try dataStore.saveWorkouts([imported(id: "synthetic-strava", source: .strava)])
         try await store.refreshEstimates()
-        XCTAssertEqual(row.sessionID, "synthetic-strava")
-        XCTAssertEqual(report.sessionID, "synthetic-strava")
+        XCTAssertEqual(row.sessionID, "synthetic-hk")
+        XCTAssertEqual(report.sessionID, "synthetic-hk")
+        let linked = try dataStore.allWorkouts()
+        let graph = WorkoutLinkGraph(linked.map { .init(id: $0.id, parentID: $0.linkedSessionID) })
+        let linkedIDs = graph.relatedIDs(to: "synthetic-strava")
+        XCTAssertTrue(linkedIDs.contains(row.sessionID))
+        XCTAssertTrue(linkedIDs.contains(try XCTUnwrap(report.sessionID)))
+        let stravaInput = try XCTUnwrap(JSONSerialization.jsonObject(with:
+            try latest(context, sessionID: "synthetic-strava").inputData) as? [String: Any])
+        let sets = try XCTUnwrap(stravaInput["sets"] as? [[String: Any]])
+        XCTAssertEqual(sets.count, 1)
+        XCTAssertEqual(sets.first?["id"] as? String, row.id.uuidString)
         try dataStore.applySourceDeletions(["synthetic-strava"])
         try await store.refreshEstimates()
         XCTAssertEqual(row.sessionID, "synthetic-hk")
@@ -757,6 +770,11 @@ final class V2PersistenceTests: XCTestCase {
         let active = try context.fetch(FetchDescriptor<Workout>()).filter { !$0.isTombstoned && !$0.isSuppressed }
         XCTAssertEqual(active.map(\.id), ["synthetic-hk"])
         XCTAssertFalse(try latest(context, sessionID: "synthetic-hk").value?.regions.isEmpty ?? true)
+        let restoredInput = try XCTUnwrap(JSONSerialization.jsonObject(with:
+            try latest(context, sessionID: "synthetic-hk").inputData) as? [String: Any])
+        let restoredSets = try XCTUnwrap(restoredInput["sets"] as? [[String: Any]])
+        XCTAssertEqual(restoredSets.count, 1)
+        XCTAssertEqual(restoredSets.first?["id"] as? String, row.id.uuidString)
     }
 
     func testSaveSetsValidatesWholeBatchBeforeInserting() throws {

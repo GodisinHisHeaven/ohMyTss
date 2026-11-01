@@ -5,6 +5,80 @@ import HealthKit
 
 @MainActor
 final class StravaSourceAvailabilityTests: XCTestCase {
+    func testStravaImportUsesOnlyReportedValidElapsedForEnd() async throws {
+        let start = Date(timeIntervalSince1970: 1_700_000_000)
+        let container = try ModelContainer(for: Schema(AppSchema.models), configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let store = DataStore(modelContainer: container)
+        try store.saveStravaAuth(StravaAuth(isConnected: true))
+        let client = SyntheticStravaClient()
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let inputs: [(Int, Any?)] = [(201, nil), (202, NSNull()), (203, 720), (204, 500), (205, 0)]
+        client.listed = try inputs.enumerated().map { index, item in
+            var object: [String: Any] = ["id": item.0, "start_date": ISO8601DateFormatter().string(from: start.addingTimeInterval(Double(index) * 7200)),
+                                         "moving_time": 600, "sport_type": "Run"]
+            if let elapsed = item.1 { object["elapsed_time"] = elapsed }
+            return try decoder.decode(StravaActivity.self, from: JSONSerialization.data(withJSONObject: object))
+        }
+        let aggregator = WorkoutAggregator(healthKitManager: EmptyHealthSource(), stravaAuthManager: SyntheticStravaToken(), dataStore: store, stravaClient: client)
+        _ = try await aggregator.fetchWorkouts(from: start.addingTimeInterval(-1), to: start.addingTimeInterval(40000))
+        let rows = Dictionary(uniqueKeysWithValues: aggregator.latestImportedWorkouts.map { ($0.id, $0) })
+        for id in ["201", "202", "204", "205"] {
+            let row = try XCTUnwrap(rows[id])
+            XCTAssertNil(row.features.end, "Missing, null, or invalid elapsed time cannot establish an end")
+            XCTAssertTrue(row.features.unavailableChannels.contains("elapsed"))
+        }
+        let paused = try XCTUnwrap(rows["203"])
+        XCTAssertEqual(paused.features.end, paused.startTime.addingTimeInterval(720))
+        XCTAssertFalse(paused.features.unavailableChannels.contains("elapsed"))
+    }
+
+    func testMissingElapsedPreservesSavedEndAndLaterCorrectionReplacesIt() async throws {
+        let start = Date(timeIntervalSince1970: 1_700_000_000)
+        let container = try ModelContainer(for: Schema(AppSchema.models), configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let store = DataStore(modelContainer: container)
+        try store.saveStravaAuth(StravaAuth(isConnected: true))
+        let existing = source(id: 301, at: start)
+        var prior = WorkoutFeatures()
+        prior.end = start.addingTimeInterval(720)
+        prior.heartRate = [TimedValue(start: start, end: start.addingTimeInterval(10), value: 140)]
+        existing.features = prior
+        try store.saveWorkout(existing)
+        let client = SyntheticStravaClient()
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        func activity(elapsed: Int?) throws -> StravaActivity {
+            var object: [String: Any] = ["id": 301, "start_date": ISO8601DateFormatter().string(from: start),
+                                         "moving_time": 60, "sport_type": "Run"]
+            if let elapsed { object["elapsed_time"] = elapsed }
+            return try decoder.decode(StravaActivity.self, from: JSONSerialization.data(withJSONObject: object))
+        }
+        let aggregator = WorkoutAggregator(healthKitManager: EmptyHealthSource(), stravaAuthManager: SyntheticStravaToken(), dataStore: store, stravaClient: client)
+        client.listed = [try activity(elapsed: nil)]
+        _ = try await aggregator.fetchWorkouts(from: start.addingTimeInterval(-1), to: start.addingTimeInterval(3600))
+        let incoming = try XCTUnwrap(aggregator.latestImportedWorkouts.first)
+        // Other independently unavailable channels retain their existing data too.
+        var incomplete = incoming.features
+        incomplete.unavailableChannels.append("heartRate")
+        incoming.features = incomplete
+        try store.saveWorkouts([incoming])
+        let saved = try XCTUnwrap(store.fetchWorkout(byId: "301"))
+        XCTAssertEqual(saved.features.end, prior.end)
+        XCTAssertEqual(saved.features.heartRate, prior.heartRate)
+        XCTAssertTrue(saved.features.unavailableChannels.contains("elapsed"))
+
+        client.listed = [try activity(elapsed: 780)]
+        _ = try await aggregator.fetchWorkouts(from: start.addingTimeInterval(-1), to: start.addingTimeInterval(3600))
+        let corrected = try XCTUnwrap(aggregator.latestImportedWorkouts.first)
+        var correction = corrected.features
+        correction.unavailableChannels.append("heartRate")
+        corrected.features = correction
+        try store.saveWorkouts([corrected])
+        XCTAssertEqual(saved.features.end, start.addingTimeInterval(780))
+        XCTAssertFalse(saved.features.unavailableChannels.contains("elapsed"))
+        XCTAssertEqual(saved.features.heartRate, prior.heartRate)
+    }
+
     func testDetailReturnsMissingOnlyForHTTP404() async throws {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [SyntheticStravaHTTP.self]

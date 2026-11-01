@@ -102,6 +102,30 @@ final class WorkoutAggregatorTests: XCTestCase {
         XCTAssertEqual(aggregator.deduplicateWorkouts(healthKit: [health], strava: [strava]).count, 2)
     }
 
+    func testMatchingActualEndsWithDifferentStartsKeepsGarminSource() throws {
+        let aggregator = try makeAggregator()
+        let garmin = workout("garmin-hk", source: .healthKit, duration: 600, end: 600)
+        garmin.sourceBundleIdentifier = "com.garmin.connect.mobile"
+        let strava = workout("strava", source: .strava, duration: 570, end: 600)
+        strava.startTime = start.addingTimeInterval(30)
+
+        XCTAssertEqual(aggregator.deduplicateWorkouts(healthKit: [garmin], strava: [strava]).map(\.id), [garmin.id])
+        XCTAssertTrue(strava.isSuppressed)
+        XCTAssertFalse(garmin.isSuppressed)
+    }
+
+    func testEqualDurationsWithShiftedEndsRemainSeparate() throws {
+        let aggregator = try makeAggregator()
+        let health = workout("health", source: .healthKit, duration: 600, end: 600)
+        let strava = workout("strava", source: .strava, duration: 600, end: 650)
+        strava.startTime = start.addingTimeInterval(50)
+
+        XCTAssertEqual(Set(aggregator.deduplicateWorkouts(healthKit: [health], strava: [strava]).map(\.id)),
+                       Set([health.id, strava.id]))
+        XCTAssertFalse(health.isSuppressed)
+        XCTAssertFalse(strava.isSuppressed)
+    }
+
     func testAmbiguousAndSameSourceCandidatesRemainVisible() throws {
         let aggregator = try makeAggregator()
         let first = workout("hk1", source: .healthKit)

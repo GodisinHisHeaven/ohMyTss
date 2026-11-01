@@ -310,6 +310,9 @@ struct StravaActivity: Codable {
     var distance: Double
     var movingTime: Int
     var elapsedTime: Int
+    /// The actual elapsed duration reported by Strava, distinct from the
+    /// compatibility fallback exposed by `elapsedTime` when the field is absent.
+    var reportedElapsedTime: Int?
     var totalElevationGain: Double
     var type: String
     var sportType: String
@@ -335,7 +338,9 @@ struct StravaActivity: Codable {
         name = try container.decodeIfPresent(String.self, forKey: .name) ?? "Activity"
         distance = try container.decodeIfPresent(Double.self, forKey: .distance) ?? 0
         movingTime = try container.decodeIfPresent(Int.self, forKey: .movingTime) ?? 0
-        elapsedTime = try container.decodeIfPresent(Int.self, forKey: .elapsedTime) ?? movingTime
+        let reportedElapsed = try container.decodeIfPresent(Int.self, forKey: .elapsedTime)
+        reportedElapsedTime = reportedElapsed
+        elapsedTime = reportedElapsed ?? movingTime
         totalElevationGain = try container.decodeIfPresent(Double.self, forKey: .totalElevationGain) ?? 0
 
         let decodedType = try container.decodeIfPresent(String.self, forKey: .type) ?? "Workout"
@@ -364,7 +369,9 @@ struct StravaActivity: Codable {
         try container.encode(name, forKey: .name)
         try container.encode(distance, forKey: .distance)
         try container.encode(movingTime, forKey: .movingTime)
-        try container.encode(elapsedTime, forKey: .elapsedTime)
+        // Do not turn a missing duration into an apparently reported value
+        // when a decoded activity is encoded and decoded again.
+        try container.encodeIfPresent(reportedElapsedTime, forKey: .elapsedTime)
         try container.encode(totalElevationGain, forKey: .totalElevationGain)
         try container.encode(type, forKey: .type)
         try container.encode(sportType, forKey: .sportType)

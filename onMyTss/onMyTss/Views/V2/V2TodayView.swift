@@ -19,6 +19,7 @@ private struct TodayDashboard: View {
     let now: Date
     @Query private var workouts: [Workout]
     @Query private var intensitySources: [Workout]
+    @Query private var muscleSources: [Workout]
     @Query private var days: [DayAggregate]
     @Query private var appStates: [AppState]
     @AppStorage("intensityLT1HeartRate") private var lt1 = 0
@@ -35,7 +36,7 @@ private struct TodayDashboard: View {
         self.now = now
         let cutoff = MuscleRPESummary.cutoff(for: now)
         // Duplicate source timestamps can differ by up to a minute.
-        let sourceCutoff = cutoff.addingTimeInterval(-60)
+        let sourceCutoff = MuscleRPESummary.sourceCutoff(for: now)
         let start = Calendar.current.startOfDay(for: now)
         let end = Calendar.current.date(byAdding: .day, value: 1, to: start) ?? now
         _workouts = Query(filter: #Predicate<Workout> {
@@ -43,6 +44,10 @@ private struct TodayDashboard: View {
         }, sort: \.startTime, order: .reverse)
         _intensitySources = Query(filter: #Predicate<Workout> {
             $0.startTime >= sourceCutoff && $0.startTime < end && !$0.isTombstoned
+        })
+        // Source-deleted aliases may still own user-entered sets and tags.
+        _muscleSources = Query(filter: #Predicate<Workout> {
+            $0.startTime >= sourceCutoff && $0.startTime < end
         })
         _days = Query(filter: #Predicate<DayAggregate> { $0.date >= start && $0.date < end })
     }
@@ -58,7 +63,7 @@ private struct TodayDashboard: View {
                     .padding(.vertical, 4)
                 }
                 Section {
-                    MuscleRPECard(workouts: activeWorkouts, now: currentNow)
+                    MuscleRPECard(workouts: muscleSources, now: currentNow)
                         .padding(.vertical, 8)
                 }
                 Section {
@@ -74,6 +79,7 @@ private struct TodayDashboard: View {
                         NavigationLink { V2ActivityDetailView(workout: workout) } label: {
                             WorkoutCategoryRow(type: workout.workoutType)
                         }
+                        .accessibilityIdentifier("today.workout.\(workout.id)")
                     }
                     Button("Record strength", systemImage: "plus") { strength = true }
                         .swissAction()

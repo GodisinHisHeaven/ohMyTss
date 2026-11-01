@@ -9,8 +9,10 @@ enum LaunchHistoryFixture {
                      sourceAlreadyKnown: Bool = false) throws {
         let context = ModelContext(container)
         let now = Date()
+        let linkedHistoryFixture = ProcessInfo.processInfo.arguments.contains("--v2-large-history-linked-fixture")
         context.insert(UserThresholds(hasCompletedOnboarding: true))
-        for index in 0..<1000 {
+        // Keep the total at 1,000 while reserving one row for a duplicate.
+        for index in 0..<(linkedHistoryFixture ? 999 : 1000) {
             let start = now.addingTimeInterval(-Double(index + 1) * 86400)
             let workout = Workout(id: "synthetic-launch-\(index)", date: start.startOfDay,
                                   startTime: start, duration: 3600, workoutType: "Run", tss: 50,
@@ -18,6 +20,12 @@ enum LaunchHistoryFixture {
             // Synthetic IDs are not HealthKit UUIDs, so the sync fixture must
             // represent sources already identified by a previous sync.
             if sourceAlreadyKnown { workout.sourceBundleIdentifier = "com.example.synthetic-workouts" }
+            if linkedHistoryFixture && index == 0 {
+                workout.sourceBundleIdentifier = "com.garmin.connect.mobile"
+                var features = WorkoutFeatures()
+                features.end = start.addingTimeInterval(3600)
+                workout.features = features
+            }
             workout.sessionGroupID = workout.id
             context.insert(workout)
             guard includeEstimates else { continue }
@@ -27,6 +35,20 @@ enum LaunchHistoryFixture {
             context.insert(LoadEstimateRecord(sessionID: workout.id, version: value.version,
                                               inputCutoff: value.inputCutoff, computedAt: now,
                                               payloadData: try JSONEncoder().encode(value), inputData: Data()))
+        }
+        if linkedHistoryFixture {
+            let start = now.addingTimeInterval(-86400)
+            let alias = Workout(id: "synthetic-launch-strava-alias", date: start.startOfDay,
+                                startTime: start, duration: 3600, workoutType: "Run", tss: 40,
+                                calculationMethod: "duration", source: .strava)
+            var features = WorkoutFeatures()
+            features.end = start.addingTimeInterval(3600)
+            alias.features = features
+            alias.userTags = ["history-sentinel-tag"]
+            context.insert(alias)
+            context.insert(StrengthSetRecord(sessionID: alias.id, exerciseID: "squat", reps: 8, rir: 1))
+            context.insert(LocalObservation(regionRaw: "quads", sideRaw: "left", severity: 2,
+                                            observedAt: start, sessionID: alias.id))
         }
         try context.save()
     }
@@ -44,6 +66,10 @@ enum LaunchHistoryFixture {
             context.insert(UserThresholds(hasCompletedOnboarding: true))
         }
         let state = AppState(lastComputationDate: now)
+        if !ProcessInfo.processInfo.arguments.contains("--v2-history-repair-fixture") {
+            // This dashboard fixture represents already reconciled history.
+            state.localWorkoutRepairVersion = LocalWorkoutHistoryRepair.currentVersion
+        }
         context.insert(state)
         for index in 0..<30 {
             let date = Calendar.current.date(byAdding: .day, value: -index, to: now.startOfDay)!
@@ -68,6 +94,46 @@ enum LaunchHistoryFixture {
         }
         if includeStrengthSets {
             context.insert(StrengthSetRecord(sessionID: "synthetic-dashboard-2", exerciseID: "bench_press", reps: 8, rir: 2))
+        }
+        if ProcessInfo.processInfo.arguments.contains("--v2-linked-details-fixture") {
+            let start = now.addingTimeInterval(-300)
+            let garmin = Workout(id: "synthetic-linked-garmin", date: start.startOfDay, startTime: start,
+                                 duration: 240, workoutType: "Swim", tss: 12,
+                                 calculationMethod: "duration", source: .healthKit)
+            garmin.sourceBundleIdentifier = "com.garmin.connect.mobile"
+            let strava = Workout(id: "synthetic-linked-strava", date: start.startOfDay, startTime: start,
+                                 duration: 240, workoutType: "Swim", tss: 12,
+                                 calculationMethod: "duration", source: .strava, isSuppressed: true)
+            strava.linkedSessionID = garmin.id
+            strava.userTags = ["paddles"]
+            strava.isTombstoned = true
+            strava.deletionOrigin = "source"
+            let manual = Workout(id: "synthetic-linked-manual", date: start.startOfDay, startTime: start,
+                                 duration: 240, workoutType: "Swim", tss: 12,
+                                 calculationMethod: "duration", source: .manual, isSuppressed: true)
+            manual.linkedSessionID = strava.id
+            let removed = Workout(id: "synthetic-linked-user-deleted", date: start.startOfDay, startTime: start,
+                                  duration: 240, workoutType: "Swim", tss: 12,
+                                  calculationMethod: "duration", source: .manual, isSuppressed: true)
+            removed.linkedSessionID = garmin.id
+            removed.isTombstoned = true
+            removed.deletionOrigin = "user"
+            removed.userTags = ["deleted-fixture-tag"]
+            let legacyRemoved = Workout(id: "synthetic-linked-legacy-deleted", date: start.startOfDay, startTime: start,
+                                        duration: 240, workoutType: "Swim", tss: 12,
+                                        calculationMethod: "duration", source: .manual, isSuppressed: true)
+            legacyRemoved.linkedSessionID = garmin.id
+            legacyRemoved.isTombstoned = true
+            legacyRemoved.userTags = ["legacy-deleted-fixture-tag"]
+            context.insert(garmin)
+            context.insert(strava)
+            context.insert(manual)
+            context.insert(removed)
+            context.insert(legacyRemoved)
+            context.insert(StrengthSetRecord(sessionID: garmin.id, exerciseID: "squat", reps: 5, rir: 2))
+            context.insert(StrengthSetRecord(sessionID: manual.id, exerciseID: "bench_press", reps: 8, rir: 1))
+            context.insert(LocalObservation(regionRaw: "quads", sideRaw: "left", severity: 2,
+                                            observedAt: start, sessionID: strava.id))
         }
         for (region, side, rpe, age) in [
             ("quads", "left", 8, 0), ("quads", "right", 5, 0),

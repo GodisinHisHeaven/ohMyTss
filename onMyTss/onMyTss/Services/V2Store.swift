@@ -41,6 +41,7 @@ final class V2Store {
     }
 
     func createStrengthSession(start: Date, duration: TimeInterval) throws -> Workout {
+        try DataStore(modelContext: context).ensureLocalRepairAllowsMutation()
         guard start <= clock(), duration.isFinite, duration > 0 else { throw V2StoreError.invalidSession }
         let row = Workout(id: "manual:\(UUID().uuidString)", date: Calendar.current.startOfDay(for: start),
                           startTime: start, duration: duration, workoutType: "Strength", tss: 0,
@@ -145,28 +146,18 @@ final class V2Store {
     }
 
     /// Recompute immutable inputs off the UI actor and persist bounded batches.
-    func refreshEstimates(finalizeAliases: Bool = false,
-                          validateFinalization: (() throws -> Bool)? = nil) async throws {
-        try await updateEstimates(onlyMissing: false, finalizeAliases: finalizeAliases,
-                                  validateFinalization: validateFinalization)
+    func refreshEstimates() async throws {
+        try await updateEstimates(onlyMissing: false)
     }
 
     func backfillEstimates() async throws {
         try await updateEstimates(onlyMissing: true)
     }
 
-    private func updateEstimates(onlyMissing: Bool, finalizeAliases: Bool = false,
-                                 validateFinalization: (() throws -> Bool)? = nil) async throws {
+    private func updateEstimates(onlyMissing: Bool) async throws {
         processing: while true {
             try Task.checkCancellation()
             try await Task.sleep(for: .milliseconds(1))
-            if !onlyMissing {
-                let state = try context.fetch(FetchDescriptor<AppState>()).first
-                let pending = state?.isComputationInProgress == true || state?.pendingWorkoutSourceFinalization == true
-                if finalizeAliases {
-                    if try validateFinalization?() ?? true { try resolveAliases() }
-                } else if !pending { try resolveAliases() }
-            }
             let snapshot = try V2EstimateBatch(context: context)
             let now = clock()
             let calculation = Task.detached(priority: .utility) {
@@ -199,28 +190,6 @@ final class V2Store {
             }
             return
         }
-    }
-
-    private func resolveAliases() throws {
-        let all = try context.fetch(FetchDescriptor<Workout>())
-        let state = try context.fetch(FetchDescriptor<AppState>()).first
-        let unresolvedSources = Set(state?.pendingHealthKitSourceBackfillIDs ?? [])
-        let children = Dictionary(grouping: all.filter { $0.linkedSessionID != nil }, by: { $0.linkedSessionID! })
-        let sets = Dictionary(grouping: try context.fetch(FetchDescriptor<StrengthSetRecord>()), by: \.sessionID)
-        let observations = Dictionary(grouping: try context.fetch(FetchDescriptor<LocalObservation>()), by: \.sessionID)
-        for canonical in all where !canonical.isTombstoned && !canonical.isSuppressed {
-            var ids: Set<String> = [canonical.id]
-            var pending = [canonical.id]
-            while let id = pending.popLast() {
-                for child in children[id] ?? [] where ids.insert(child.id).inserted { pending.append(child.id) }
-            }
-            if ids.count > 1 && !ids.isDisjoint(with: unresolvedSources) { continue }
-            for id in ids where id != canonical.id {
-                for row in sets[id] ?? [] { row.sessionID = canonical.id }
-                for row in observations[id] ?? [] { row.sessionID = canonical.id }
-            }
-        }
-        if context.hasChanges { try context.save() }
     }
 
     func recalculate(_ session: Workout) throws {
