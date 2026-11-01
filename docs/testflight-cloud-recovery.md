@@ -17,14 +17,13 @@ newest exact-main run and applies all existing success requirements.
 
 The retry requires the canceled run to belong to the configured app, its Cloud
 workflow and GitHub repository, and the main branch; the workflow must be enabled
-and its manual branch condition must clearly include main. It rejects missing
-cancellation reasons that are missing, empty, too long, or contain control
-characters; it also rejects a newer matching run, an ambiguous newer run,
-reruns of a GitHub Actions attempt, and a changed main SHA. Apple may provide a
-natural-language reason: the retry can accept it but only logs a restricted
-enum-like value, or `unavailable` when the reason does not match that format. Concurrent retry dispatches are
-serialized. It sends a single create request and never automatically retries an
-uncertain response. The key is used only in the guarded retry and verification
+and its manual branch condition must clearly include main. It rejects a newer
+matching run, an ambiguous newer run, reruns of a GitHub Actions attempt, and a
+changed main SHA. Apple may omit the cancellation reason or provide free text;
+the retry does not depend on that diagnostic and logs only a restricted enum-like
+value, or `unavailable` otherwise. Concurrent retry dispatches are serialized.
+It sends a single create request and never automatically retries an uncertain
+response. The key is used only in the guarded retry and verification
 steps; credentials and tokens must not be printed or copied to logs.
 
 Apple starts a branch reference rather than an immutable commit. A main update

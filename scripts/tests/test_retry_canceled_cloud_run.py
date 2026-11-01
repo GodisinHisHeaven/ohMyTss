@@ -108,13 +108,6 @@ class TestRecovery(unittest.TestCase):
             lambda c: c.old["attributes"].update(isPullRequestBuild=True),
             lambda c: c.old["attributes"].update(completionStatus="FAILED"),
             lambda c: c.old["attributes"].update(executionProgress="RUNNING"),
-            lambda c: c.old["attributes"].update(cancelReason=None),
-            lambda c: c.old["attributes"].update(cancelReason=""),
-            lambda c: c.old["attributes"].update(cancelReason="   "),
-            lambda c: c.old["attributes"].update(cancelReason="x" * 257),
-            lambda c: c.old["attributes"].update(cancelReason="cancelled\n::warning::injected"),
-            lambda c: c.old["attributes"].update(cancelReason="cancelled\x1b[31m"),
-            lambda c: c.old["attributes"].update(cancelReason={"message": "cancelled"}),
             lambda c: c.old["relationships"].update(product=relation("ciProducts", REPO)),
             lambda c: c.workflow["attributes"].update(isEnabled=False),
             lambda c: c.workflow["attributes"].update(manualBranchStartCondition=None),
@@ -147,18 +140,24 @@ class TestRecovery(unittest.TestCase):
                 self.assertIn("cancelReason: unavailable", self.output.getvalue())
                 self.assertNotIn(reason, self.output.getvalue())
 
-    def test_invalid_reasons_are_not_logged_or_retried(self):
-        for reason in ("", "   ", "x" * 257, "cancelled\n::warning::injected", "cancelled\x1b[31m", None):
+    def test_missing_empty_or_unsafe_reason_is_not_logged_and_does_not_block_canceled_run(self):
+        for reason in (None, "", "   ", "x" * 257, "cancelled\n::warning::injected",
+                       "cancelled\x1b[31m", {"message": "cancelled"}):
             with self.subTest(reason=reason):
                 self.api = FakeClient()
                 self.output = io.StringIO()
                 self.api.old["attributes"]["cancelReason"] = reason
-                with self.assertRaises(retry.Unknown) as error:
-                    self.recover()
-                self.assertEqual(self.api.requests, [])
-                self.assertEqual(self.output.getvalue(), "cancelReason: unavailable\n")
-                self.assertNotIn("::warning::", str(error.exception) + self.output.getvalue())
-                self.assertNotIn("\x1b", str(error.exception) + self.output.getvalue())
+                self.recover()
+                self.assertEqual(len(self.api.requests), 1)
+                self.assertIn("cancelReason: unavailable\n", self.output.getvalue())
+                self.assertNotIn("::warning::", self.output.getvalue())
+                self.assertNotIn("\x1b", self.output.getvalue())
+
+    def test_missing_reason_key_is_not_required(self):
+        del self.api.old["attributes"]["cancelReason"]
+        self.recover()
+        self.assertEqual(len(self.api.requests), 1)
+        self.assertIn("cancelReason: unavailable\n", self.output.getvalue())
 
     def test_manual_condition_allows_only_all_or_exact_main(self):
         for source, expected in [({"isAllMatch": True}, True),

@@ -98,13 +98,11 @@ def recover(client, target, run_id, app, current_main=github_branch):
     require(a.get("executionProgress") == "COMPLETE" and a.get("completionStatus") == "CANCELED",
             "Original run is not completed and canceled")
     reason = a.get("cancelReason")
-    known_reason = (isinstance(reason, str) and 0 < len(reason) <= 256
-                    and bool(reason.strip()) and reason.isprintable())
-    # Apple documents free text. Use it as evidence without writing that text
-    # to logs unless it has the restricted format of a safe enum-like value.
-    safe_reason = reason if known_reason and re.fullmatch(r"[A-Z][A-Z_]{1,63}", reason) else "unavailable"
+    # Apple may omit this free-text diagnostic; CANCELED is established above.
+    # Only display restricted enum-like values, never arbitrary server text.
+    safe_reason = (reason if isinstance(reason, str) and re.fullmatch(r"[A-Z][A-Z_]{1,63}", reason)
+                   else "unavailable")
     print("cancelReason:", safe_reason)
-    require(known_reason, "Cancellation reason unavailable or invalid; retry blocked")
     workflow_id = link(old, "workflow", "ciWorkflows")
     product_id = link(old, "product", "ciProducts")
     ref_id = link(old, "sourceBranchOrTag", "scmGitReferences")
