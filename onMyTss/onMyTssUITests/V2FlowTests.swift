@@ -58,20 +58,13 @@ final class V2FlowTests: XCTestCase {
         XCTAssertFalse(app.staticTexts["deleted-fixture-tag"].exists)
         XCTAssertFalse(app.staticTexts["legacy-deleted-fixture-tag"].exists)
 
-        let linkedSet = app.descendants(matching: .any)["activity.linkedSet"].firstMatch
-        reach(linkedSet, in: app)
-        XCTAssertTrue(app.staticTexts["Sets from linked sources are shown here but cannot be edited here yet."].exists)
-        XCTAssertEqual(app.buttons.matching(identifier: "activity.linkedSet").count, 0)
-
-        let linkedReport = app.descendants(matching: .any)["activity.linkedReport"].firstMatch
-        reach(linkedReport, in: app)
-        XCTAssertTrue(app.staticTexts["Reports from linked sources retain their original activity. Edit them in report history."].exists)
-
         let ownSet = app.buttons["activity.ownSet"].firstMatch
         // A row can report isHittable while its tap point is obscured by
-        // navigation chrome after scrolling up from a linked report.
+        // navigation chrome. Find the editable row before scrolling to the
+        // linked report, which can unload this row from the list.
         guard reachDashboardButton(ownSet, in: app, navigationTitle: "Swim") else {
-            XCTFail("Canonical set did not reach the unobscured viewport: \(ownSet.frame)\n\(app.debugDescription)")
+            let frame = ownSet.exists ? String(describing: ownSet.frame) : "not present"
+            XCTFail("Canonical set did not reach the unobscured viewport: \(frame)\n\(app.debugDescription)")
             return
         }
         XCTAssertTrue(ownSet.isEnabled)
@@ -88,6 +81,17 @@ final class V2FlowTests: XCTestCase {
             print("UI_CANONICAL_SET_FAILURE \(app.debugDescription)")
         }
         XCTAssertTrue(opened)
+        app.navigationBars["Edit set"].buttons["Cancel"].tap()
+        XCTAssertTrue(app.navigationBars["Swim"].waitForExistence(timeout: 5))
+
+        let linkedSet = app.descendants(matching: .any)["activity.linkedSet"].firstMatch
+        reach(linkedSet, in: app)
+        XCTAssertTrue(app.staticTexts["Sets from linked sources are shown here but cannot be edited here yet."].exists)
+        XCTAssertEqual(app.buttons.matching(identifier: "activity.linkedSet").count, 0)
+
+        let linkedReport = app.descendants(matching: .any)["activity.linkedReport"].firstMatch
+        reach(linkedReport, in: app)
+        XCTAssertTrue(app.staticTexts["Reports from linked sources retain their original activity. Edit them in report history."].exists)
     }
 
     @MainActor
