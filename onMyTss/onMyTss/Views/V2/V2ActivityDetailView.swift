@@ -1,6 +1,22 @@
 import SwiftUI
 import SwiftData
 
+@MainActor
+enum V2ActivityDetailProjection {
+    /// A source deletion retains personal details; a user deletion cuts the link.
+    static func linkedSources(for workout: Workout, in workouts: [Workout]) -> [Workout] {
+        guard !workout.isSuppressed && !workout.isTombstoned else { return [] }
+        let links = workouts.compactMap { source -> WorkoutLinkGraph.Link? in
+            guard (!source.isTombstoned || source.deletionOrigin == "source"),
+                  let parentID = source.linkedSessionID else { return nil }
+            return .init(id: source.id, parentID: parentID)
+        }
+        let ids = WorkoutLinkGraph(links).relatedIDs(to: workout.id)
+        guard ids.count > 1 else { return [] }
+        return workouts.filter { $0.id != workout.id && ids.contains($0.id) }.sorted { $0.id < $1.id }
+    }
+}
+
 struct V2ActivityDetailView: View {
     let workout: Workout
     @Environment(\.modelContext) private var context
@@ -27,7 +43,6 @@ struct V2ActivityDetailView: View {
 
     private var sets: [StrengthSetRecord] { allSets.filter { $0.sessionID == workout.id } }
     private var revisions: [LoadEstimateRecord] { estimates.filter { $0.sessionID == workout.id } }
-    private var latest: LoadEstimateValue? { revisions.first?.value }
     private var isActive: Bool { !workout.isSuppressed && !workout.isTombstoned }
     private var isSwim: Bool { workout.workoutType.lowercased().contains("swim") }
     private var isRide: Bool {
@@ -38,20 +53,17 @@ struct V2ActivityDetailView: View {
     /// Keep personal details attached to their original source while a local
     /// grouping is provisional. A later source correction can split it again.
     private var linkedSources: [Workout] {
-        guard isActive else { return [] }
-        // A source deletion does not erase personal details, but a user
-        // deletion must not bring that record or its descendants back here.
-        let graph = WorkoutLinkGraph(workouts.filter { !$0.isTombstoned || $0.deletionOrigin == "source" }
-            .map { .init(id: $0.id, parentID: $0.linkedSessionID) })
-        let ids = graph.relatedIDs(to: workout.id)
-        return workouts.filter { $0.id != workout.id && ids.contains($0.id) }.sorted { $0.id < $1.id }
+        V2ActivityDetailProjection.linkedSources(for: workout, in: workouts)
     }
 
     var body: some View {
+        let displayedSets = sets
+        let displayedRevisions = revisions
+        let latest = displayedRevisions.first?.value
         let linked = linkedSources
         let linkedIDs = Set(linked.map(\.id))
-        let linkedSets = allSets.filter { linkedIDs.contains($0.sessionID) }
-        let linkedReports = observations.filter { $0.sessionID.map { linkedIDs.contains($0) } == true }
+        let linkedSets = linkedIDs.isEmpty ? [] : allSets.filter { linkedIDs.contains($0.sessionID) }
+        let linkedReports = linkedIDs.isEmpty ? [] : observations.filter { $0.sessionID.map { linkedIDs.contains($0) } == true }
         SwissList {
             if workout.isSuppressed || workout.isTombstoned {
                 Section("Archived or linked activity") {
@@ -139,8 +151,8 @@ struct V2ActivityDetailView: View {
             Section("Strength sets") {
                 Text(isActive ? "Adding details supplements this session. It does not add its imported cardio contribution again." : "Retained strength log; excluded from current totals.")
                     .font(.caption).foregroundStyle(.secondary)
-                if sets.isEmpty && linkedSets.isEmpty { Text("No sets recorded").foregroundStyle(.secondary) }
-                ForEach(sets) { set in
+                if displayedSets.isEmpty && linkedSets.isEmpty { Text("No sets recorded").foregroundStyle(.secondary) }
+                ForEach(displayedSets) { set in
                     Button { editingSet = set } label: {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(V2Presentation.exerciseName(set.exerciseID)).font(.headline)
@@ -166,7 +178,7 @@ struct V2ActivityDetailView: View {
                     Button("Add sets", systemImage: "plus") { addSet = true }
                         .accessibilityIdentifier("activity.addSets")
                 }
-                if isActive && !sets.isEmpty {
+                if isActive && !displayedSets.isEmpty {
                     Button("Save these sets as a template") { namingTemplate = true }
                 }
                 if !templates.isEmpty && !workout.isSuppressed && !workout.isTombstoned {
@@ -202,9 +214,9 @@ struct V2ActivityDetailView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
-            if revisions.count > 1 {
+            if displayedRevisions.count > 1 {
                 Section("Estimate history") {
-                    ForEach(Array(revisions.dropFirst())) { revision in
+                    ForEach(Array(displayedRevisions.dropFirst())) { revision in
                         DisclosureGroup("\(revision.version) · \(revision.computedAt.formatted(date: .abbreviated, time: .shortened))") {
                             if let value = revision.value { V2EstimateView(estimate: value) }
                         }
