@@ -1,111 +1,63 @@
-name: PR tests
-
+name: Temporary synthetic physical-device build
 'on':
-  pull_request:
   workflow_dispatch:
-
 permissions:
   contents: read
-
-concurrency:
-  group: pr-tests-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  quick:
-    name: Quick checks
+  device-build:
+    name: Build isolated diagnostic app
     runs-on: xcode-27
-    timeout-minutes: 25
+    timeout-minutes: 45
     steps:
-      - name: Check out the proposed merge
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           persist-credentials: false
-
-      - name: Run quick checks
-        run: python3 scripts/test.py quick --output-dir "$RUNNER_TEMP/ohmytss-quick"
-
-      - name: Verify quick report exists
-        run: test -s "$RUNNER_TEMP/ohmytss-quick/summary.json"
-
-      - name: Upload quick results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: quick-test-results
-          path: ${{ runner.temp }}/ohmytss-quick
-          if-no-files-found: error
-          retention-days: 14
-
-  ios:
-    name: iOS unit and UI tests
-    runs-on: xcode-27
-    timeout-minutes: 75
-    steps:
-      - name: Check out the proposed merge
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - name: Prepare synthetic build settings
+          fetch-depth: 2
+      - name: Validate isolation and build unsigned app
         shell: bash
         run: |
           set -euo pipefail
-          # CI checkouts have no local ignored credentials. These values only
-          # allow simulator builds and cannot authorize a Strava connection.
-          config=onMyTss/Config/Secrets.xcconfig
-          if [[ ! -e "$config" ]]; then
-            umask 077
-            printf '%s\n' 'STRAVA_CLIENT_ID = 123456' 'STRAVA_CLIENT_SECRET = CI_SYNTHETIC_ONLY' > "$config"
-          fi
-
-      - name: Select an available iPhone simulator
-        id: simulator
-        shell: bash
-        run: |
-          set -euo pipefail
-          xcodebuild -version
-          xcrun simctl list devices available --json > "$RUNNER_TEMP/ohmytss-simulators.json"
-          python3 - "$RUNNER_TEMP/ohmytss-simulators.json" >> "$GITHUB_OUTPUT" <<'PY'
-          import json
-          import re
-          import sys
-
-          data = json.load(open(sys.argv[1], encoding="utf-8"))
-          choices = []
-          for runtime, devices in data.get("devices", {}).items():
-              match = re.search(r"\.iOS-(\d+)-(\d+)$", runtime)
-              if not match:
-                  continue
-              version = tuple(map(int, match.groups()))
-              if version < (26, 1):
-                  continue
-              for device in devices:
-                  name, udid = device.get("name", ""), device.get("udid", "")
-                  if device.get("isAvailable") and name.startswith("iPhone") and re.fullmatch(r"[0-9A-Fa-f-]{36}", udid):
-                      choices.append((version, name == "iPhone 17 Pro", name, udid))
-          if not choices:
-              raise SystemExit("No available iPhone simulator with iOS 26.1 or later; see the runner's installed runtimes.")
-          version, _, name, udid = max(choices)
-          print(f"destination=platform=iOS Simulator,id={udid}")
-          print(f"Selected {name}, iOS {version[0]}.{version[1]} ({udid})", file=sys.stderr)
+          [[ "$RUNNER_ENVIRONMENT" == github-hosted && "$RUNNER_OS" == macOS ]]
+          [[ "$(git rev-parse HEAD^1)" == 7b94aa6184d29bb5b55ba7d6d04a7fba824b8c57 ]]
+          git diff --exit-code HEAD^1 HEAD -- \
+            onMyTss/onMyTss/Views/V2/V2ActivityDetailView.swift \
+            onMyTss/onMyTss/Services/WorkoutSourceMatching.swift \
+            onMyTss/onMyTss/Services/DataStore.swift \
+            onMyTss/onMyTss/Services/WorkoutAggregator.swift
+          python3 - <<'PY'
+          import plistlib
+          from pathlib import Path
+          entitlements=plistlib.loads(Path('onMyTss/onMyTss/onMyTss.entitlements').read_bytes())
+          info=plistlib.loads(Path('onMyTss/Config/AppInfo.plist').read_bytes())
+          assert not entitlements
+          assert info['CFBundleDisplayName']=='ohMyTss Lab'
+          assert not any(k in info for k in ('CFBundleURLTypes','UIBackgroundModes','BGTaskSchedulerPermittedIdentifiers'))
+          print('Diagnostic has no HealthKit, App Group, callback scheme, or background entitlement')
           PY
-
-      - name: Run full simulator tests
-        env:
-          TEST_DESTINATION: ${{ steps.simulator.outputs.destination }}
-        run: python3 scripts/test.py full --destination "$TEST_DESTINATION" --output-dir "$RUNNER_TEMP/ohmytss-full"
-
-      - name: Verify simulator report exists
-        run: test -s "$RUNNER_TEMP/ohmytss-full/summary.json"
-
-      - name: Upload simulator results
+          umask 077
+          printf '%s\n' 'STRAVA_CLIENT_ID = 123456' 'STRAVA_CLIENT_SECRET = CI_SYNTHETIC_ONLY' > onMyTss/Config/Secrets.xcconfig
+          xcodebuild build -project onMyTss/onMyTss.xcodeproj -scheme onMyTss \
+            -configuration Release -destination generic/platform=iOS \
+            -derivedDataPath "$RUNNER_TEMP/diagnostic-derived" -jobs 1 \
+            CODE_SIGNING_ALLOWED=NO SWIFT_ACTIVE_COMPILATION_CONDITIONS=DEBUG \
+            PRODUCT_BUNDLE_IDENTIFIER=mj6.codex.ohmytssdiagnostic > "$RUNNER_TEMP/device-build.log" 2>&1 || {
+              tail -100 "$RUNNER_TEMP/device-build.log"; exit 1;
+            }
+          app="$RUNNER_TEMP/diagnostic-derived/Build/Products/Release-iphoneos/onMyTss.app"
+          [[ -x "$app/onMyTss" && ! -d "$app/PlugIns" ]]
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Info.plist" | grep -Fx 'mj6.codex.ohmytssdiagnostic'
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$app/Info.plist" | grep -Fx 'ohMyTss Lab'
+          ! /usr/libexec/PlistBuddy -c 'Print :CFBundleURLTypes' "$app/Info.plist" >/dev/null 2>&1
+          shasum -a 256 "$app/onMyTss" > "$RUNNER_TEMP/device-binary.sha256"
+          ditto -c -k --keepParent "$app" "$RUNNER_TEMP/ohmytss-device-diagnostic.zip"
+      - name: Upload isolated app and build log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ios-test-results
+          name: isolated-device-diagnostic
           path: |
-            ${{ runner.temp }}/ohmytss-full
-            ${{ runner.temp }}/ohmytss-simulators.json
-          if-no-files-found: error
-          retention-days: 14
+            ${{ runner.temp }}/ohmytss-device-diagnostic.zip
+            ${{ runner.temp }}/device-binary.sha256
+            ${{ runner.temp }}/device-build.log
+          if-no-files-found: warn
+          retention-days: 2

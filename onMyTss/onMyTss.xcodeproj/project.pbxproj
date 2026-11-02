@@ -132,12 +132,10 @@
 				138634E72EBEEBF200674956 /* Sources */,
 				138634E82EBEEBF200674956 /* Frameworks */,
 				138634E92EBEEBF200674956 /* Resources */,
-				B1C2D3E40000000000000005 /* Embed App Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
-				B1C2D3E4000000000000000A,
 			);
 			fileSystemSynchronizedGroups = (
 				138634ED2EBEEBF200674956 /* onMyTss */,

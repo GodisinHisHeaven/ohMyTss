@@ -22,6 +22,8 @@ enum LaunchHistoryFixture {
             if sourceAlreadyKnown { workout.sourceBundleIdentifier = "com.example.synthetic-workouts" }
             if linkedHistoryFixture && index == 0 {
                 workout.sourceBundleIdentifier = "com.garmin.connect.mobile"
+                workout.workoutType = "Cycling"
+                workout.distance = 25_000
                 var features = WorkoutFeatures()
                 features.end = start.addingTimeInterval(3600)
                 workout.features = features
@@ -32,23 +34,33 @@ enum LaunchHistoryFixture {
             let value = LoadModel.estimate(type: "Run", start: start, duration: 3600, distance: nil,
                                            features: WorkoutFeatures(), sets: [], tags: [],
                                            maxHeartRate: nil, now: now)
-            context.insert(LoadEstimateRecord(sessionID: workout.id, version: value.version,
-                                              inputCutoff: value.inputCutoff, computedAt: now,
-                                              payloadData: try JSONEncoder().encode(value), inputData: Data()))
+            for _ in 0..<3 {
+                context.insert(LoadEstimateRecord(sessionID: workout.id, version: value.version,
+                                                  inputCutoff: value.inputCutoff, computedAt: now,
+                                                  payloadData: try JSONEncoder().encode(value), inputData: Data()))
+            }
         }
         if linkedHistoryFixture {
             let start = now.addingTimeInterval(-86400)
             let alias = Workout(id: "synthetic-launch-strava-alias", date: start.startOfDay,
-                                startTime: start, duration: 3600, workoutType: "Run", tss: 40,
+                                startTime: start, duration: 3606, workoutType: "Ride", distance: 25_020, tss: 40,
                                 calculationMethod: "duration", source: .strava)
             var features = WorkoutFeatures()
-            features.end = start.addingTimeInterval(3600)
+            features.end = start.addingTimeInterval(4200)
             alias.features = features
             alias.userTags = ["history-sentinel-tag"]
             context.insert(alias)
             context.insert(StrengthSetRecord(sessionID: alias.id, exerciseID: "squat", reps: 8, rir: 1))
             context.insert(LocalObservation(regionRaw: "quads", sideRaw: "left", severity: 2,
                                             observedAt: start, sessionID: alias.id))
+            let mirror = Workout(id: "synthetic-strava-health-mirror", date: start.startOfDay,
+                                 startTime: start, duration: 4200, workoutType: "Cycling", distance: 25_020,
+                                 tss: 40, calculationMethod: "duration", source: .healthKit)
+            mirror.sourceBundleIdentifier = "com.strava.stravaride"
+            mirror.deviceManufacturer = "Garmin"
+            mirror.features = features
+            mirror.userTags = ["synthetic-mirror-tag"]
+            context.insert(mirror)
         }
         try context.save()
     }

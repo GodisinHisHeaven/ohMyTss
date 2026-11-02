@@ -22,7 +22,7 @@ class HealthKitManager {
 
     /// Check if HealthKit is available on this device
     var isHealthKitAvailable: Bool {
-        HKHealthStore.isHealthDataAvailable()
+        false // Synthetic device diagnostic has no HealthKit access.
     }
 
     /// Request authorization to read HealthKit data
