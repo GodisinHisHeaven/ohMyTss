@@ -85,7 +85,7 @@ nonisolated enum WorkoutSourceMatching {
     /// competing record can block an otherwise ambiguous association.
     static func plausiblePausedTiming(_ first: WorkoutPausedTimingEvidence,
                                       _ second: WorkoutPausedTimingEvidence) -> Bool {
-        guard abs(first.start.timeIntervalSince(second.start)) < 2,
+        guard abs(first.start.timeIntervalSince(second.start)) < 60,
               first.duration.isFinite, second.duration.isFinite,
               first.duration > 0, second.duration > 0 else { return false }
         for evidence in [first, second] {
@@ -107,7 +107,8 @@ nonisolated enum WorkoutSourceMatching {
     /// independent fields and leave deleted records out of this fallback.
     static func pausedGarminStravaMatch(_ first: WorkoutPausedTimingEvidence,
                                         _ second: WorkoutPausedTimingEvidence) -> Bool {
-        guard plausiblePausedTiming(first, second), !first.isDeleted, !second.isDeleted,
+        guard plausiblePausedTiming(first, second), abs(first.start.timeIntervalSince(second.start)) < 2,
+              !first.isDeleted, !second.isDeleted,
               first.type == "cycling", second.type == "cycling",
               let firstDistance = first.distance, let secondDistance = second.distance,
               firstDistance.isFinite, secondDistance.isFinite,

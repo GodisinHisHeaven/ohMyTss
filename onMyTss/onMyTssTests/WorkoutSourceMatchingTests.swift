@@ -15,6 +15,8 @@ final class WorkoutSourceMatchingTests: XCTestCase {
             var deleted: String? = nil
             var competingSource = false
             var competingSourceMissingEnd = false
+            var competingOffset: Double = 0
+            var competingDuration: Double = 3_600
             var stravaHealthMirror = false
             var mirrorBundle = "com.strava.stravaride"
             var mirrorDistance: Double? = 25_020
@@ -33,6 +35,8 @@ final class WorkoutSourceMatchingTests: XCTestCase {
             Scenario(name: "deleted Strava", deleted: "strava"),
             Scenario(name: "competing source without distance", competingSource: true),
             Scenario(name: "competing source without distance or end", competingSource: true, competingSourceMissingEnd: true),
+            Scenario(name: "nearby competing source with missing evidence", competingSource: true,
+                     competingSourceMissingEnd: true, competingOffset: 20, competingDuration: 3_612),
             Scenario(name: "Strava HealthKit mirror", stravaHealthMirror: true, grouped: true),
             Scenario(name: "mirror without distance", stravaHealthMirror: true, mirrorDistance: nil, grouped: true),
             Scenario(name: "corrected mirror source", stravaHealthMirror: true, mirrorBundle: "com.example.watch"),
@@ -88,7 +92,9 @@ final class WorkoutSourceMatchingTests: XCTestCase {
                     fixture.context.insert(mirror)
                 }
                 if scenario.competingSource {
-                    let competing = Workout(id: "other", date: start.startOfDay, startTime: start, duration: 3_600,
+                    let competing = Workout(id: "other", date: start.startOfDay,
+                                            startTime: start.addingTimeInterval(scenario.competingOffset),
+                                            duration: scenario.competingDuration,
                                             workoutType: "Cycling", tss: 10,
                                             calculationMethod: "duration", source: .healthKit)
                     competing.sourceBundleIdentifier = "com.example.watch"
