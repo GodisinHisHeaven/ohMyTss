@@ -96,6 +96,72 @@ final class LocalWorkoutHistoryRepairTests: XCTestCase {
         XCTAssertEqual(try store.fetchAppState().localWorkoutRepairVersion, LocalWorkoutHistoryRepair.currentVersion)
     }
 
+    func testVersionOneHistoryRepairsPausedGarminDuplicateAndRetainsDetails() async throws {
+        let container = try container()
+        let context = ModelContext(container)
+        let store = DataStore(modelContext: context)
+        let start = Date().addingTimeInterval(-7_200)
+        let health = Workout(id: "garmin", date: start.startOfDay, startTime: start, duration: 3_600,
+                             workoutType: "Cycling", distance: 25_000, tss: 25,
+                             calculationMethod: "duration", source: .healthKit)
+        health.sourceBundleIdentifier = "com.garmin.connect.mobile"
+        var healthFeatures = WorkoutFeatures()
+        healthFeatures.end = start.addingTimeInterval(3_600)
+        health.features = healthFeatures
+        let strava = Workout(id: "strava", date: start.startOfDay, startTime: start, duration: 3_606,
+                             workoutType: "Ride", distance: 25_020, tss: 35,
+                             calculationMethod: "duration", source: .strava)
+        var stravaFeatures = WorkoutFeatures()
+        stravaFeatures.end = start.addingTimeInterval(4_200)
+        strava.features = stravaFeatures
+        strava.userTags = ["retained-source-tag"]
+        strava.sessionGroupID = strava.id
+        let mirror = Workout(id: "mirror", date: start.startOfDay, startTime: start, duration: 4_200,
+                             workoutType: "Cycling", distance: 25_020, tss: 35,
+                             calculationMethod: "duration", source: .healthKit, isSuppressed: true)
+        mirror.sourceBundleIdentifier = "com.strava.stravaride"
+        mirror.features = stravaFeatures
+        mirror.sessionGroupID = strava.id
+        mirror.linkedSessionID = strava.id
+        mirror.userTags = ["retained-mirror-tag"]
+        let set = StrengthSetRecord(sessionID: strava.id, exerciseID: "squat", reps: 5)
+        let day = DayAggregate(date: start.startOfDay, totalTSS: 60, workoutCount: 2)
+        day.hasWorkoutDetails = true
+        let previousValue = LoadModel.estimate(type: "Ride", start: start, duration: 3_600, distance: 25_000,
+                                               features: healthFeatures, sets: [], tags: [], maxHeartRate: nil, now: Date())
+        let previous = LoadEstimateRecord(sessionID: health.id, version: previousValue.version,
+                                          inputCutoff: previousValue.inputCutoff, computedAt: start,
+                                          payloadData: try JSONEncoder().encode(previousValue), inputData: Data())
+        let previousID = previous.id
+        context.insert(health); context.insert(strava); context.insert(mirror)
+        context.insert(set); context.insert(day); context.insert(previous)
+        let state = try store.fetchAppState()
+        state.localWorkoutRepairVersion = 1
+        let oldSync = start.addingTimeInterval(-60)
+        state.lastComputationDate = oldSync
+        try context.save()
+        XCTAssertTrue(LocalWorkoutHistoryRepair.isRequired(state))
+
+        let repair = LocalWorkoutHistoryRepair(store: store, reconcile: {
+            _ = try await store.repairWorkoutSourcesLocally()
+        }, clock: { start.addingTimeInterval(7_200) })
+        try await repair.run()
+
+        XCTAssertEqual(state.localWorkoutRepairVersion, LocalWorkoutHistoryRepair.currentVersion)
+        XCTAssertFalse(state.localWorkoutRepairInProgress)
+        XCTAssertEqual(state.lastComputationDate, oldSync)
+        XCTAssertEqual(try store.fetchWorkouts(from: start, to: start).map(\.id), ["garmin"])
+        XCTAssertEqual(try store.fetchDayAggregate(for: start)?.totalTSS, 25)
+        XCTAssertEqual(try store.fetchDayAggregate(for: start)?.workoutCount, 1)
+        XCTAssertEqual(strava.linkedSessionID, "garmin")
+        XCTAssertEqual(strava.userTags, ["retained-source-tag"])
+        XCTAssertEqual(mirror.linkedSessionID, "garmin")
+        XCTAssertEqual(mirror.userTags, ["retained-mirror-tag"])
+        XCTAssertEqual(set.sessionID, strava.id)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<LoadEstimateRecord>()).contains { $0.id == previousID })
+        withExtendedLifetime(container) {}
+    }
+
     func testOfflineRepairResumesAfterGroupingAndPreservesAliasDetails() async throws {
         let container = try container()
         let context = ModelContext(container)

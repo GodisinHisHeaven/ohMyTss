@@ -7,6 +7,7 @@ nonisolated struct WorkoutSourceMatchInput: Equatable, Sendable {
     let date: Date
     let start: Date
     let duration: Double
+    let distance: Double?
     let type: String
     let source: String
     let sourceBundleIdentifier: String?
@@ -25,12 +26,26 @@ nonisolated struct WorkoutSourceMatchInput: Equatable, Sendable {
         // NaN is not equal to itself, but its stored bits can be unchanged.
         lhs.id == rhs.id && lhs.date.timeIntervalSinceReferenceDate.bitPattern == rhs.date.timeIntervalSinceReferenceDate.bitPattern &&
             lhs.start.timeIntervalSinceReferenceDate.bitPattern == rhs.start.timeIntervalSinceReferenceDate.bitPattern &&
-            lhs.duration.bitPattern == rhs.duration.bitPattern && lhs.type == rhs.type && lhs.source == rhs.source &&
+            lhs.duration.bitPattern == rhs.duration.bitPattern && lhs.distance?.bitPattern == rhs.distance?.bitPattern &&
+            lhs.type == rhs.type && lhs.source == rhs.source &&
             lhs.sourceBundleIdentifier == rhs.sourceBundleIdentifier && lhs.deviceManufacturer == rhs.deviceManufacturer &&
             lhs.deviceName == rhs.deviceName && lhs.featuresData == rhs.featuresData &&
             lhs.deletionOrigin == rhs.deletionOrigin && lhs.groupID == rhs.groupID && lhs.linkedID == rhs.linkedID &&
             lhs.isTombstoned == rhs.isTombstoned && lhs.isSuppressed == rhs.isSuppressed && lhs.userTags == rhs.userTags
     }
+}
+
+/// Scalar evidence shared by live reconciliation and offline history repair.
+nonisolated struct WorkoutPausedTimingEvidence {
+    let start: Date
+    let duration: Double
+    let distance: Double?
+    let end: Date?
+    let type: String
+    let source: String
+    let isGarmin: Bool
+    let isStravaHealth: Bool
+    let isDeleted: Bool
 }
 
 /// Pure reconciliation planning, suitable for a detached, cancellable task.
@@ -66,6 +81,70 @@ nonisolated enum WorkoutSourceMatching {
         return lowercased
     }
 
+    /// This is deliberately broader than a definite match so a nearby
+    /// competing record can block an otherwise ambiguous association.
+    static func plausiblePausedTiming(_ first: WorkoutPausedTimingEvidence,
+                                      _ second: WorkoutPausedTimingEvidence) -> Bool {
+        guard abs(first.start.timeIntervalSince(second.start)) < 2,
+              first.duration.isFinite, second.duration.isFinite,
+              first.duration > 0, second.duration > 0 else { return false }
+        for evidence in [first, second] {
+            if let end = evidence.end {
+                let elapsed = end.timeIntervalSince(evidence.start)
+                guard elapsed.isFinite, elapsed > 0 else { return false }
+            }
+        }
+        let durationTolerance = min(30, max(10, max(first.duration, second.duration) * 0.002))
+        guard abs(first.duration - second.duration) <= durationTolerance else { return false }
+        guard let firstDistance = first.distance, let secondDistance = second.distance,
+              firstDistance.isFinite, secondDistance.isFinite,
+              firstDistance > 0, secondDistance > 0 else { return true }
+        return abs(firstDistance - secondDistance) <= max(firstDistance, secondDistance) * 0.002
+    }
+
+    /// Garmin Connect can save moving time as the end of a cycling workout,
+    /// while Strava saves an elapsed end that includes pauses. Require several
+    /// independent fields and leave deleted records out of this fallback.
+    static func pausedGarminStravaMatch(_ first: WorkoutPausedTimingEvidence,
+                                        _ second: WorkoutPausedTimingEvidence) -> Bool {
+        guard plausiblePausedTiming(first, second), !first.isDeleted, !second.isDeleted,
+              first.type == "cycling", second.type == "cycling",
+              let firstDistance = first.distance, let secondDistance = second.distance,
+              firstDistance.isFinite, secondDistance.isFinite,
+              firstDistance >= 1_000, secondDistance >= 1_000 else { return false }
+        let health: WorkoutPausedTimingEvidence
+        let strava: WorkoutPausedTimingEvidence
+        if first.source == "healthKit" && second.source == "strava" {
+            health = first; strava = second
+        } else if second.source == "healthKit" && first.source == "strava" {
+            health = second; strava = first
+        } else { return false }
+        guard health.isGarmin, let healthEnd = health.end, let stravaEnd = strava.end else { return false }
+        let healthElapsed = healthEnd.timeIntervalSince(health.start)
+        let stravaElapsed = stravaEnd.timeIntervalSince(strava.start)
+        let pause = stravaElapsed - strava.duration
+        return abs(healthElapsed - health.duration) <= 2 && pause >= 60 &&
+            pause <= min(7_200, health.duration * 0.5)
+    }
+
+    /// Strava can also write the same activity to HealthKit. Its elapsed
+    /// duration differs from Garmin's moving-duration record, so pairwise
+    /// matching alone cannot form a complete three-source group.
+    static func pausedGarminStravaTriad(_ members: [WorkoutPausedTimingEvidence]) -> Bool {
+        guard members.count == 3, members.allSatisfy({ !$0.isDeleted && $0.type == "cycling" }),
+              let garmin = members.first(where: { $0.source == "healthKit" && $0.isGarmin && !$0.isStravaHealth }),
+              let strava = members.first(where: { $0.source == "strava" }),
+              let mirror = members.first(where: { $0.source == "healthKit" && $0.isStravaHealth }),
+              pausedGarminStravaMatch(garmin, strava),
+              abs(mirror.start.timeIntervalSince(strava.start)) < 2,
+              let mirrorEnd = mirror.end, let stravaEnd = strava.end,
+              abs(mirrorEnd.timeIntervalSince(stravaEnd)) < 5 else { return false }
+        if let distance = mirror.distance, distance.isFinite, distance > 0, let other = strava.distance {
+            return abs(distance - other) <= max(distance, other) * 0.002
+        }
+        return true
+    }
+
     /// Return the selected group ID for each external source row, including
     /// still-matching source-deleted aliases from previous groups.
     static func plan(_ inputs: [WorkoutSourceMatchInput]) throws -> [String: String] {
@@ -88,6 +167,26 @@ nonisolated enum WorkoutSourceMatching {
             endpoints[index] = Endpoint(value: value)
             return value
         }
+        func evidence(_ index: Int) -> WorkoutPausedTimingEvidence {
+            let row = inputs[index]
+            return WorkoutPausedTimingEvidence(
+                start: row.start, duration: row.duration, distance: row.distance, end: endpoint(index),
+                type: types[index], source: row.source,
+                isGarmin: WorkoutAggregator.isGarminSource(source: row.source, bundleIdentifier: row.sourceBundleIdentifier,
+                                                           manufacturer: row.deviceManufacturer, deviceName: row.deviceName),
+                isStravaHealth: row.source == "healthKit" && row.sourceBundleIdentifier?.lowercased() == "com.strava.stravaride",
+                isDeleted: row.isTombstoned || row.deletionOrigin != nil)
+        }
+        func strictTiming(_ first: Int, _ second: Int) -> Bool {
+            let a = inputs[first], b = inputs[second]
+            if let firstEnd = endpoint(first), let secondEnd = endpoint(second) {
+                let firstElapsed = firstEnd.timeIntervalSince(a.start)
+                let secondElapsed = secondEnd.timeIntervalSince(b.start)
+                return firstElapsed.isFinite && secondElapsed.isFinite && firstElapsed > 0 && secondElapsed > 0
+                    && abs(firstEnd.timeIntervalSince(secondEnd)) < 5
+            }
+            return abs(a.duration - b.duration) < 5
+        }
         func possible(_ first: Int, _ second: Int) throws -> Bool {
             try checkCancellation()
             let a = inputs[first], b = inputs[second]
@@ -100,17 +199,12 @@ nonisolated enum WorkoutSourceMatching {
             }
             guard compatible, abs(a.start.timeIntervalSince(b.start)) < 60,
                   a.duration.isFinite, b.duration.isFinite, a.duration > 0, b.duration > 0 else { return false }
-            if let firstEnd = endpoint(first), let secondEnd = endpoint(second) {
-                let firstElapsed = firstEnd.timeIntervalSince(a.start)
-                let secondElapsed = secondEnd.timeIntervalSince(b.start)
-                return firstElapsed.isFinite && secondElapsed.isFinite && firstElapsed > 0 && secondElapsed > 0
-                    && abs(firstEnd.timeIntervalSince(secondEnd)) < 5
-            }
-            return abs(a.duration - b.duration) < 5
+            return strictTiming(first, second) || plausiblePausedTiming(evidence(first), evidence(second))
         }
         func definite(_ first: Int, _ second: Int) throws -> Bool {
             guard try possible(first, second) else { return false }
             let a = inputs[first], b = inputs[second], type = types[first]
+            if !strictTiming(first, second) { return pausedGarminStravaMatch(evidence(first), evidence(second)) }
             // Preserve ambiguity edges, but require actual endpoints before
             // grouping a candidate involving a user deletion.
             if a.deletionOrigin == "user" || b.deletionOrigin == "user" {
@@ -160,7 +254,8 @@ nonisolated enum WorkoutSourceMatching {
                     if try !definite(members[left], members[right]) { complete = false }
                 }
             }
-            if complete, let group = members.map({ inputs[$0].id }).min() {
+            if (complete || (members.count == 3 && pausedGarminStravaTriad(members.map(evidence)))),
+               let group = members.map({ inputs[$0].id }).min() {
                 for member in members { groupForID[inputs[member].id] = group }
             }
         }
