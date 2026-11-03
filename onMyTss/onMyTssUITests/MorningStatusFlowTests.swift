@@ -199,11 +199,11 @@ final class MorningStatusFlowTests: XCTestCase {
         for _ in 0..<12 {
             let top = app.navigationBars.firstMatch.frame.maxY
             let viewport = app.frame
-            // Leave room for a bottom tab bar without requesting its system
-            // accessibility snapshot, which can time out after form scrolling.
-            let bottom = viewport.maxY - min(120, viewport.height * 0.16)
+            // Use XCTest's hit testing instead of a tab bar snapshot, which can
+            // time out after form scrolling and may be positioned at the side.
+            let bottom = viewport.maxY
             let frame = element.exists ? element.frame : .zero
-            if element.isHittable, frame.minY >= top, frame.maxY <= bottom { return }
+            if element.isHittable, !frame.isEmpty, frame.midY >= top, frame.midY <= bottom { return }
 
             // Form updates can move a row above the viewport after a save.
             // Follow its current position and use short drags to avoid overshooting it.
@@ -217,7 +217,7 @@ final class MorningStatusFlowTests: XCTestCase {
             let finish = start.withOffset(CGVector(dx: 0, dy: scrollTowardTop ? distance : -distance))
             start.press(forDuration: 0.05, thenDragTo: finish)
         }
-        XCTFail("Could not fully reveal \(element.description)")
+        XCTFail("Could not reach \(element.description)")
     }
 
     @MainActor
