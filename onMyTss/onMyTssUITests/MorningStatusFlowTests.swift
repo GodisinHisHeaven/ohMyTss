@@ -199,13 +199,9 @@ final class MorningStatusFlowTests: XCTestCase {
         for _ in 0..<12 {
             let top = app.navigationBars.firstMatch.frame.maxY
             let viewport = app.frame
-            let tabBar = app.tabBars.firstMatch
-            let tabFrame = tabBar.exists ? tabBar.frame : .zero
-            // iOS can place the tab controls on the side without exposing a
-            // TabBar element. Only a bottom bar limits the vertical viewport.
-            let hasBottomBar = !tabFrame.isEmpty && tabFrame.minY > top
-                && tabFrame.width >= viewport.width * 0.5
-            let bottom = hasBottomBar ? min(viewport.maxY, tabFrame.minY) : viewport.maxY
+            // Leave room for a bottom tab bar without requesting its system
+            // accessibility snapshot, which can time out after form scrolling.
+            let bottom = viewport.maxY - min(120, viewport.height * 0.16)
             let frame = element.exists ? element.frame : .zero
             if element.isHittable, frame.minY >= top, frame.maxY <= bottom { return }
 
