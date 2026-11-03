@@ -88,8 +88,15 @@ jobs:
               raise SystemExit("No available iPhone simulator with iOS 26.1 or later; see the runner's installed runtimes.")
           version, _, name, udid = max(choices)
           print(f"destination=platform=iOS Simulator,id={udid}")
+          print(f"udid={udid}")
           print(f"Selected {name}, iOS {version[0]}.{version[1]} ({udid})", file=sys.stderr)
           PY
+
+      - name: Boot the selected simulator
+        timeout-minutes: 8
+        env:
+          SIMULATOR_UDID: ${{ steps.simulator.outputs.udid }}
+        run: xcrun simctl bootstatus "$SIMULATOR_UDID" -b
 
       - name: Run full simulator tests
         env:
