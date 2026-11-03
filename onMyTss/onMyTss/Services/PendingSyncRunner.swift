@@ -3,6 +3,11 @@ import Foundation
 /// Serializes all sync entry points and acknowledges only successfully processed changes.
 @MainActor
 final class PendingSyncRunner {
+    struct RecordedChange {
+        let revision: PendingSyncStore.Revision
+        let shouldRun: Bool
+    }
+
     enum RunnerError: Error {
         case incomplete
         case pendingChangesRemain
@@ -24,15 +29,16 @@ final class PendingSyncRunner {
 
     /// Persist the event before returning to the source, even if another sync is running.
     func markAndRun() async throws {
-        guard try recordChange() else { return }
-        try await run()
+        let change = try recordChange()
+        guard change.shouldRun else { return }
+        try await run(through: change.revision)
     }
 
-    /// Returns whether this caller should start a run; an existing run will
-    /// drain the newly persisted event when it finishes its current pass.
-    func recordChange() throws -> Bool {
-        try store.markPending()
-        return !running
+    /// Persist the revision and indicate whether this caller should start a run.
+    /// An existing run will drain the event after its current pass.
+    func recordChange() throws -> RecordedChange {
+        let revision = try store.markPending()
+        return RecordedChange(revision: revision, shouldRun: !running)
     }
 
     /// A manual request waits its turn and performs its own pass.
@@ -42,8 +48,8 @@ final class PendingSyncRunner {
         try await drain()
     }
 
-    /// A manual request can reuse a pass that processed its own revision while
-    /// it waited. Failures and later pending work still require another pass.
+    /// A request can reuse a pass that processed its revision while it waited.
+    /// Failures and later pending work still require another pass.
     func run(through requested: PendingSyncStore.Revision) async throws {
         try await acquire()
         defer { running = false }

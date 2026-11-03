@@ -38,4 +38,46 @@ final class WorkoutLinkGraphTests: XCTestCase {
         XCTAssertEqual(graph.relatedIDs(to: "orphan"), ["orphan"])
         XCTAssertEqual(graph.relatedIDs(to: "unknown"), ["unknown"])
     }
+
+    @MainActor
+    func testDetailProjectionReflectsCorrectionsAndDeletionOrigins() {
+        func workout(_ id: String, parent: String? = nil) -> Workout {
+            let date = Date(timeIntervalSince1970: 1_700_000_000)
+            let value = Workout(id: id, date: date, startTime: date, duration: 600,
+                                workoutType: "Ride", tss: 10, calculationMethod: "duration", source: .healthKit)
+            value.linkedSessionID = parent
+            value.userTags = ["tag-\(id)"]
+            return value
+        }
+
+        let canonical = workout("garmin")
+        let alias = workout("strava", parent: canonical.id)
+        let manual = workout("manual", parent: alias.id)
+        let sourceDeleted = workout("source-deleted", parent: canonical.id)
+        sourceDeleted.isTombstoned = true
+        sourceDeleted.deletionOrigin = "source"
+        let userDeleted = workout("user-deleted", parent: canonical.id)
+        userDeleted.isTombstoned = true
+        userDeleted.deletionOrigin = "user"
+        let userDeletedChild = workout("user-deleted-child", parent: userDeleted.id)
+        let unrelated = (0..<1_000).map { workout("unrelated-\($0)") }
+        let workouts = unrelated + [userDeletedChild, sourceDeleted, manual, alias, canonical, userDeleted]
+
+        let grouped = V2ActivityDetailProjection.linkedSources(for: canonical, in: workouts)
+        XCTAssertEqual(grouped.map(\.id), ["manual", "source-deleted", "strava"])
+        XCTAssertEqual(grouped.map(\.userTags), [["tag-manual"], ["tag-source-deleted"], ["tag-strava"]])
+
+        alias.linkedSessionID = nil
+        XCTAssertEqual(V2ActivityDetailProjection.linkedSources(for: canonical, in: workouts).map(\.id), ["source-deleted"])
+        XCTAssertEqual(V2ActivityDetailProjection.linkedSources(for: alias, in: workouts).map(\.id), ["manual"])
+
+        sourceDeleted.deletionOrigin = "user"
+        XCTAssertTrue(V2ActivityDetailProjection.linkedSources(for: canonical, in: workouts).isEmpty)
+        canonical.isSuppressed = true
+        alias.linkedSessionID = canonical.id
+        XCTAssertTrue(V2ActivityDetailProjection.linkedSources(for: canonical, in: workouts).isEmpty)
+        canonical.isSuppressed = false
+        canonical.isTombstoned = true
+        XCTAssertTrue(V2ActivityDetailProjection.linkedSources(for: canonical, in: workouts).isEmpty)
+    }
 }

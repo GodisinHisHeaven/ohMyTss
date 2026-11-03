@@ -426,8 +426,11 @@ final class WorkoutAggregator {
         return false
     }
 
-    /// Prefer Garmin HealthKit data, then Garmin Strava, then other Strava data.
+    /// Prefer Garmin Connect, then other Garmin HealthKit data, then Garmin
+    /// Strava and other Strava data.
     static func sourcePriority(_ workout: Workout) -> Int {
+        let bundle = workout.sourceBundleIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        if workout.source == WorkoutSource.healthKit.rawValue && bundle.hasPrefix("com.garmin.") { return 4 }
         if isGarminSource(workout) { return workout.source == WorkoutSource.healthKit.rawValue ? 3 : 2 }
         return workout.source == WorkoutSource.strava.rawValue ? 1 : 0
     }
@@ -453,7 +456,19 @@ final class WorkoutAggregator {
         guard sources == Set([WorkoutSource.healthKit.rawValue, WorkoutSource.strava.rawValue]) else { return false }
         let type = normalizeWorkoutType(first.workoutType)
         guard !type.isEmpty, type != "other", type == normalizeWorkoutType(second.workoutType) else { return false }
-        return hasMatchingTiming(first, second)
+        if hasMatchingTiming(first, second) { return true }
+        return WorkoutSourceMatching.pausedGarminStravaMatch(
+            pausedTimingEvidence(first, end: first.features.end),
+            pausedTimingEvidence(second, end: second.features.end))
+    }
+
+    static func pausedTimingEvidence(_ workout: Workout, end: Date?) -> WorkoutPausedTimingEvidence {
+        WorkoutPausedTimingEvidence(start: workout.startTime, duration: workout.duration, distance: workout.distance,
+                                    end: end, type: normalizeWorkoutType(workout.workoutType), source: workout.source,
+                                    isGarmin: isGarminSource(workout),
+                                    isStravaHealth: workout.source == WorkoutSource.healthKit.rawValue &&
+                                        workout.sourceBundleIdentifier?.lowercased() == "com.strava.stravaride",
+                                    isDeleted: workout.isTombstoned || workout.deletionOrigin != nil)
     }
 
     /// Used for both definite matches and unknown-type ambiguity checks.

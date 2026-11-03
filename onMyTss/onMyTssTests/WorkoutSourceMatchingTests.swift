@@ -4,6 +4,152 @@ import SwiftData
 
 @MainActor
 final class WorkoutSourceMatchingTests: XCTestCase {
+    func testPausedGarminRideRequiresCorroborationAndKeepsAmbiguity() async throws {
+        struct Scenario {
+            let name: String
+            var bundle: String? = "com.garmin.connect.mobile"
+            var startOffset: Double = 0
+            var stravaDistance: Double? = 25_020
+            var stravaDuration: Double = 3_606
+            var stravaEnd: Double? = 4_200
+            var deleted: String? = nil
+            var competingSource = false
+            var competingSourceMissingEnd = false
+            var competingOffset: Double = 0
+            var competingDuration: Double = 3_600
+            var stravaHealthMirror = false
+            var mirrorBundle = "com.strava.stravaride"
+            var mirrorDistance: Double? = 25_020
+            var mirrorDeleted = false
+            var grouped = false
+        }
+        let scenarios = [
+            Scenario(name: "matching ride", grouped: true),
+            Scenario(name: "unknown producer", bundle: "com.example.watch"),
+            Scenario(name: "start outside tolerance", startOffset: 2),
+            Scenario(name: "missing distance", stravaDistance: nil),
+            Scenario(name: "different distance", stravaDistance: 26_000),
+            Scenario(name: "different moving time", stravaDuration: 3_640),
+            Scenario(name: "missing elapsed end", stravaEnd: nil),
+            Scenario(name: "deleted Garmin", deleted: "health"),
+            Scenario(name: "deleted Strava", deleted: "strava"),
+            Scenario(name: "competing source without distance", competingSource: true),
+            Scenario(name: "competing source without distance or end", competingSource: true, competingSourceMissingEnd: true),
+            Scenario(name: "nearby competing source with missing evidence", competingSource: true,
+                     competingSourceMissingEnd: true, competingOffset: 20, competingDuration: 3_612),
+            Scenario(name: "Strava HealthKit mirror", stravaHealthMirror: true, grouped: true),
+            Scenario(name: "mirror without distance", stravaHealthMirror: true, mirrorDistance: nil, grouped: true),
+            Scenario(name: "corrected mirror source", stravaHealthMirror: true, mirrorBundle: "com.example.watch"),
+            Scenario(name: "deleted mirror", stravaHealthMirror: true, mirrorDeleted: true),
+            Scenario(name: "mirror and competing source", competingSource: true, stravaHealthMirror: true)
+        ]
+        for scenario in scenarios {
+            let synchronous = try makeStore()
+            let detached = try makeStore()
+            for fixture in [synchronous, detached] {
+                let start = Date(timeIntervalSince1970: 1_750_000_000)
+                let health = Workout(id: "health", date: start.startOfDay, startTime: start, duration: 3_600,
+                                     workoutType: "Cycling", distance: 25_000, tss: 25,
+                                     calculationMethod: "duration", source: .healthKit)
+                health.sourceBundleIdentifier = scenario.bundle
+                health.userTags = ["garmin-tag"]
+                var healthFeatures = WorkoutFeatures()
+                healthFeatures.end = start.addingTimeInterval(3_600)
+                health.features = healthFeatures
+                let stravaStart = start.addingTimeInterval(scenario.startOffset)
+                let strava = Workout(id: "strava", date: start.startOfDay, startTime: stravaStart,
+                                     duration: scenario.stravaDuration, workoutType: "Ride", distance: scenario.stravaDistance,
+                                     tss: 35, calculationMethod: "duration", source: .strava)
+                strava.userTags = ["strava-tag"]
+                if let end = scenario.stravaEnd {
+                    var features = WorkoutFeatures()
+                    features.end = stravaStart.addingTimeInterval(end)
+                    strava.features = features
+                }
+                if let deletedID = scenario.deleted {
+                    let deleted = deletedID == "health" ? health : strava
+                    deleted.isTombstoned = true
+                    deleted.deletionOrigin = "user"
+                    deleted.isSuppressed = true
+                }
+                fixture.context.insert(health)
+                fixture.context.insert(strava)
+                if scenario.stravaHealthMirror {
+                    let mirror = Workout(id: "a-mirror", date: start.startOfDay, startTime: start, duration: 4_200,
+                                         workoutType: "Cycling", distance: scenario.mirrorDistance, tss: 30,
+                                         calculationMethod: "duration", source: .healthKit)
+                    mirror.sourceBundleIdentifier = scenario.mirrorBundle
+                    mirror.deviceManufacturer = "Garmin"
+                    mirror.userTags = ["mirror-tag"]
+                    var mirrorFeatures = WorkoutFeatures()
+                    mirrorFeatures.end = start.addingTimeInterval(4_200)
+                    mirror.features = mirrorFeatures
+                    if scenario.mirrorDeleted {
+                        mirror.isTombstoned = true
+                        mirror.deletionOrigin = "user"
+                        mirror.isSuppressed = true
+                    }
+                    fixture.context.insert(mirror)
+                }
+                if scenario.competingSource {
+                    let competing = Workout(id: "other", date: start.startOfDay,
+                                            startTime: start.addingTimeInterval(scenario.competingOffset),
+                                            duration: scenario.competingDuration,
+                                            workoutType: "Cycling", tss: 10,
+                                            calculationMethod: "duration", source: .healthKit)
+                    competing.sourceBundleIdentifier = "com.example.watch"
+                    if !scenario.competingSourceMissingEnd { competing.features = healthFeatures }
+                    fixture.context.insert(competing)
+                }
+                try fixture.context.save()
+            }
+            _ = try synchronous.store.reconcileWorkoutSources(applySideEffects: false)
+            _ = try await detached.store.repairWorkoutSourcesLocally()
+            XCTAssertEqual(try states(synchronous.context), try states(detached.context), scenario.name)
+            let health = try XCTUnwrap(synchronous.store.fetchWorkout(byId: "health"))
+            let strava = try XCTUnwrap(synchronous.store.fetchWorkout(byId: "strava"))
+            XCTAssertEqual(health.sessionGroupID == strava.sessionGroupID, scenario.grouped, scenario.name)
+            XCTAssertEqual(health.userTags, ["garmin-tag"])
+            XCTAssertEqual(strava.userTags, ["strava-tag"])
+            if scenario.grouped {
+                XCTAssertFalse(health.isSuppressed, "Garmin must retain priority")
+                XCTAssertTrue(strava.isSuppressed)
+                if scenario.stravaHealthMirror {
+                    let mirror = try XCTUnwrap(synchronous.store.fetchWorkout(byId: "a-mirror"))
+                    XCTAssertTrue(mirror.isSuppressed)
+                    XCTAssertEqual(mirror.linkedSessionID, health.id)
+                    XCTAssertEqual(mirror.userTags, ["mirror-tag"])
+                }
+                for fixture in [synchronous, detached] {
+                    let corrected = try XCTUnwrap(fixture.store.fetchWorkout(byId: "health"))
+                    corrected.sourceBundleIdentifier = "com.example.watch"
+                    try fixture.context.save()
+                }
+                _ = try synchronous.store.reconcileWorkoutSources(applySideEffects: false)
+                _ = try await detached.store.repairWorkoutSourcesLocally()
+                XCTAssertEqual(try states(synchronous.context), try states(detached.context))
+                XCTAssertFalse(health.isSuppressed)
+                XCTAssertFalse(strava.isSuppressed)
+                XCTAssertNotEqual(health.sessionGroupID, strava.sessionGroupID)
+                XCTAssertNil(strava.linkedSessionID)
+                XCTAssertEqual(strava.userTags, ["strava-tag"])
+            } else if scenario.deleted != nil || scenario.mirrorDeleted {
+                if scenario.mirrorDeleted {
+                    XCTAssertFalse(health.isTombstoned)
+                    XCTAssertFalse(strava.isTombstoned)
+                    XCTAssertFalse(health.isSuppressed)
+                    XCTAssertFalse(strava.isSuppressed)
+                }
+                guard let deletedID = scenario.deleted else { continue }
+                let survivor = deletedID == "health" ? strava : health
+                XCTAssertFalse(survivor.isTombstoned, "An uncertain link must not propagate a deletion")
+                XCTAssertFalse(survivor.isSuppressed)
+            }
+            withExtendedLifetime(synchronous.container) {}
+            withExtendedLifetime(detached.container) {}
+        }
+    }
+
     func testUserDeletionNeedsBothEndpointsInSynchronousAndDetachedMatching() async throws {
         let cases: [(healthEnd: Bool, stravaEnd: Bool, deleted: String?, grouped: Bool)] = [
             (true, false, "health", false), (false, true, "health", false),
@@ -144,6 +290,44 @@ final class WorkoutSourceMatchingTests: XCTestCase {
         XCTAssertFalse(strava.isSuppressed)
         XCTAssertNil(strava.linkedSessionID)
         XCTAssertEqual(strava.userTags, ["concurrent-edit"])
+    }
+
+    func testConcurrentDistanceCorrectionDiscardsPausedMatchPlan() async throws {
+        let fixture = try makeStore()
+        let start = Date(timeIntervalSince1970: 1_750_000_000)
+        let health = Workout(id: "health", date: start.startOfDay, startTime: start, duration: 3_600,
+                             workoutType: "Cycling", distance: 25_000, tss: 10,
+                             calculationMethod: "duration", source: .healthKit)
+        health.sourceBundleIdentifier = "com.garmin.connect.mobile"
+        var healthFeatures = WorkoutFeatures()
+        healthFeatures.end = start.addingTimeInterval(3_600)
+        health.features = healthFeatures
+        let strava = Workout(id: "strava", date: start.startOfDay, startTime: start, duration: 3_606,
+                             workoutType: "Ride", distance: 25_020, tss: 10,
+                             calculationMethod: "duration", source: .strava)
+        var stravaFeatures = WorkoutFeatures()
+        stravaFeatures.end = start.addingTimeInterval(4_200)
+        strava.features = stravaFeatures
+        fixture.context.insert(health); fixture.context.insert(strava)
+        try fixture.context.save()
+        let gate = MatchingPlanGate()
+        let task = Task {
+            try await fixture.store.repairWorkoutSourcesLocally { input in
+                await gate.pauseFirstPlan()
+                return try await WorkoutSourceMatching.detachedPlan(input)
+            }
+        }
+        await gate.waitUntilPaused()
+        strava.distance = 26_000
+        try fixture.context.save()
+        await gate.release()
+        _ = try await task.value
+        let planCount = await gate.planCount()
+        XCTAssertEqual(planCount, 2)
+        XCTAssertFalse(health.isSuppressed)
+        XCTAssertFalse(strava.isSuppressed)
+        XCTAssertNotEqual(health.sessionGroupID, strava.sessionGroupID)
+        withExtendedLifetime(fixture.container) {}
     }
 
     func testCancelledDetachedRepairDoesNotApplyPlan() async throws {

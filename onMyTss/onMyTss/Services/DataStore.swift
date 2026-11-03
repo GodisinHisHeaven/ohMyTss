@@ -589,7 +589,10 @@ class DataStore {
                     if !definiteDuplicate(members[left], members[right], endpoints: endpoints) { complete = false }
                 }
             }
-            if complete { result.append(members) }
+            let triad = !complete && members.count == 3 && WorkoutSourceMatching.pausedGarminStravaTriad(members.map {
+                WorkoutAggregator.pausedTimingEvidence($0, end: endpoints.end($0))
+            })
+            if complete || triad { result.append(members) }
             else { result.append(contentsOf: members.map { [$0] }) }
         }
         return result
@@ -606,12 +609,20 @@ class DataStore {
                 (second.source == WorkoutSource.healthKit.rawValue && secondType == "other")
         }
         guard compatible else { return false }
-        return WorkoutAggregator.hasMatchingTiming(first, second, end: endpoints.end)
+        if WorkoutAggregator.hasMatchingTiming(first, second, end: endpoints.end) { return true }
+        return WorkoutSourceMatching.plausiblePausedTiming(
+            WorkoutAggregator.pausedTimingEvidence(first, end: endpoints.end(first)),
+            WorkoutAggregator.pausedTimingEvidence(second, end: endpoints.end(second)))
     }
 
     private static func definiteDuplicate(_ first: Workout, _ second: Workout,
                                           endpoints: WorkoutEndpointCache) -> Bool {
         guard possibleDuplicate(first, second, endpoints: endpoints) else { return false }
+        if !WorkoutAggregator.hasMatchingTiming(first, second, end: endpoints.end) {
+            return WorkoutSourceMatching.pausedGarminStravaMatch(
+                WorkoutAggregator.pausedTimingEvidence(first, end: endpoints.end(first)),
+                WorkoutAggregator.pausedTimingEvidence(second, end: endpoints.end(second)))
+        }
         // Keep uncertain deletion candidates in the ambiguity graph, but
         // never group them without both actual endpoints.
         if first.deletionOrigin == "user" || second.deletionOrigin == "user" {
@@ -784,7 +795,7 @@ class DataStore {
     private static func sourceMatchSnapshot(_ rows: [Workout]) -> [WorkoutSourceMatchInput] {
         rows.map { row in
             WorkoutSourceMatchInput(
-                id: row.id, date: row.date, start: row.startTime, duration: row.duration,
+                id: row.id, date: row.date, start: row.startTime, duration: row.duration, distance: row.distance,
                 type: row.workoutType, source: row.source, sourceBundleIdentifier: row.sourceBundleIdentifier,
                 deviceManufacturer: row.deviceManufacturer, deviceName: row.deviceName,
                 featuresData: row.source == WorkoutSource.manual.rawValue ? nil : row.featuresData,

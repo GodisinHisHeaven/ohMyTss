@@ -89,9 +89,19 @@ nonisolated struct V2EstimateBatch: Sendable {
         func decodedFeatures(for session: Session) -> WorkoutFeatures {
             session.featuresData.flatMap { try? decoder.decode(WorkoutFeatures.self, from: $0) } ?? WorkoutFeatures()
         }
-        // Retain only run endpoints for prior-exposure lookup, not every decoded
-        // HR/power sample in the entire history at once.
-        let runningHistory = sessions.filter { !$0.deleted && !$0.suppressed && $0.type.lowercased().contains("run") }.map {
+        // A single-session recalculation only needs runs that could fall within
+        // that session's prior 28-day window. Filter before decoding payloads;
+        // the full-history path keeps its original ordering and scope.
+        let targetStart = sessionID.flatMap { id in
+            sessions.first { $0.id == id && !$0.deleted && !$0.suppressed }?.startTime
+        }
+        let targetWindowStart = targetStart?.addingTimeInterval(-28 * 86400)
+        let runningHistory = sessions.filter { candidate in
+            guard !candidate.deleted, !candidate.suppressed, candidate.type.lowercased().contains("run") else { return false }
+            guard sessionID != nil else { return true }
+            guard let targetStart, let targetWindowStart else { return false }
+            return candidate.startTime < targetStart && candidate.startTime >= targetWindowStart
+        }.map {
             let end = $0.featuresData.flatMap { try? decoder.decode(SessionEndpoint.self, from: $0) }?.end
                 ?? $0.startTime.addingTimeInterval($0.duration)
             return (start: $0.startTime, end: end, duration: $0.duration)

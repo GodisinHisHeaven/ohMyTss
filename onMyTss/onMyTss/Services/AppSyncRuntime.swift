@@ -131,13 +131,13 @@ final class AppSyncRuntime: BodyBatteryEngineProtocol {
         let invalidated = fixture || WeeklyWorkoutSync.invalidateSource()
         if !invalidated { markUntrackedChange() }
         do {
-            let needsRun = try runner.recordChange()
+            let change = try runner.recordChange()
             if invalidated { volatilePending = false }
-            guard needsRun else { return }
+            guard change.shouldRun else { return }
             let lease = BackgroundSyncLease()
             guard lease.start(work: { [weak self] in
                 guard let self else { return }
-                do { try await self.runner.run() } catch { }
+                do { try await self.runner.run(through: change.revision) } catch { }
             }) else {
                 logger.error("No background time available; sync remains pending")
                 AppBackgroundDelegate.current?.scheduleRefresh()

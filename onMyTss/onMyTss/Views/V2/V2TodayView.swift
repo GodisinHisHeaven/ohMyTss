@@ -145,14 +145,7 @@ private struct IntensityDistributionCard: View {
     @State private var generation = UUID()
 
     private var request: IntensityCalculationRequest {
-        let activeIDs = Set(workouts.map(\.id))
-        let inputs = sources.filter { $0.isSuppressed || activeIDs.contains($0.id) }.sorted { $0.id < $1.id }.map { workout in
-            IntensityInputSnapshot(id: workout.id, linkedID: workout.linkedSessionID,
-                isGarmin: WorkoutAggregator.isGarminSource(workout), isSuppressed: workout.isSuppressed,
-                isDeleted: workout.isTombstoned, start: workout.startTime,
-                duration: workout.duration, featuresData: workout.featuresData)
-        }
-        return IntensityCalculationRequest(sources: inputs, lt1: lt1, lt2: lt2,
+        IntensityCalculationRequest.snapshot(workouts: workouts, sources: sources, lt1: lt1, lt2: lt2,
             window: TimeRange(start: MuscleRPESummary.cutoff(for: now), end: now))
     }
 
@@ -270,7 +263,30 @@ nonisolated struct IntensityCalculationRequest: Equatable, Sendable {
     let lt2: Int
     let window: TimeRange
 
-    var hasValidThresholds: Bool { (30...240).contains(lt1) && (30...240).contains(lt2) && lt1 < lt2 }
+    var hasValidThresholds: Bool { Self.validThresholds(lt1: lt1, lt2: lt2) }
+
+    private static func validThresholds(lt1: Int, lt2: Int) -> Bool {
+        (30...240).contains(lt1) && (30...240).contains(lt2) && lt1 < lt2
+    }
+
+    @MainActor
+    static func snapshot(workouts: [Workout], sources: [Workout], lt1: Int, lt2: Int,
+                         window: TimeRange, readFeatures: (Workout) -> Data? = { $0.featuresData }) -> Self {
+        // Invalid thresholds show a setup prompt and never calculate. Avoid
+        // projecting sensor payloads until they can be used.
+        guard validThresholds(lt1: lt1, lt2: lt2) else {
+            return Self(sources: [], lt1: lt1, lt2: lt2, window: window)
+        }
+        let activeIDs = Set(workouts.map(\.id))
+        let inputs = sources.filter { $0.isSuppressed || activeIDs.contains($0.id) }
+            .sorted { $0.id < $1.id }.map { workout in
+                IntensityInputSnapshot(id: workout.id, linkedID: workout.linkedSessionID,
+                    isGarmin: WorkoutAggregator.isGarminSource(workout), isSuppressed: workout.isSuppressed,
+                    isDeleted: workout.isTombstoned, start: workout.startTime,
+                    duration: workout.duration, featuresData: readFeatures(workout))
+            }
+        return Self(sources: inputs, lt1: lt1, lt2: lt2, window: window)
+    }
 
     func calculate() throws -> IntensityCalculationResult? {
         try Task.checkCancellation()

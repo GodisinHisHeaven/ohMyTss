@@ -24,7 +24,7 @@ enum WorkoutMaintenanceGate {
 /// engine serialization used by source sync for the entire operation.
 @MainActor
 final class LocalWorkoutHistoryRepair {
-    static let currentVersion = 1
+    static let currentVersion = 2
 
     static func isRequired(_ state: AppState) -> Bool {
         state.localWorkoutRepairInProgress || state.localWorkoutRepairVersion < currentVersion

@@ -4,6 +4,68 @@ import XCTest
 
 @MainActor
 final class PendingSyncRunnerTests: XCTestCase {
+    func testTwoObserverDeliveriesBeforeRunnerStartsNeedOnePass() async throws {
+        try await withStore { store in
+            var passes = 0
+            let runner = PendingSyncRunner(store: store) { passes += 1; return true }
+            // Both callbacks run before either scheduled runner can start.
+            let first = try runner.recordChange()
+            let second = try runner.recordChange()
+            XCTAssertTrue(first.shouldRun)
+            XCTAssertTrue(second.shouldRun)
+            XCTAssertEqual(first.revision.epoch, second.revision.epoch)
+            XCTAssertGreaterThan(second.revision.value, first.revision.value)
+            try await runner.run(through: first.revision)
+            try await runner.run(through: second.revision)
+            XCTAssertEqual(passes, 1)
+            XCTAssertNil(try store.pendingRevision())
+        }
+    }
+
+    func testQueuedObserverDeliveryRetriesFailedPass() async throws {
+        try await withStore { store in
+            var passes = 0
+            let runner = PendingSyncRunner(store: store) {
+                passes += 1
+                if passes == 1 { throw ProbeError.failed }
+                return true
+            }
+            let first = try runner.recordChange()
+            let second = try runner.recordChange()
+            do { try await runner.run(through: first.revision); XCTFail("Failure must propagate") }
+            catch ProbeError.failed { } catch { throw error }
+            XCTAssertEqual(try store.pendingRevision(), second.revision)
+            try await runner.run(through: second.revision)
+            XCTAssertEqual(passes, 2)
+            XCTAssertNil(try store.pendingRevision())
+        }
+    }
+
+    func testQueuedObserverDeliveryRetriesCancelledPass() async throws {
+        try await withStore { store in
+            let gate = SyncTestGate()
+            var passes = 0
+            let runner = PendingSyncRunner(store: store) {
+                passes += 1
+                if passes == 1 { await gate.wait() }
+                return true
+            }
+            let first = try runner.recordChange()
+            let second = try runner.recordChange()
+            let task = Task { try await runner.run(through: first.revision) }
+            defer { task.cancel(); gate.release() }
+            try await waitForSyncTestCondition("observer cancellation gate") { gate.isWaiting }
+            task.cancel()
+            gate.release()
+            do { try await task.value; XCTFail("Cancellation must propagate") }
+            catch is CancellationError { } catch { throw error }
+            XCTAssertEqual(try store.pendingRevision(), second.revision)
+            try await runner.run(through: second.revision)
+            XCTAssertEqual(passes, 2)
+            XCTAssertNil(try store.pendingRevision())
+        }
+    }
+
     func testManualRevisionDrainedByActiveRunAvoidsThirdPass() async throws {
         try await withStore { store in
             let firstGate = SyncTestGate()
@@ -178,7 +240,9 @@ final class PendingSyncRunnerTests: XCTestCase {
             let task = Task { try await runner.markAndRun() }
             defer { task.cancel(); firstGate.release(); secondGate.release() }
             try await waitForSyncTestCondition("first revision") { firstGate.isWaiting }
-            XCTAssertFalse(try runner.recordChange())
+            let change = try runner.recordChange()
+            XCTAssertFalse(change.shouldRun)
+            XCTAssertEqual(try store.pendingRevision(), change.revision)
             firstGate.release()
             try await waitForSyncTestCondition("second revision") { secondGate.isWaiting }
             XCTAssertEqual(drains, 0, "An earlier pass cannot clear a later pending event")

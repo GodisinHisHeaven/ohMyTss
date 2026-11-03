@@ -5,6 +5,78 @@ import XCTest
 final class V2TodaySummaryTests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 1_790_000_000)
 
+    func testInvalidIntensityThresholdsDoNotReadSourcePayloads() {
+        let rows = (0..<100).map { workout("source-\($0)") }
+        let window = TimeRange(start: now.addingTimeInterval(-86400), end: now)
+        var payloadReads = 0
+        for (lt1, lt2) in [(0, 0), (29, 170), (140, 140), (140, 241)] {
+            let request = IntensityCalculationRequest.snapshot(workouts: rows, sources: rows,
+                lt1: lt1, lt2: lt2, window: window) { workout in
+                    payloadReads += 1
+                    return workout.featuresData
+                }
+            XCTAssertFalse(request.hasValidThresholds)
+            XCTAssertTrue(request.sources.isEmpty)
+            XCTAssertEqual(request.window, window)
+        }
+        XCTAssertEqual(payloadReads, 0)
+    }
+
+    func testIntensitySnapshotUsesCurrentSourcesAfterThresholdChanges() throws {
+        let start = now.addingTimeInterval(-100)
+        let window = TimeRange(start: start, end: now)
+        let canonical = workout("canonical")
+        canonical.startTime = start
+        canonical.duration = 100
+        canonical.sourceBundleIdentifier = "com.garmin.connect.mobile"
+        let linked = workout("alias")
+        linked.startTime = start
+        linked.duration = 100
+        linked.isSuppressed = true
+        linked.linkedSessionID = canonical.id
+        let unrelated = workout("unrelated")
+
+        func features(_ heartRate: Double) throws -> Data {
+            var value = WorkoutFeatures()
+            value.end = now
+            value.heartRate = [TimedValue(start: start, end: now, value: heartRate)]
+            return try JSONEncoder().encode(value)
+        }
+        canonical.featuresData = try features(150)
+        linked.featuresData = try features(80)
+        var reads: [String] = []
+        func snapshot(_ lt1: Int, _ lt2: Int, _ window: TimeRange) -> IntensityCalculationRequest {
+            IntensityCalculationRequest.snapshot(workouts: [canonical], sources: [canonical, unrelated, linked],
+                lt1: lt1, lt2: lt2, window: window) { workout in
+                    reads.append(workout.id)
+                    return workout.featuresData
+                }
+        }
+
+        let invalid = snapshot(0, 170, window)
+        XCTAssertTrue(reads.isEmpty)
+        XCTAssertTrue(invalid.sources.isEmpty)
+        let valid = snapshot(140, 170, window)
+        XCTAssertEqual(reads, ["alias", "canonical"])
+        XCTAssertTrue(valid.hasValidThresholds)
+        XCTAssertEqual(valid.sources.map(\.id), ["alias", "canonical"])
+        XCTAssertTrue(valid.sources[1].isGarmin)
+        XCTAssertEqual(try valid.calculate()?.moderateSeconds, 100)
+        let completed = IntensityCalculationCompleted(request: valid, distribution: try valid.calculate())
+
+        let invalidAgain = snapshot(140, 140, window)
+        XCTAssertFalse(completed.matches(invalidAgain))
+        XCTAssertEqual(reads.count, 2)
+        canonical.featuresData = try features(180)
+        let latest = snapshot(140, 170, window)
+        XCTAssertFalse(completed.matches(latest))
+        XCTAssertEqual(try latest.calculate()?.highSeconds, 100)
+        let clippedWindow = TimeRange(start: now.addingTimeInterval(-50), end: now)
+        let clipped = snapshot(140, 170, clippedWindow)
+        XCTAssertFalse(completed.matches(clipped))
+        XCTAssertEqual(try clipped.calculate()?.highSeconds, 50)
+    }
+
     func testIntensityBackgroundRequestTracksSamplesThresholdsAndWindow() async throws {
         var features = WorkoutFeatures()
         features.heartRate = [TimedValue(start: now.addingTimeInterval(-100), end: now, value: 150)]
