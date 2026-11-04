@@ -197,7 +197,7 @@ final class V2Store {
 
     func recalculate(_ session: Workout) throws {
         guard !session.isTombstoned, !session.isSuppressed else { try context.save(); return }
-        let batch = try V2EstimateBatch(context: context)
+        let batch = try V2EstimateBatch(context: context, sessionID: session.id)
         for row in try batch.calculate(now: clock(), sessionID: session.id) { insert(row) }
         try context.save()
     }

@@ -3,6 +3,35 @@ import SwiftData
 
 @MainActor
 enum V2ActivityDetailProjection {
+    static func linkMetadata() -> FetchDescriptor<Workout> {
+        // Keep every possible target observable when a manual link changes,
+        // without loading any workout's sensor payload into the detail query.
+        var descriptor = FetchDescriptor<Workout>()
+        descriptor.propertiesToFetch = [\.id, \.linkedSessionID, \.isSuppressed, \.isTombstoned,
+                                       \.deletionOrigin, \.userTags, \.workoutType, \.source]
+        return descriptor
+    }
+
+    static func sets(sessionIDs: [String]) -> FetchDescriptor<StrengthSetRecord> {
+        FetchDescriptor(predicate: #Predicate { sessionIDs.contains($0.sessionID) },
+                        sortBy: [SortDescriptor(\.recordedAt)])
+    }
+
+    static func reports(sessionIDs: [String]) -> FetchDescriptor<LocalObservation> {
+        FetchDescriptor(predicate: #Predicate {
+            if let sessionID = $0.sessionID { sessionIDs.contains(sessionID) } else { false }
+        },
+                        sortBy: [SortDescriptor(\.observedAt, order: .reverse)])
+    }
+
+    static func revisions(sessionID: String) -> FetchDescriptor<LoadEstimateRecord> {
+        var descriptor = FetchDescriptor<LoadEstimateRecord>(predicate: #Predicate { $0.sessionID == sessionID },
+                            sortBy: [SortDescriptor(\.computedAt, order: .reverse)])
+        // The UI displays results, never the archived sensor input stream.
+        descriptor.propertiesToFetch = [\.id, \.sessionID, \.version, \.computedAt, \.payloadData]
+        return descriptor
+    }
+
     /// A source deletion retains personal details; a user deletion cuts the link.
     static func linkedSources(for workout: Workout, in workouts: [Workout]) -> [Workout] {
         guard !workout.isSuppressed && !workout.isTombstoned else { return [] }
@@ -19,13 +48,30 @@ enum V2ActivityDetailProjection {
 
 struct V2ActivityDetailView: View {
     let workout: Workout
+    @Query private var candidates: [Workout]
+
+    init(workout: Workout) {
+        self.workout = workout
+        _candidates = Query(V2ActivityDetailProjection.linkMetadata())
+    }
+
+    var body: some View {
+        V2ActivityDetailContent(workout: workout,
+            linked: V2ActivityDetailProjection.linkedSources(for: workout, in: candidates),
+            linkedTarget: candidates.first { $0.id == workout.linkedSessionID && !$0.isTombstoned })
+    }
+}
+
+private struct V2ActivityDetailContent: View {
+    let workout: Workout
+    let linked: [Workout]
+    let linkedTarget: Workout?
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
-    @Query(sort: \StrengthSetRecord.recordedAt) private var allSets: [StrengthSetRecord]
-    @Query(sort: \LoadEstimateRecord.computedAt, order: .reverse) private var estimates: [LoadEstimateRecord]
-    @Query(sort: \LocalObservation.observedAt, order: .reverse) private var observations: [LocalObservation]
+    @Query private var allSets: [StrengthSetRecord]
+    @Query private var estimates: [LoadEstimateRecord]
+    @Query private var observations: [LocalObservation]
     @Query(sort: \StrengthTemplate.name) private var templates: [StrengthTemplate]
-    @Query private var workouts: [Workout]
     @State private var editingSet: StrengthSetRecord?
     @State private var addSet = false
     @State private var addReport = false
@@ -36,8 +82,14 @@ struct V2ActivityDetailView: View {
     @State private var tags: Set<String>
     @State private var error: String?
 
-    init(workout: Workout) {
+    init(workout: Workout, linked: [Workout], linkedTarget: Workout?) {
         self.workout = workout
+        self.linked = linked
+        self.linkedTarget = linkedTarget
+        let ids = [workout.id] + linked.map(\.id)
+        _allSets = Query(V2ActivityDetailProjection.sets(sessionIDs: ids))
+        _observations = Query(V2ActivityDetailProjection.reports(sessionIDs: ids))
+        _estimates = Query(V2ActivityDetailProjection.revisions(sessionID: workout.id))
         _tags = State(initialValue: Set(workout.userTags))
     }
 
@@ -50,17 +102,10 @@ struct V2ActivityDetailView: View {
         return type.contains("cycl") || type.contains("ride") || type.contains("bike")
     }
 
-    /// Keep personal details attached to their original source while a local
-    /// grouping is provisional. A later source correction can split it again.
-    private var linkedSources: [Workout] {
-        V2ActivityDetailProjection.linkedSources(for: workout, in: workouts)
-    }
-
     var body: some View {
         let displayedSets = sets
         let displayedRevisions = revisions
         let latest = displayedRevisions.first?.value
-        let linked = linkedSources
         let linkedIDs = Set(linked.map(\.id))
         let linkedSets = linkedIDs.isEmpty ? [] : allSets.filter { linkedIDs.contains($0.sessionID) }
         let linkedReports = linkedIDs.isEmpty ? [] : observations.filter { $0.sessionID.map { linkedIDs.contains($0) } == true }
@@ -68,7 +113,7 @@ struct V2ActivityDetailView: View {
             if workout.isSuppressed || workout.isTombstoned {
                 Section("Archived or linked activity") {
                     Text("This record no longer contributes separately.")
-                    if let targetID = workout.linkedSessionID, let target = workouts.first(where: { $0.id == targetID && !$0.isTombstoned }) {
+                    if let target = linkedTarget {
                         NavigationLink("Open linked activity") { V2ActivityDetailView(workout: target) }
                     }
                 }
