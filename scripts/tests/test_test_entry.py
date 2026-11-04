@@ -15,6 +15,27 @@ SPEC.loader.exec_module(entry)
 
 
 class TestReport(unittest.TestCase):
+    def test_ios_only_runs_only_the_ios_suite_while_full_keeps_quick_checks(self):
+        destination = "platform=iOS Simulator,id=B25005BC-DF45-4EBA-8C34-752CAB10D134"
+        for mode, expected_quick in (("ios-only", False), ("full", True)):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory, \
+                    patch.object(entry, "Pipeline") as pipeline_type, \
+                    patch.object(entry, "run_quick", return_value=True) as quick, \
+                    patch.object(entry, "boot_simulator", return_value=True) as boot, \
+                    patch.object(entry, "xcode_test", return_value=True) as ios, \
+                    patch.object(entry.platform, "system", return_value="Darwin"):
+                pipeline = pipeline_type.return_value
+                pipeline.report = {}
+                pipeline.finish.return_value = 0
+                code = entry.main([mode, "--destination", destination, "--output-dir", str(Path(directory) / "results")])
+                self.assertEqual(code, 0)
+                self.assertEqual(quick.called, expected_quick)
+                boot.assert_called_once()
+                ios.assert_called_once()
+                pipeline.finish.assert_called_once_with("passed")
+                if mode == "ios-only":
+                    self.assertIn("separate Quick checks", pipeline.report["quickScope"])
+
     def test_step_failure_writes_nonzero_report_and_redacts_logs(self):
         with tempfile.TemporaryDirectory() as directory:
             pipeline = entry.Pipeline("quick", Path(directory), None, secrets=["sensitive-test-value"])
@@ -76,6 +97,35 @@ class TestReport(unittest.TestCase):
         self.assertEqual(entry.choose_destination(json.dumps(data)), "platform=iOS Simulator,id=preferred")
         with self.assertRaises(ValueError):
             entry.choose_destination(json.dumps({"devices": {}}))
+
+    def test_auto_destination_prefers_a_standard_pro_and_falls_back(self):
+        pro = "B25005BC-DF45-4EBA-8C34-752CAB10D134"
+        pro_max = "C25005BC-DF45-4EBA-8C34-752CAB10D134"
+        duo = "D25005BC-DF45-4EBA-8C34-752CAB10D134"
+        data = {"devices": {
+            "com.apple.CoreSimulator.SimRuntime.iOS-27-0": [
+                {"name": "iPhone 18 Pro", "udid": pro, "isAvailable": True},
+                {"name": "iPhone 18 Pro Max", "udid": pro_max, "isAvailable": True},
+            ],
+            "com.apple.CoreSimulator.SimRuntime.iOS-27-1": [
+                {"name": "iPhone Duo", "udid": duo, "isAvailable": True},
+            ],
+        }}
+        self.assertEqual(entry.choose_destination(json.dumps(data)), f"platform=iOS Simulator,id={pro}")
+        data["devices"]["com.apple.CoreSimulator.SimRuntime.iOS-27-0"] = []
+        self.assertEqual(entry.choose_destination(json.dumps(data)), f"platform=iOS Simulator,id={duo}")
+
+    def test_auto_destination_recognizes_a_custom_named_iphone(self):
+        udid = "B25005BC-DF45-4EBA-8C34-752CAB10D134"
+        data = {"devices": {
+            "com.apple.CoreSimulator.SimRuntime.iOS-27-0": [{
+                "name": "ohMyTss Watch Pair Test iPhone 27.0",
+                "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro",
+                "udid": udid,
+                "isAvailable": True,
+            }],
+        }}
+        self.assertEqual(entry.choose_destination(json.dumps(data)), f"platform=iOS Simulator,id={udid}")
 
     def test_simulator_boot_uses_explicit_udid_and_bounded_wait(self):
         pipeline = Mock()

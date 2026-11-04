@@ -97,7 +97,10 @@ secret injection. Do not print credentials or include them in shared schemes.
 
 ## Verification
 
-Run the same entry point locally and in pull-request checks:
+Pull requests run `quick` and `ios-only` as separate required GitHub Actions
+jobs, so the quick checks are not repeated in the iOS job. Run focused local
+checks when investigating a failure or device-specific change; a second local
+full-suite run is not required when CI has tested the same code:
 
 ```sh
 python3 scripts/test.py quick
@@ -108,9 +111,9 @@ python3 scripts/test.py release --destination 'platform=iOS Simulator,id=SIMULAT
 `quick` checks the shared Swift domain and CI scripts. `full` also runs the
 complete iOS unit and UI suite in Xcode. Choose an available simulator that
 meets the test targets' deployment requirements. `release` adds Release and
-migration checks; its output also lists the device, interaction, and cloud
-delivery checks that still require human verification. A compile or simulator
-test alone does not establish that a release is ready.
+migration checks for changes that need them. Confirm the merged commit, the
+signed archive, and the internal TestFlight build before calling a release
+complete. A compile or simulator test alone does not establish release readiness.
 
 The runner writes a summary, individual logs, and Xcode result bundles to its
 output directory; use `--output-dir` to choose where to keep them. Do not put
@@ -122,6 +125,21 @@ validation procedures. The PR workflow tests changes but does not distribute an 
 After the workflow is pushed and both checks have run successfully, configure the
 repository's branch rules to require `Quick checks` and `iOS unit and UI tests`
 before merging; the workflow file alone does not enforce that policy.
+
+For a direct internal TestFlight release:
+
+1. After the PR checks pass and the PR is merged, run `gh workflow run pr-tests.yml --ref main` once and wait for both checks to pass.
+2. From a clean checkout of that exact `main` commit, run `python3 scripts/release_preflight.py`. It checks the current commit, the latest required GitHub checks, and the local Strava build configuration without starting a simulator.
+3. Archive that commit once with the next build number and upload it for internal testing. Record the commit and archive together.
+4. Run `gh workflow run direct-testflight.yml --ref main -f version=0.0.6 -f build=BUILD_NUMBER` and check the result.
+
+The direct verifier uses the existing App Store Connect API secrets and does not
+use Xcode Cloud or a browser session. Apple build metadata does not prove the
+archive's Git commit; the verifier checks distribution, not archive provenance.
+The preflight is a point-in-time check; repeat it if main or its checks change
+before upload. The Strava check covers configuration format, not live OAuth.
+Archiving and uploading still require a configured local signing identity and
+Xcode account or supported App Store Connect API authentication.
 
 Run `python -m scripts.verify` from the private `backend` checkout for its smoke
 suites. Production changes must pass those checks and the deployed `/health`
