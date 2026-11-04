@@ -322,7 +322,9 @@ def xcode_test(pipeline: Pipeline, scratch: Path, destination: str, name: str, e
     args = ["xcodebuild", "test", "-project", str(PROJECT), "-scheme", "onMyTss", "-destination", destination,
             "-derivedDataPath", str(scratch / "derived"), "-resultBundlePath", str(result),
             "-parallel-testing-enabled", "NO", "-enableCodeCoverage", "YES", "CODE_SIGNING_ALLOWED=NO", *extra]
-    build_and_test_passed = pipeline.step(name, args, timeout=2400)
+    # A slow hosted simulator can exceed 40 minutes while still progressing
+    # through the last UI tests; retain a bound without truncating that run.
+    build_and_test_passed = pipeline.step(name, args, timeout=3000)
     if not result.is_dir():
         error = "xcodebuild did not produce a result bundle"
         log = pipeline.output / f"{name}-result.log"

@@ -407,7 +407,10 @@ class DataStore {
         // managed models across suspension. Concurrent inserts/deletions can
         // only cause a cache miss, never an incorrect match.
         func persistedPage(_ offset: Int) throws -> [WorkoutEndpointCandidate] {
-            var descriptor = FetchDescriptor<Workout>(sortBy: [SortDescriptor(\.id)])
+            // Candidate selection sorts its value snapshots later. Sorting full
+            // SwiftData rows here can repeatedly materialize large payloads in
+            // SQLite's temporary sort on every page.
+            var descriptor = FetchDescriptor<Workout>()
             descriptor.fetchOffset = offset
             descriptor.fetchLimit = 50
             return try modelContext.fetch(descriptor).map(candidate)
@@ -769,13 +772,19 @@ class DataStore {
     func repairWorkoutSourcesLocally(
         makePlan: @escaping @Sendable ([WorkoutSourceMatchInput]) async throws -> [String: String] = WorkoutSourceMatching.detachedPlan
     ) async throws -> WorkoutChanges {
+        // Snapshot comparison orders by ID, and applying a complete group
+        // plan does not depend on fetch order. Avoid sorting large payloads
+        // by start time for both reads of the same repair pass.
+        func repairRows() throws -> [Workout] {
+            try modelContext.fetch(FetchDescriptor<Workout>())
+        }
         while true {
             try Task.checkCancellation()
-            let initialRows = try allWorkouts()
+            let initialRows = try repairRows()
             let snapshot = Self.sourceMatchSnapshot(initialRows)
             let plan = try await makePlan(snapshot)
             try Task.checkCancellation()
-            let currentRows = try allWorkouts()
+            let currentRows = try repairRows()
             guard snapshot == Self.sourceMatchSnapshot(currentRows) else {
                 // Any concurrent source correction, deletion, tagging, or new
                 // row invalidates the whole plan; no mutations have occurred.
