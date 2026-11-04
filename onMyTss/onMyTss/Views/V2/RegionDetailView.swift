@@ -17,13 +17,28 @@ struct RegionDetailView: View {
 
     private var contributions: [Contribution] {
         let cutoff = Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? Date()
-        return workouts.filter { !$0.isSuppressed && !$0.isTombstoned && $0.startTime >= cutoff }.flatMap { workout -> [Contribution] in
-            guard let estimate = estimates.first(where: { $0.sessionID == workout.id })?.value else { return [] }
+        let recent = workouts.filter { !$0.isSuppressed && !$0.isTombstoned && $0.startTime >= cutoff }
+        let latest = Self.latestEstimates(for: Set(recent.map(\.id)), in: estimates)
+        return recent.flatMap { workout -> [Contribution] in
+            guard let estimate = latest[workout.id]?.value else { return [] }
             return estimate.regions.filter { $0.region == region }.map { Contribution(workout: workout, estimate: $0) }
         }
     }
 
+    /// The query is ordered by computedAt descending. Keep its first record
+    /// for each requested session, including records with invalid payloads.
+    static func latestEstimates(for sessionIDs: Set<String>, in ordered: [LoadEstimateRecord]) -> [String: LoadEstimateRecord] {
+        guard !sessionIDs.isEmpty else { return [:] }
+        var latest: [String: LoadEstimateRecord] = [:]
+        for estimate in ordered where sessionIDs.contains(estimate.sessionID) && latest[estimate.sessionID] == nil {
+            latest[estimate.sessionID] = estimate
+            if latest.count == sessionIDs.count { break }
+        }
+        return latest
+    }
+
     var body: some View {
+        let contributions = contributions
         SwissList {
             Section("Estimated burden · last 7 days") {
                 Text("These are activity-specific proxies, not measured muscle force or damage. No left/right difference is inferred.")
