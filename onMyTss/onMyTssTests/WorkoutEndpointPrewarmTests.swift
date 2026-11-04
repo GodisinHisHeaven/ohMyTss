@@ -147,6 +147,33 @@ final class WorkoutEndpointPrewarmTests: XCTestCase {
         XCTAssertNil(decoded[1].end)
     }
 
+    func testCandidatesAcrossUnorderedPagesArePrewarmed() async throws {
+        let f = try fixture()
+        defer { withExtendedLifetime(f.container) {} }
+        let start = Date(timeIntervalSince1970: 1_750_000_000)
+        var features = WorkoutFeatures()
+        features.end = start.addingTimeInterval(600)
+        let health = workout("zz-health", .healthKit, start)
+        let strava = workout("aa-strava", .strava, start)
+        health.deviceManufacturer = "Garmin"
+        health.features = features
+        strava.features = features
+        f.context.insert(health)
+        for i in 0..<120 {
+            f.context.insert(workout(String(format: "filler-%03d", 119 - i), .healthKit,
+                                     start.addingTimeInterval(Double(i + 1) * 3_600)))
+        }
+        f.context.insert(strava)
+        try f.context.save()
+
+        let cache = try await f.store.prepareWorkoutEndpoints(incoming: [])
+        XCTAssertEqual(cache.matching(id: health.id, data: health.featuresData)?.end, features.end)
+        XCTAssertEqual(cache.matching(id: strava.id, data: strava.featuresData)?.end, features.end)
+        _ = try f.store.reconcileWorkoutSources(applySideEffects: false, prewarmed: cache)
+        XCTAssertFalse(health.isSuppressed)
+        XCTAssertTrue(strava.isSuppressed)
+    }
+
     func testCorrectionDuringPrewarmIsNeverReadFromStaleCache() async throws {
         let f = try fixture()
         defer { withExtendedLifetime(f.container) {} }

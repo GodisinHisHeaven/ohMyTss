@@ -407,7 +407,10 @@ class DataStore {
         // managed models across suspension. Concurrent inserts/deletions can
         // only cause a cache miss, never an incorrect match.
         func persistedPage(_ offset: Int) throws -> [WorkoutEndpointCandidate] {
-            var descriptor = FetchDescriptor<Workout>(sortBy: [SortDescriptor(\.id)])
+            // Candidate selection sorts its value snapshots later. Sorting full
+            // SwiftData rows here can repeatedly materialize large payloads in
+            // SQLite's temporary sort on every page.
+            var descriptor = FetchDescriptor<Workout>()
             descriptor.fetchOffset = offset
             descriptor.fetchLimit = 50
             return try modelContext.fetch(descriptor).map(candidate)
