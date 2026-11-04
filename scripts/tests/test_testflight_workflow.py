@@ -58,9 +58,9 @@ class TestTestFlightWorkflow(unittest.TestCase):
                                 env=env, capture_output=True, text=True)
         return result, output.read_text()
 
-    def test_only_main_push_and_dispatch_have_secrets(self):
+    def test_only_main_dispatch_has_secrets(self):
         triggers = WORKFLOW.split("permissions:", 1)[0]
-        self.assertIn("  push:\n    branches: [main]", triggers)
+        self.assertNotIn("  push:", triggers)
         self.assertIn("  workflow_dispatch:", triggers)
         self.assertNotIn("pull_request", triggers)
         before_retry = WORKFLOW.split("      - name: Retry canceled Xcode Cloud run", 1)[0]
@@ -85,7 +85,7 @@ class TestTestFlightWorkflow(unittest.TestCase):
         self.assertEqual(self.execute(name)[0].returncode, 0)
         self.assertNotEqual(self.execute(name, GITHUB_REF="refs/heads/other")[0].returncode, 0)
 
-    def test_push_uses_exact_run_commit(self):
+    def test_dispatch_defaults_to_exact_run_commit(self):
         result, output = self.execute("Select the commit to verify")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(output, "sha=" + self.main_sha + "\n")

@@ -404,7 +404,7 @@ def main(argv: list[str] | None = None) -> int:
             pipeline.report["manualGates"] = [
                 "Exercise optimized Release interactions, including saved-history upgrade, cancellation and 1000-workout retention.",
                 "Verify applicable physical-device HealthKit, Strava, background delivery and Watch behavior.",
-                "Verify the exact merge commit in Xcode Cloud and the TestFlight post-action before claiming delivery.",
+                "Verify the archive matches the tested merge commit and the build is available to the TestFlight internal group.",
             ]
             return pipeline.finish("incomplete")
     except (OSError, subprocess.SubprocessError, ValueError) as error:
