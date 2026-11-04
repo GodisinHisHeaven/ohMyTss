@@ -258,11 +258,16 @@ def choose_destination(raw_json: str) -> str:
         if not match or tuple(map(int, match.groups())) < (26, 1):
             continue
         for device in devices:
-            if device.get("isAvailable") and device.get("name", "").startswith("iPhone") and device.get("udid"):
-                name = device["name"]
+            name = device.get("name", "")
+            kind = device.get("deviceTypeIdentifier", "")
+            is_iphone = name.startswith("iPhone") or kind.startswith("com.apple.CoreSimulator.SimDeviceType.iPhone-")
+            if device.get("isAvailable") and is_iphone and device.get("udid"):
                 # Prefer a conventional Pro phone over unusual form factors.
-                is_pro = bool(re.fullmatch(r"iPhone \d+ Pro(?: Max)?", name))
-                choices.append((is_pro, tuple(map(int, match.groups())), name.endswith(" Pro"), name, device["udid"]))
+                is_pro = bool(re.fullmatch(r"iPhone \d+ Pro(?: Max)?", name)
+                              or re.fullmatch(r"com\.apple\.CoreSimulator\.SimDeviceType\.iPhone-\d+-Pro(?:-Max)?", kind))
+                is_compact_pro = name.endswith(" Pro") or bool(re.fullmatch(
+                    r"com\.apple\.CoreSimulator\.SimDeviceType\.iPhone-\d+-Pro", kind))
+                choices.append((is_pro, tuple(map(int, match.groups())), is_compact_pro, name, device["udid"]))
     if not choices:
         raise ValueError("No available iPhone simulator with iOS 26.1 or later")
     return "platform=iOS Simulator,id=" + max(choices)[-1]

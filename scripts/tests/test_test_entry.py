@@ -94,6 +94,18 @@ class TestReport(unittest.TestCase):
         data["devices"]["com.apple.CoreSimulator.SimRuntime.iOS-27-0"] = []
         self.assertEqual(entry.choose_destination(json.dumps(data)), f"platform=iOS Simulator,id={duo}")
 
+    def test_auto_destination_recognizes_a_custom_named_iphone(self):
+        udid = "B25005BC-DF45-4EBA-8C34-752CAB10D134"
+        data = {"devices": {
+            "com.apple.CoreSimulator.SimRuntime.iOS-27-0": [{
+                "name": "ohMyTss Watch Pair Test iPhone 27.0",
+                "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro",
+                "udid": udid,
+                "isAvailable": True,
+            }],
+        }}
+        self.assertEqual(entry.choose_destination(json.dumps(data)), f"platform=iOS Simulator,id={udid}")
+
     def test_simulator_boot_uses_explicit_udid_and_bounded_wait(self):
         pipeline = Mock()
         pipeline.step.return_value = True
