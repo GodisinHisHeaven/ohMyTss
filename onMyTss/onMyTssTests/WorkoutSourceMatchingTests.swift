@@ -4,6 +4,48 @@ import SwiftData
 
 @MainActor
 final class WorkoutSourceMatchingTests: XCTestCase {
+    func testUnorderedOfflineRepairPreservesDistinctSessionsAndGarminPriority() async throws {
+        let synchronous = try makeStore()
+        let detached = try makeStore()
+        defer { withExtendedLifetime(synchronous.container) {}; withExtendedLifetime(detached.container) {} }
+        let start = Date(timeIntervalSince1970: 1_750_000_000)
+        for fixture in [synchronous, detached] {
+            let entries: [(String, WorkoutSource, Double, String)] = [
+                ("strava-late", .strava, 7_200, "Run"),
+                ("health-early", .healthKit, 0, "Running"),
+                ("bike-close", .strava, 10, "Ride"),
+                ("health-late", .healthKit, 7_200, "Running"),
+                ("strava-early", .strava, 0, "Run"),
+                ("single", .healthKit, 3_600, "Swim")
+            ]
+            for (id, source, offset, type) in entries {
+                let row = Workout(id: id, date: start.startOfDay, startTime: start.addingTimeInterval(offset),
+                                  duration: 600, workoutType: type, tss: 10,
+                                  calculationMethod: "duration", source: source)
+                if id.hasPrefix("health-") { row.sourceBundleIdentifier = "com.garmin.connect.mobile" }
+                row.userTags = ["tag-\(id)"]
+                fixture.context.insert(row)
+            }
+            try fixture.context.save()
+        }
+        _ = try synchronous.store.reconcileWorkoutSources(applySideEffects: false)
+        _ = try await detached.store.repairWorkoutSourcesLocally()
+        XCTAssertEqual(try states(synchronous.context), try states(detached.context))
+        for fixture in [synchronous, detached] {
+            for suffix in ["early", "late"] {
+                let health = try XCTUnwrap(fixture.store.fetchWorkout(byId: "health-\(suffix)"))
+                let strava = try XCTUnwrap(fixture.store.fetchWorkout(byId: "strava-\(suffix)"))
+                XCTAssertFalse(health.isSuppressed)
+                XCTAssertTrue(strava.isSuppressed)
+                XCTAssertEqual(strava.linkedSessionID, health.id)
+                XCTAssertEqual(strava.userTags, ["tag-strava-\(suffix)"])
+            }
+            let bike = try XCTUnwrap(fixture.store.fetchWorkout(byId: "bike-close"))
+            XCTAssertFalse(bike.isSuppressed)
+            XCTAssertNil(bike.linkedSessionID)
+        }
+    }
+
     func testPausedGarminRideRequiresCorroborationAndKeepsAmbiguity() async throws {
         struct Scenario {
             let name: String
