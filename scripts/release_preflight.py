@@ -68,6 +68,24 @@ def verify_run(run, sha):
         raise ValueError("The exact main-commit test run has not passed")
 
 
+def latest_main_run(pages, sha):
+    if not isinstance(pages, list):
+        raise ValueError("GitHub returned an invalid workflow run list")
+    candidates = []
+    for page in pages:
+        if not isinstance(page, dict) or not isinstance(page.get("workflow_runs"), list):
+            raise ValueError("GitHub returned an invalid workflow run list")
+        candidates.extend(run for run in page["workflow_runs"] if isinstance(run, dict)
+                          and run.get("head_sha") == sha and run.get("head_branch") == "main"
+                          and run.get("event") in {"push", "workflow_dispatch"}
+                          and run.get("path") == ".github/workflows/pr-tests.yml")
+    if not candidates or any(not isinstance(run.get("id"), int) for run in candidates):
+        raise ValueError("No unambiguous test workflow run exists for the exact main commit")
+    run = max(candidates, key=lambda item: item["id"])
+    verify_run(run, sha)
+    return str(run["id"])
+
+
 def check_strava_config(path):
     if not path.is_file():
         raise ValueError("The ignored Strava build configuration is missing")
@@ -94,8 +112,10 @@ def main():
         pages = json.loads(command(["gh", "api", "--paginate", "--slurp",
                                     f"repos/{REPO}/commits/{sha}/check-runs?per_page=100"]))
         run_id = latest_required_run(pages)
-        run = json.loads(command(["gh", "api", f"repos/{REPO}/actions/runs/{run_id}"]))
-        verify_run(run, sha)
+        runs = json.loads(command(["gh", "api", "--paginate", "--slurp",
+                                   f"repos/{REPO}/actions/workflows/pr-tests.yml/runs?branch=main&head_sha={sha}&per_page=100"]))
+        if latest_main_run(runs, sha) != run_id:
+            raise ValueError("The latest main-commit workflow does not match the required checks")
         if remote_main() != sha:
             raise ValueError("Main changed while release prerequisites were checked")
         print(f"Release preflight passed for {sha}; required checks passed in run {run_id}.")

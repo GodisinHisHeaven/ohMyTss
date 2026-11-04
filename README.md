@@ -135,7 +135,8 @@ For a direct internal TestFlight release:
 The direct verifier uses the existing App Store Connect API secrets and does not
 use Xcode Cloud or a browser session. Apple build metadata does not prove the
 archive's Git commit; the verifier checks distribution, not archive provenance.
-The local Strava preflight checks the configuration format, not live OAuth.
+The preflight is a point-in-time check; repeat it if main or its checks change
+before upload. The Strava check covers configuration format, not live OAuth.
 Archiving and uploading still require a configured local signing identity and
 Xcode account or supported App Store Connect API authentication.
 

@@ -20,7 +20,7 @@ class ReleasePreflightTests(unittest.TestCase):
         self.checks = [check("Quick checks", 1), check("iOS unit and UI tests", 2)]
         self.sha = "a" * 40
         self.run = {"head_sha": self.sha, "head_branch": "main", "event": "workflow_dispatch",
-                    "path": ".github/workflows/pr-tests.yml", "status": "completed", "conclusion": "success"}
+                    "path": ".github/workflows/pr-tests.yml", "status": "completed", "conclusion": "success", "id": 123}
 
     def test_successful_checks_must_share_a_verified_main_run(self):
         self.assertEqual(preflight.latest_required_run([{"check_runs": self.checks}]), "123")
@@ -51,6 +51,15 @@ class ReleasePreflightTests(unittest.TestCase):
                              ("status", "in_progress"), ("conclusion", "failure")):
             with self.subTest(field=field), self.assertRaises(ValueError):
                 preflight.verify_run(dict(self.run, **{field: value}), self.sha)
+
+    def test_newer_queued_or_failed_main_run_cannot_reuse_an_older_pass(self):
+        self.assertEqual(preflight.latest_main_run([{"workflow_runs": [self.run]}], self.sha), "123")
+        for status, conclusion in (("queued", None), ("completed", "failure")):
+            newer = dict(self.run, id=124, status=status, conclusion=conclusion)
+            with self.subTest(status=status), self.assertRaises(ValueError):
+                preflight.latest_main_run([{"workflow_runs": [self.run, newer]}], self.sha)
+        unrelated = dict(self.run, id=125, head_sha="b" * 40)
+        self.assertEqual(preflight.latest_main_run([{"workflow_runs": [self.run, unrelated]}], self.sha), "123")
 
     def test_credentials_validate_without_printing_values(self):
         with tempfile.TemporaryDirectory() as directory:
