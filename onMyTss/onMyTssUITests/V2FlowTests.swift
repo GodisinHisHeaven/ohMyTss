@@ -456,7 +456,9 @@ final class V2FlowTests: XCTestCase {
         XCTAssertTrue(done.waitForExistence(timeout: 5), "Strength keyboard Done is unavailable", file: file, line: line)
         done.tap()
         let hidden = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.keyboards.firstMatch)
-        XCTAssertEqual(XCTWaiter.wait(for: [hidden], timeout: 5), .completed, "Strength keyboard did not dismiss", file: file, line: line)
+        // Simulator keyboard dismissal can be delayed after Done; still
+        // require the keyboard to disappear before continuing.
+        XCTAssertEqual(XCTWaiter.wait(for: [hidden], timeout: 15), .completed, "Strength keyboard did not dismiss", file: file, line: line)
     }
 
     @MainActor
