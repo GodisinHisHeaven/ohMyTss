@@ -815,7 +815,9 @@ class DataStore {
     }
 
     func allWorkouts() throws -> [Workout] {
-        try modelContext.fetch(FetchDescriptor<Workout>(sortBy: [SortDescriptor(\.startTime)]))
+        // Preserve chronological order without sorting full sensor BLOBs in
+        // SQLite's temporary storage on every reconciliation/backfill pass.
+        try modelContext.fetch(FetchDescriptor<Workout>()).sorted { $0.startTime < $1.startTime }
     }
 
     func fetchWorkout(byId id: String) throws -> Workout? {

@@ -1,4 +1,17 @@
 import SwiftUI
+import SwiftData
+
+/// List rows need labels and timestamps, not the complete sensor stream.
+/// Selecting a row can still fault its remaining attributes for detail/editing.
+@MainActor
+enum WorkoutListQuery {
+    static var orderedMetadata: FetchDescriptor<Workout> {
+        var descriptor = FetchDescriptor<Workout>(sortBy: [SortDescriptor(\.startTime, order: .reverse)])
+        descriptor.propertiesToFetch = [\.id, \.startTime, \.duration, \.workoutType, \.source,
+                                       \.isSuppressed, \.isTombstoned]
+        return descriptor
+    }
+}
 
 /// Presentation helpers never infer missing feedback or a recovery state.
 enum V2Presentation {

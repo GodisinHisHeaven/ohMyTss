@@ -332,7 +332,7 @@ private struct LinkSessionView: View {
     let manual: Workout
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
-    @Query(sort: \Workout.startTime, order: .reverse) private var workouts: [Workout]
+    @Query(WorkoutListQuery.orderedMetadata) private var workouts: [Workout]
     @State private var error: String?
 
     var body: some View {

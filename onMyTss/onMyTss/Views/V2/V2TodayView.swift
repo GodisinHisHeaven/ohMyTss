@@ -343,7 +343,7 @@ struct V2WorkoutRow: View {
 }
 
 struct V2ActivityHistoryView: View {
-    @Query(sort: \Workout.startTime, order: .reverse) private var workouts: [Workout]
+    @Query(WorkoutListQuery.orderedMetadata) private var workouts: [Workout]
     var body: some View {
         SwissList {
             ForEach(workouts.filter { !$0.isSuppressed && !$0.isTombstoned }) { workout in
@@ -362,7 +362,7 @@ struct V2ActivityHistoryView: View {
 
 
 struct V2ArchivedActivitiesView: View {
-    @Query(sort: \Workout.startTime, order: .reverse) private var workouts: [Workout]
+    @Query(WorkoutListQuery.orderedMetadata) private var workouts: [Workout]
     var body: some View {
         SwissList {
             Text("These source records are excluded from totals. Retained sets, reports and estimates remain available for review.")

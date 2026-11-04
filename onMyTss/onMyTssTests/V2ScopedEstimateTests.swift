@@ -200,6 +200,13 @@ final class V2ScopedEstimateTests: XCTestCase {
         let retained = try XCTUnwrap(DataStore(modelContext: context).fetchWorkout(byId: "history-999"))
         XCTAssertEqual(retained.featuresData, payload)
         XCTAssertEqual(retained.userTags, ["retained"])
+        let listed = try context.fetch(WorkoutListQuery.orderedMetadata)
+        XCTAssertEqual(listed.count, 1001)
+        XCTAssertEqual(listed.first?.id, "selected")
+        XCTAssertEqual(listed.last?.id, "history-999")
+        XCTAssertEqual(listed.last?.featuresData, payload, "Selecting a list row must retain access to its full original input")
+        let chronological = try DataStore(modelContext: context).allWorkouts()
+        XCTAssertEqual(chronological.map(\.id), listed.reversed().map(\.id))
         try assertMatchesFullHistory(context, id: row.id)
         print("SCOPED_ESTIMATE_DISK workouts=1001 previous=3000 payload_bytes=\(payload.count) snapshot_seconds=\(snapshotSeconds) save_seconds=\(saveSeconds)")
     }
