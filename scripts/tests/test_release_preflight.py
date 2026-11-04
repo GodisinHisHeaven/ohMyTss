@@ -56,13 +56,12 @@ class ReleasePreflightTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "Secrets.xcconfig"
             with self.assertRaises(ValueError):
-                preflight.check_strava_config(path, {})
+                preflight.check_strava_config(path)
             path.write_text("STRAVA_CLIENT_ID = 123456\nSTRAVA_CLIENT_SECRET = valid-secret_123\n")
-            preflight.check_strava_config(path, {})
-            with self.assertRaises(ValueError):
-                preflight.check_strava_config(path, {"STRAVA_CLIENT_SECRET": "SET_ME"})
+            preflight.check_strava_config(path)
             path.write_text("STRAVA_CLIENT_ID = SET_ME\nSTRAVA_CLIENT_SECRET = SET_ME\n")
-            preflight.check_strava_config(path, {"STRAVA_CLIENT_ID": "123456", "STRAVA_CLIENT_SECRET": "override"})
+            with self.assertRaises(ValueError):
+                preflight.check_strava_config(path)
 
 
 if __name__ == "__main__":

@@ -68,7 +68,7 @@ def verify_run(run, sha):
         raise ValueError("The exact main-commit test run has not passed")
 
 
-def check_strava_config(path, env):
+def check_strava_config(path):
     if not path.is_file():
         raise ValueError("The ignored Strava build configuration is missing")
     values = {}
@@ -76,8 +76,8 @@ def check_strava_config(path, env):
         match = re.fullmatch(r"\s*(STRAVA_CLIENT_ID|STRAVA_CLIENT_SECRET)\s*=\s*([^\s]+)\s*", line)
         if match:
             values[match.group(1)] = match.group(2)
-    client_id = env.get("STRAVA_CLIENT_ID", values.get("STRAVA_CLIENT_ID", ""))
-    secret = env.get("STRAVA_CLIENT_SECRET", values.get("STRAVA_CLIENT_SECRET", ""))
+    client_id = values.get("STRAVA_CLIENT_ID", "")
+    secret = values.get("STRAVA_CLIENT_SECRET", "")
     if (not re.fullmatch(r"[0-9]+", client_id) or not re.fullmatch(r"[A-Za-z0-9_-]+", secret)
             or secret in {"SET_ME", "YOUR_STRAVA_CLIENT_SECRET"}):
         raise ValueError("The Strava build configuration is missing or contains placeholders")
@@ -90,7 +90,7 @@ def main():
         sha = command(["git", "rev-parse", "HEAD"]).strip()
         if not re.fullmatch(r"[0-9a-f]{40}", sha) or remote_main() != sha:
             raise ValueError("The release checkout is not the current remote main commit")
-        check_strava_config(ROOT / "onMyTss/Config/Secrets.xcconfig", os.environ)
+        check_strava_config(ROOT / "onMyTss/Config/Secrets.xcconfig")
         pages = json.loads(command(["gh", "api", "--paginate", "--slurp",
                                     f"repos/{REPO}/commits/{sha}/check-runs?per_page=100"]))
         run_id = latest_required_run(pages)

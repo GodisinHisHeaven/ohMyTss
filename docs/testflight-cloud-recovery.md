@@ -1,7 +1,8 @@
 # Recovering a canceled Xcode Cloud run
 
-The TestFlight verification workflow uses only reads on main pushes and ordinary
-manual verification runs. It checks the exact commit, required Build, iOS Test and
+The legacy Xcode Cloud verifier runs only on explicit manual dispatch; direct
+TestFlight releases use the separate direct verification workflow. Ordinary
+Cloud verification uses only reads. It checks the exact commit, required Build, iOS Test and
 Archive actions, TestFlight post-action, and internal group. A canceled build is
 a failure, not evidence of a completed release.
 
