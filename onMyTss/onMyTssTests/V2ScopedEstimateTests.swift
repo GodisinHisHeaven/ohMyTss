@@ -27,6 +27,24 @@ final class V2ScopedEstimateTests: XCTestCase {
         XCTAssertEqual(scoped.map(\.payloadData), full.map(\.payloadData), file: file, line: line)
     }
 
+    func testSnapshotRetainsExistingNaturalIdentifierOrderForRunningHistory() throws {
+        let container = try container()
+        let context = container.mainContext
+        for id in ["run-10", "run-2", "run-1"] {
+            context.insert(workout(id, daysAgo: 1, type: "Run"))
+        }
+        context.insert(workout("selected"))
+        try context.save()
+        // SortDescriptor's numeric string order differs from the < operator.
+        // Keep the prior summation order so unchanged history does not acquire
+        // a different floating-point input snapshot after this optimization.
+        let expected = ["run-1", "run-2", "run-10", "selected"]
+        let persistedOrder = try context.fetch(FetchDescriptor<Workout>(sortBy: [SortDescriptor(\.id)])).map(\.id)
+        XCTAssertEqual(persistedOrder, expected)
+        XCTAssertEqual(try V2EstimateBatch(context: context).sessions.map(\.id), expected)
+        XCTAssertEqual(try V2EstimateBatch(context: context, sessionID: "selected").sessions.map(\.id), expected)
+    }
+
     func testSingleSessionRetainsGarminSourceChainAndRunningWindowAcrossCorrections() throws {
         let container = try container()
         let context = container.mainContext

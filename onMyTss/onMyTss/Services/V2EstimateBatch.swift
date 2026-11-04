@@ -72,7 +72,7 @@ nonisolated struct V2EstimateBatch: Sendable {
             setRows = try context.fetch(FetchDescriptor<StrengthSetRecord>())
         }
         // Sort the models' small identifiers, not full BLOB-bearing SQL rows.
-        sessions = rows.sorted { $0.id < $1.id }.map {
+        sessions = rows.sorted(using: SortDescriptor(\.id)).map {
             Session(id: $0.id, startTime: $0.startTime, duration: $0.duration, type: $0.workoutType,
                     distance: $0.distance, featuresData: $0.featuresData, tags: $0.userTags.sorted(),
                     source: $0.source, isGarmin: WorkoutAggregator.isGarminSource($0), linkedID: $0.linkedSessionID,
