@@ -66,37 +66,16 @@ jobs:
           set -euo pipefail
           xcodebuild -version
           xcrun simctl list devices available --json > "$RUNNER_TEMP/ohmytss-simulators.json"
-          python3 - "$RUNNER_TEMP/ohmytss-simulators.json" >> "$GITHUB_OUTPUT" <<'PY'
-          import json
-          import re
+          python3 -B - "$RUNNER_TEMP/ohmytss-simulators.json" >> "$GITHUB_OUTPUT" <<'PY'
           import sys
+          from pathlib import Path
+          from scripts.test import choose_destination, simulator_udid
 
-          data = json.load(open(sys.argv[1], encoding="utf-8"))
-          choices = []
-          for runtime, devices in data.get("devices", {}).items():
-              match = re.search(r"\.iOS-(\d+)-(\d+)$", runtime)
-              if not match:
-                  continue
-              version = tuple(map(int, match.groups()))
-              if version < (26, 1):
-                  continue
-              for device in devices:
-                  name, udid = device.get("name", ""), device.get("udid", "")
-                  if device.get("isAvailable") and name.startswith("iPhone") and re.fullmatch(r"[0-9A-Fa-f-]{36}", udid):
-                      choices.append((version, name == "iPhone 17 Pro", name, udid))
-          if not choices:
-              raise SystemExit("No available iPhone simulator with iOS 26.1 or later; see the runner's installed runtimes.")
-          version, _, name, udid = max(choices)
-          print(f"destination=platform=iOS Simulator,id={udid}")
-          print(f"udid={udid}")
-          print(f"Selected {name}, iOS {version[0]}.{version[1]} ({udid})", file=sys.stderr)
+          destination = choose_destination(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          simulator_udid(destination)  # Fail before running if the selected ID is invalid.
+          print(f"destination={destination}")
+          print(f"Selected {destination}", file=sys.stderr)
           PY
-
-      - name: Boot the selected simulator
-        timeout-minutes: 8
-        env:
-          SIMULATOR_UDID: ${{ steps.simulator.outputs.udid }}
-        run: xcrun simctl bootstatus "$SIMULATOR_UDID" -b
 
       - name: Run full simulator tests
         env:

@@ -77,6 +77,23 @@ class TestReport(unittest.TestCase):
         with self.assertRaises(ValueError):
             entry.choose_destination(json.dumps({"devices": {}}))
 
+    def test_auto_destination_prefers_a_standard_pro_and_falls_back(self):
+        pro = "B25005BC-DF45-4EBA-8C34-752CAB10D134"
+        pro_max = "C25005BC-DF45-4EBA-8C34-752CAB10D134"
+        duo = "D25005BC-DF45-4EBA-8C34-752CAB10D134"
+        data = {"devices": {
+            "com.apple.CoreSimulator.SimRuntime.iOS-27-0": [
+                {"name": "iPhone 18 Pro", "udid": pro, "isAvailable": True},
+                {"name": "iPhone 18 Pro Max", "udid": pro_max, "isAvailable": True},
+            ],
+            "com.apple.CoreSimulator.SimRuntime.iOS-27-1": [
+                {"name": "iPhone Duo", "udid": duo, "isAvailable": True},
+            ],
+        }}
+        self.assertEqual(entry.choose_destination(json.dumps(data)), f"platform=iOS Simulator,id={pro}")
+        data["devices"]["com.apple.CoreSimulator.SimRuntime.iOS-27-0"] = []
+        self.assertEqual(entry.choose_destination(json.dumps(data)), f"platform=iOS Simulator,id={duo}")
+
     def test_simulator_boot_uses_explicit_udid_and_bounded_wait(self):
         pipeline = Mock()
         pipeline.step.return_value = True

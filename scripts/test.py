@@ -259,10 +259,13 @@ def choose_destination(raw_json: str) -> str:
             continue
         for device in devices:
             if device.get("isAvailable") and device.get("name", "").startswith("iPhone") and device.get("udid"):
-                choices.append((tuple(map(int, match.groups())), device["name"] == "iPhone 17 Pro", device["udid"]))
+                name = device["name"]
+                # Prefer a conventional Pro phone over unusual form factors.
+                is_pro = bool(re.fullmatch(r"iPhone \d+ Pro(?: Max)?", name))
+                choices.append((is_pro, tuple(map(int, match.groups())), name.endswith(" Pro"), name, device["udid"]))
     if not choices:
         raise ValueError("No available iPhone simulator with iOS 26.1 or later")
-    return "platform=iOS Simulator,id=" + max(choices)[2]
+    return "platform=iOS Simulator,id=" + max(choices)[-1]
 
 
 def simulator_udid(destination: str) -> str:
