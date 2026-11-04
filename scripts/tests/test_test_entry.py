@@ -15,6 +15,27 @@ SPEC.loader.exec_module(entry)
 
 
 class TestReport(unittest.TestCase):
+    def test_ios_only_runs_only_the_ios_suite_while_full_keeps_quick_checks(self):
+        destination = "platform=iOS Simulator,id=B25005BC-DF45-4EBA-8C34-752CAB10D134"
+        for mode, expected_quick in (("ios-only", False), ("full", True)):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory, \
+                    patch.object(entry, "Pipeline") as pipeline_type, \
+                    patch.object(entry, "run_quick", return_value=True) as quick, \
+                    patch.object(entry, "boot_simulator", return_value=True) as boot, \
+                    patch.object(entry, "xcode_test", return_value=True) as ios, \
+                    patch.object(entry.platform, "system", return_value="Darwin"):
+                pipeline = pipeline_type.return_value
+                pipeline.report = {}
+                pipeline.finish.return_value = 0
+                code = entry.main([mode, "--destination", destination, "--output-dir", str(Path(directory) / "results")])
+                self.assertEqual(code, 0)
+                self.assertEqual(quick.called, expected_quick)
+                boot.assert_called_once()
+                ios.assert_called_once()
+                pipeline.finish.assert_called_once_with("passed")
+                if mode == "ios-only":
+                    self.assertIn("separate Quick checks", pipeline.report["quickScope"])
+
     def test_step_failure_writes_nonzero_report_and_redacts_logs(self):
         with tempfile.TemporaryDirectory() as directory:
             pipeline = entry.Pipeline("quick", Path(directory), None, secrets=["sensitive-test-value"])

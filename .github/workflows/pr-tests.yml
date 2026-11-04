@@ -14,7 +14,7 @@ concurrency:
 jobs:
   quick:
     name: Quick checks
-    runs-on: xcode-27
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - name: Check out the proposed merge
@@ -80,7 +80,7 @@ jobs:
       - name: Run full simulator tests
         env:
           TEST_DESTINATION: ${{ steps.simulator.outputs.destination }}
-        run: python3 scripts/test.py full --destination "$TEST_DESTINATION" --output-dir "$RUNNER_TEMP/ohmytss-full"
+        run: python3 scripts/test.py ios-only --destination "$TEST_DESTINATION" --output-dir "$RUNNER_TEMP/ohmytss-full"
 
       - name: Verify simulator report exists
         run: test -s "$RUNNER_TEMP/ohmytss-full/summary.json"

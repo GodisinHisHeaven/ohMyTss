@@ -97,9 +97,10 @@ secret injection. Do not print credentials or include them in shared schemes.
 
 ## Verification
 
-Pull requests run the `quick` and `full` checks in GitHub Actions. Run focused
-local checks when investigating a failure or device-specific change; a second
-local full-suite run is not required when CI has tested the same code:
+Pull requests run `quick` and `ios-only` as separate required GitHub Actions
+jobs, so the quick checks are not repeated in the iOS job. Run focused local
+checks when investigating a failure or device-specific change; a second local
+full-suite run is not required when CI has tested the same code:
 
 ```sh
 python3 scripts/test.py quick

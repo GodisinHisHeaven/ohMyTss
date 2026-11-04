@@ -351,7 +351,7 @@ def xcode_test(pipeline: Pipeline, scratch: Path, destination: str, name: str, e
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("quick", "full", "release"))
+    parser.add_argument("mode", choices=("quick", "ios-only", "full", "release"))
     parser.add_argument("--destination", help="xcodebuild destination, e.g. platform=iOS Simulator,id=UDID")
     parser.add_argument("--output-dir", type=Path, help="new or empty directory for logs, result bundle and summary")
     args = parser.parse_args(argv)
@@ -366,12 +366,16 @@ def main(argv: list[str] | None = None) -> int:
     try:
         with tempfile.TemporaryDirectory(prefix="ohmytss-test-build-") as temp:
             scratch = Path(temp)
-            if not run_quick(pipeline, scratch):
+            # CI runs Quick checks as a separate required job. Keep `full`
+            # self-contained for local use while avoiding a duplicate pass.
+            if args.mode != "ios-only" and not run_quick(pipeline, scratch):
                 return pipeline.finish("failed")
             if args.mode == "quick":
                 return pipeline.finish("passed")
+            if args.mode == "ios-only":
+                pipeline.report["quickScope"] = "Quick checks were not run in ios-only mode; require the separate Quick checks job."
             if platform.system() != "Darwin":
-                pipeline.report["error"] = "full and release require macOS, Xcode and an iOS simulator"
+                pipeline.report["error"] = "ios-only, full and release require macOS, Xcode and an iOS simulator"
                 return pipeline.finish("failed")
             destination = args.destination
             if not destination:
@@ -388,7 +392,7 @@ def main(argv: list[str] | None = None) -> int:
                 return pipeline.finish("failed")
             if not xcode_test(pipeline, scratch, destination, "ios-full", []):
                 return pipeline.finish("failed")
-            if args.mode == "full":
+            if args.mode in ("ios-only", "full"):
                 return pipeline.finish("passed")
             for baseline in BASELINES:
                 if not pipeline.step("baseline-" + baseline[:8], ["git", "cat-file", "-e", baseline + "^{commit}"]):
