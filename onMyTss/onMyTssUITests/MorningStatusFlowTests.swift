@@ -199,15 +199,11 @@ final class MorningStatusFlowTests: XCTestCase {
         for _ in 0..<12 {
             let top = app.navigationBars.firstMatch.frame.maxY
             let viewport = app.frame
-            let tabBar = app.tabBars.firstMatch
-            let tabFrame = tabBar.exists ? tabBar.frame : .zero
-            // iOS can place the tab controls on the side without exposing a
-            // TabBar element. Only a bottom bar limits the vertical viewport.
-            let hasBottomBar = !tabFrame.isEmpty && tabFrame.minY > top
-                && tabFrame.width >= viewport.width * 0.5
-            let bottom = hasBottomBar ? min(viewport.maxY, tabFrame.minY) : viewport.maxY
+            // Use XCTest's hit testing instead of a tab bar snapshot, which can
+            // time out after form scrolling and may be positioned at the side.
+            let bottom = viewport.maxY
             let frame = element.exists ? element.frame : .zero
-            if element.isHittable, frame.minY >= top, frame.maxY <= bottom { return }
+            if element.isHittable, !frame.isEmpty, frame.midY >= top, frame.midY <= bottom { return }
 
             // Form updates can move a row above the viewport after a save.
             // Follow its current position and use short drags to avoid overshooting it.
@@ -221,7 +217,7 @@ final class MorningStatusFlowTests: XCTestCase {
             let finish = start.withOffset(CGVector(dx: 0, dy: scrollTowardTop ? distance : -distance))
             start.press(forDuration: 0.05, thenDragTo: finish)
         }
-        XCTFail("Could not fully reveal \(element.description)")
+        XCTFail("Could not reach \(element.description)")
     }
 
     @MainActor

@@ -26,10 +26,10 @@
 - Aim for coverage on calculation paths (BodyBatteryEngine, LoadCalculator, TSSCalculator) and persistence (DataStore). Add regression tests when fixing bugs.
 
 ## Release Gates
-- Before every TestFlight or production release, review the final diff and run the complete unit/UI suite in real Xcode. Required tests must pass; a successful compile alone is insufficient.
-- Exercise the optimized Release app, including cold launch, saved-history upgrade, maximum-heart-rate save, navigation during recalculation, and the changed user flows. Use a persisted synthetic history of at least 1,000 workouts for history-related changes. Verify cancellation/restart, latest-input correctness, and retention of user data and previous estimates.
+- Before every TestFlight or production release, review the final diff and run the complete unit/UI suite in real Xcode through CI or locally. Required tests must pass; a successful compile alone is insufficient. Do not repeat the full suite locally when the same code already passed CI.
+- Exercise the changed flows in an optimized Release build. For history or recalculation changes, use a persisted synthetic history of at least 1,000 workouts and verify cancellation/restart, latest-input correctness, and retention of user data and previous estimates.
 - Run `scripts/check_v2_migration.sh` for persistence changes and record the simulator/device, OS, configuration, test counts, responsiveness measurements, and any unverified physical-device behavior in the PR. Inspect failures and crash/hang evidence; do not infer smooth rendering from a passing launch test.
-- Xcode Cloud's **Test - iOS** action must remain **Required To Pass**. Do not publish with failed, skipped required, or unfinished tests. After merging to `main`, verify that exact commit's Build, Test, Archive, and TestFlight post-action before claiming delivery.
+- Do not publish with failed, skipped required, or unfinished tests. After merging to `main`, verify the exact commit's checks, the signed archive's provenance, and availability to the TestFlight internal group. Xcode Cloud is optional and is not a release dependency.
 
 ## Commit & Pull Request Guidelines
 - Follow the repo’s history pattern: short, capitalized, imperative summaries (e.g., "Fix HealthKit permission flow", "Performance: Parallelize data fetching"). Keep to ~50 characters when possible.

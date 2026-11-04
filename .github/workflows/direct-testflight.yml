@@ -1,0 +1,41 @@
+name: Verify direct TestFlight distribution
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Marketing version from the uploaded archive
+        required: true
+        type: string
+      build:
+        description: Build number from the uploaded archive
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Require the trusted main branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == "refs/heads/main" ]]
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check the selected build in TestFlight
+        env:
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+          ASC_APP_ID: ${{ vars.ASC_APP_ID || '6755509363' }}
+          ASC_BETA_GROUP: ${{ vars.ASC_BETA_GROUP || 'close door' }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_BUILD: ${{ inputs.build }}
+        shell: bash
+        run: python3 -B scripts/verify_direct_testflight.py --version "$RELEASE_VERSION" --build "$RELEASE_BUILD"

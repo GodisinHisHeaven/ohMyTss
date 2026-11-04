@@ -258,11 +258,19 @@ def choose_destination(raw_json: str) -> str:
         if not match or tuple(map(int, match.groups())) < (26, 1):
             continue
         for device in devices:
-            if device.get("isAvailable") and device.get("name", "").startswith("iPhone") and device.get("udid"):
-                choices.append((tuple(map(int, match.groups())), device["name"] == "iPhone 17 Pro", device["udid"]))
+            name = device.get("name", "")
+            kind = device.get("deviceTypeIdentifier", "")
+            is_iphone = name.startswith("iPhone") or kind.startswith("com.apple.CoreSimulator.SimDeviceType.iPhone-")
+            if device.get("isAvailable") and is_iphone and device.get("udid"):
+                # Prefer a conventional Pro phone over unusual form factors.
+                is_pro = bool(re.fullmatch(r"iPhone \d+ Pro(?: Max)?", name)
+                              or re.fullmatch(r"com\.apple\.CoreSimulator\.SimDeviceType\.iPhone-\d+-Pro(?:-Max)?", kind))
+                is_compact_pro = name.endswith(" Pro") or bool(re.fullmatch(
+                    r"com\.apple\.CoreSimulator\.SimDeviceType\.iPhone-\d+-Pro", kind))
+                choices.append((is_pro, tuple(map(int, match.groups())), is_compact_pro, name, device["udid"]))
     if not choices:
         raise ValueError("No available iPhone simulator with iOS 26.1 or later")
-    return "platform=iOS Simulator,id=" + max(choices)[2]
+    return "platform=iOS Simulator,id=" + max(choices)[-1]
 
 
 def simulator_udid(destination: str) -> str:
@@ -343,7 +351,7 @@ def xcode_test(pipeline: Pipeline, scratch: Path, destination: str, name: str, e
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("quick", "full", "release"))
+    parser.add_argument("mode", choices=("quick", "ios-only", "full", "release"))
     parser.add_argument("--destination", help="xcodebuild destination, e.g. platform=iOS Simulator,id=UDID")
     parser.add_argument("--output-dir", type=Path, help="new or empty directory for logs, result bundle and summary")
     args = parser.parse_args(argv)
@@ -358,12 +366,16 @@ def main(argv: list[str] | None = None) -> int:
     try:
         with tempfile.TemporaryDirectory(prefix="ohmytss-test-build-") as temp:
             scratch = Path(temp)
-            if not run_quick(pipeline, scratch):
+            # CI runs Quick checks as a separate required job. Keep `full`
+            # self-contained for local use while avoiding a duplicate pass.
+            if args.mode != "ios-only" and not run_quick(pipeline, scratch):
                 return pipeline.finish("failed")
             if args.mode == "quick":
                 return pipeline.finish("passed")
+            if args.mode == "ios-only":
+                pipeline.report["quickScope"] = "Quick checks were not run in ios-only mode; require the separate Quick checks job."
             if platform.system() != "Darwin":
-                pipeline.report["error"] = "full and release require macOS, Xcode and an iOS simulator"
+                pipeline.report["error"] = "ios-only, full and release require macOS, Xcode and an iOS simulator"
                 return pipeline.finish("failed")
             destination = args.destination
             if not destination:
@@ -380,7 +392,7 @@ def main(argv: list[str] | None = None) -> int:
                 return pipeline.finish("failed")
             if not xcode_test(pipeline, scratch, destination, "ios-full", []):
                 return pipeline.finish("failed")
-            if args.mode == "full":
+            if args.mode in ("ios-only", "full"):
                 return pipeline.finish("passed")
             for baseline in BASELINES:
                 if not pipeline.step("baseline-" + baseline[:8], ["git", "cat-file", "-e", baseline + "^{commit}"]):
@@ -404,7 +416,7 @@ def main(argv: list[str] | None = None) -> int:
             pipeline.report["manualGates"] = [
                 "Exercise optimized Release interactions, including saved-history upgrade, cancellation and 1000-workout retention.",
                 "Verify applicable physical-device HealthKit, Strava, background delivery and Watch behavior.",
-                "Verify the exact merge commit in Xcode Cloud and the TestFlight post-action before claiming delivery.",
+                "Verify the archive matches the tested merge commit and the build is available to the TestFlight internal group.",
             ]
             return pipeline.finish("incomplete")
     except (OSError, subprocess.SubprocessError, ValueError) as error:
