@@ -71,6 +71,9 @@ class ReleasePreflightTests(unittest.TestCase):
             path.write_text("STRAVA_CLIENT_ID = SET_ME\nSTRAVA_CLIENT_SECRET = SET_ME\n")
             with self.assertRaises(ValueError):
                 preflight.check_strava_config(path)
+            path.write_text("STRAVA_CLIENT_ID = 123456\nSTRAVA_CLIENT_SECRET = CI_SYNTHETIC_ONLY\n")
+            with self.assertRaises(ValueError):
+                preflight.check_strava_config(path)
 
 
 if __name__ == "__main__":

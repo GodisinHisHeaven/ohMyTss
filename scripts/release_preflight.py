@@ -97,7 +97,8 @@ def check_strava_config(path):
     client_id = values.get("STRAVA_CLIENT_ID", "")
     secret = values.get("STRAVA_CLIENT_SECRET", "")
     if (not re.fullmatch(r"[0-9]+", client_id) or not re.fullmatch(r"[A-Za-z0-9_-]+", secret)
-            or secret in {"SET_ME", "YOUR_STRAVA_CLIENT_SECRET"}):
+            or secret in {"SET_ME", "YOUR_STRAVA_CLIENT_SECRET", "CI_SYNTHETIC_ONLY",
+                          "SIMULATOR_TEST_ONLY", "SYNTHETIC_TEST_ONLY", "SYNTHETIC_PREFLIGHT_ONLY"}):
         raise ValueError("The Strava build configuration is missing or contains placeholders")
 
 
