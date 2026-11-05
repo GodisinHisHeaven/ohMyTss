@@ -45,14 +45,40 @@ nonisolated struct V2EstimateBatch: Sendable {
     let thresholdsModifiedAt: Date
     let previous: [String: Previous]
 
-    @MainActor init(context: ModelContext, includePrevious: Bool = true) throws {
-        sessions = try context.fetch(FetchDescriptor<Workout>(sortBy: [SortDescriptor(\.id)])).map {
+    @MainActor init(context: ModelContext, includePrevious: Bool = true, sessionID: String? = nil) throws {
+        let rows: [Workout]
+        let setRows: [StrengthSetRecord]
+        if let sessionID {
+            // Editing one activity must not load sensor payloads and versioned
+            // estimates for the entire history. Preserve linked sources and the
+            // prior running window used by the existing calculation.
+            let group = try Self.sourceGroup(context: context, sessionID: sessionID)
+            let ids = group.map(\.id)
+            setRows = try context.fetch(FetchDescriptor(predicate: #Predicate<StrengthSetRecord> {
+                ids.contains($0.sessionID)
+            }))
+            if let target = group.first(where: { $0.id == sessionID && !$0.isTombstoned && !$0.isSuppressed }) {
+                let end = target.startTime
+                let start = end.addingTimeInterval(-28 * 86400)
+                // Keep the same case-insensitive running-type rule in calculate.
+                let recent = try context.fetch(FetchDescriptor(predicate: #Predicate<Workout> {
+                    $0.startTime >= start && $0.startTime < end && !$0.isTombstoned && !$0.isSuppressed
+                }))
+                let groupIDs = Set(ids)
+                rows = group + recent.filter { !groupIDs.contains($0.id) && $0.workoutType.lowercased().contains("run") }
+            } else { rows = group }
+        } else {
+            rows = try context.fetch(FetchDescriptor<Workout>())
+            setRows = try context.fetch(FetchDescriptor<StrengthSetRecord>())
+        }
+        // Sort the models' small identifiers, not full BLOB-bearing SQL rows.
+        sessions = rows.sorted(using: SortDescriptor(\.id)).map {
             Session(id: $0.id, startTime: $0.startTime, duration: $0.duration, type: $0.workoutType,
                     distance: $0.distance, featuresData: $0.featuresData, tags: $0.userTags.sorted(),
                     source: $0.source, isGarmin: WorkoutAggregator.isGarminSource($0), linkedID: $0.linkedSessionID,
                     deleted: $0.isTombstoned, deletionOrigin: $0.deletionOrigin, suppressed: $0.isSuppressed)
         }
-        sets = try context.fetch(FetchDescriptor<StrengthSetRecord>()).sorted { $0.id.uuidString < $1.id.uuidString }.map {
+        sets = setRows.sorted { $0.id.uuidString < $1.id.uuidString }.map {
             RecordedSet(sessionID: $0.sessionID,
                         input: StrengthSetInput(id: $0.id, exerciseID: $0.exerciseID, reps: $0.reps,
                                                 weightKG: $0.weightKG, rir: $0.rir,
@@ -63,18 +89,41 @@ nonisolated struct V2EstimateBatch: Sendable {
         let thresholds = try DataStore(modelContext: context).fetchUserThresholds()
         maxHeartRate = thresholds.cardioMaxHeartRate
         thresholdsModifiedAt = thresholds.lastModified
-        previous = includePrevious ? try Self.latestEstimates(context: context) : [:]
+        previous = includePrevious ? try Self.latestEstimates(context: context, sessionIDs: sessionID.map { [$0] }) : [:]
+    }
+
+    @MainActor private static func sourceGroup(context: ModelContext, sessionID: String) throws -> [Workout] {
+        var rows = try context.fetch(FetchDescriptor(predicate: #Predicate<Workout> { $0.id == sessionID }))
+        var seen = Set(rows.map(\.id))
+        var frontier = Array(seen)
+        while !frontier.isEmpty {
+            let parents = frontier
+            let children = try context.fetch(FetchDescriptor(predicate: #Predicate<Workout> { row in
+                if let parent = row.linkedSessionID {
+                    parents.contains(parent) && (!row.isTombstoned || row.deletionOrigin == "source")
+                } else { false }
+            }))
+            frontier = []
+            for child in children where seen.insert(child.id).inserted {
+                rows.append(child)
+                frontier.append(child.id)
+            }
+        }
+        return rows
     }
 
     @MainActor static func latestEstimates(context: ModelContext, sessionIDs: [String]? = nil) throws -> [String: Previous] {
-        var query = FetchDescriptor<LoadEstimateRecord>(sortBy: [SortDescriptor(\.computedAt, order: .reverse)])
+        var query = FetchDescriptor<LoadEstimateRecord>()
         if let sessionIDs { query.predicate = #Predicate { sessionIDs.contains($0.sessionID) } }
-        var latest: [String: Previous] = [:]
-        for row in try context.fetch(query)
-            where latest[row.sessionID] == nil {
-            latest[row.sessionID] = Previous(version: row.version, inputData: row.inputData)
+        // Old revisions can each contain an entire sensor stream. Select the
+        // newest record using metadata before accessing its input payload.
+        query.propertiesToFetch = [\.sessionID, \.computedAt]
+        var latest: [String: LoadEstimateRecord] = [:]
+        for row in try context.fetch(query) {
+            if let current = latest[row.sessionID], current.computedAt >= row.computedAt { continue }
+            latest[row.sessionID] = row
         }
-        return latest
+        return latest.mapValues { Previous(version: $0.version, inputData: $0.inputData) }
     }
 
     func hasSameInputs(as other: Self) -> Bool {

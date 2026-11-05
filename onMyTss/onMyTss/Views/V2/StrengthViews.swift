@@ -4,7 +4,7 @@ import SwiftData
 struct StrengthSessionChooser: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
-    @Query(sort: \Workout.startTime, order: .reverse) private var workouts: [Workout]
+    @Query(WorkoutListQuery.orderedMetadata) private var workouts: [Workout]
     @State private var start = Date()
     @State private var minutes = 45
     @State private var created: Workout?
