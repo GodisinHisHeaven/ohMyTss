@@ -55,6 +55,10 @@ enum LaunchHistoryFixture {
 
     static func seedDashboard(in container: ModelContainer, includeMuscleRatings: Bool = true,
                               includeStrengthSets: Bool = true) throws {
+        if ProcessInfo.processInfo.arguments.contains("--v2-rpe-edit-fixture") {
+            try seedRPEEdit(in: container)
+            return
+        }
         let context = ModelContext(container)
         let now = Date()
         let intensityFixture = ProcessInfo.processInfo.arguments.contains("--v2-intensity-fixture")
@@ -146,6 +150,24 @@ enum LaunchHistoryFixture {
                 observedAt: now.addingTimeInterval(-Double(age) * 86400 - 1800)))
         }
         try context.save()
+    }
+
+    private static func seedRPEEdit(in container: ModelContainer) throws {
+        let context = ModelContext(container)
+        let now = Date()
+        let arguments = ProcessInfo.processInfo.arguments
+        let olderSide: BodySide = arguments.contains("--v2-rpe-older-right") ? .right : .left
+        let oldDate = Calendar.current.date(byAdding: .day, value: -1, to: now.startOfDay)!
+            .addingTimeInterval(12 * 3600)
+        let newDate = arguments.contains("--v2-rpe-same-date") ? oldDate : now
+        context.insert(UserThresholds(hasCompletedOnboarding: true))
+        let state = AppState(lastComputationDate: now)
+        state.localWorkoutRepairVersion = LocalWorkoutHistoryRepair.currentVersion
+        context.insert(state)
+        let store = MuscleRPEStore(context: context)
+        try store.save(region: .quads, side: olderSide, rpe: 3, observedAt: oldDate)
+        try store.save(region: .quads, side: olderSide == .left ? .right : .left,
+                       rpe: 4, observedAt: newDate)
     }
 }
 #endif
