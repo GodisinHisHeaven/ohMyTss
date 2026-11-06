@@ -233,7 +233,7 @@ final class WorkoutAggregator {
             let input = features
             let start = hkWorkout.startDate, end = hkWorkout.endDate, duration = hkWorkout.duration
             let cycling = hkWorkout.workoutActivityType == .cycling
-            let ftp = thresholds.cyclingFTP, maxHR = thresholds.maxHeartRate
+            let ftp = thresholds.effectiveCyclingFTP, maxHR = thresholds.maxHeartRate
             let calculation = Task.detached(priority: .utility) {
                 try Task.checkCancellation()
                 return try WorkoutImportCalculation(features: input, start: start, end: end, duration: duration,
@@ -343,9 +343,7 @@ final class WorkoutAggregator {
 
         // Thresholds apply only to their sport. Unknown cycling FTP does not
         // prevent other activities (or cycling history itself) from importing.
-        let ftp: Int?
-        if thresholds.preferStravaFTP, let value = thresholds.stravaFTP, value > 0 { ftp = value }
-        else { ftp = thresholds.cyclingFTP.flatMap { $0 > 0 ? $0 : nil } }
+        let ftp = thresholds.effectiveCyclingFTP
 
         // Convert to Workout models
         var workouts: [Workout] = []
