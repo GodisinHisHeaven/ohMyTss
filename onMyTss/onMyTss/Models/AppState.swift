@@ -31,6 +31,11 @@ final class AppState {
 
     var lastSyncMessage: String?
 
+    // A canceled legacy rebuild must retain its earliest dirty day across launch.
+    var pendingLegacyHistoryStart: Date?
+    var pendingLegacyHistoryEnd: Date?
+    var legacyHistoryRevision: Int = 0
+
     // Computation state
     var lastComputationDate: Date?
     var isComputationInProgress: Bool
