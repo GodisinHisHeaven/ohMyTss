@@ -4,7 +4,7 @@ import Foundation
 /// the same container. All access is confined to the main actor.
 @MainActor
 enum WorkoutMaintenanceGate {
-    enum Kind: Equatable { case sourceSync, localRepair }
+    enum Kind: Equatable { case sourceSync, localRepair, localDeletion }
     private static var active: [ObjectIdentifier: Kind] = [:]
 
     static func acquire(_ key: ObjectIdentifier, kind: Kind) async throws {
@@ -27,7 +27,8 @@ final class LocalWorkoutHistoryRepair {
     static let currentVersion = 2
 
     static func isRequired(_ state: AppState) -> Bool {
-        state.localWorkoutRepairInProgress || state.localWorkoutRepairVersion < currentVersion
+        state.localWorkoutRepairInProgress || state.pendingLegacyHistoryStart != nil
+            || state.localWorkoutRepairVersion < currentVersion
     }
 
     /// Only an explicit retry may request a source recovery. Ordinary launch

@@ -114,18 +114,33 @@ final class V2Store {
     }
 
     func deleteSession(_ session: Workout) async throws {
-        try DataStore(modelContext: context).ensureWorkoutMutationAllowed(for: session)
+        let store = DataStore(modelContext: context)
+        try Task.checkCancellation()
+        try store.ensureWorkoutMutationAllowed(for: session)
+        let key = store.workoutMaintenanceKey
+        // Keep source imports/local repair out of a partially applied deletion.
+        try await WorkoutMaintenanceGate.acquire(key, kind: .localDeletion)
+        defer { WorkoutMaintenanceGate.release(key) }
+        try store.ensureWorkoutMutationAllowed(for: session)
         // Delete the logical session, retaining source tombstones and all user records for audit.
         let all = try context.fetch(FetchDescriptor<Workout>())
         let ids = relatedIDs(to: session.id, in: all)
-        for row in all where ids.contains(row.id) {
+        let affected = all.filter { ids.contains($0.id) }
+        let state = try store.fetchAppState()
+        let repairWasPending = state.localWorkoutRepairInProgress
+        // Includes estimate refresh: cancellation at either stage resumes offline.
+        state.localWorkoutRepairInProgress = true
+        for row in affected {
             row.isTombstoned = true
             row.deletionOrigin = "user"
             row.isSuppressed = true
         }
-        try DataStore(modelContext: context).rebuildLegacyLoadHistory(now: clock())
+        try await store.refreshLegacyLoadHistory(from: affected.map(\.date).min(), now: clock())
         try await refreshEstimates()
-        try context.save()
+        try Task.checkCancellation()
+        state.localWorkoutRepairInProgress = repairWasPending
+        do { try context.save() }
+        catch { state.localWorkoutRepairInProgress = true; throw error }
     }
 
     func saveTemplate(name: String, sets: [StrengthSetRecord]) throws {

@@ -1,49 +1,87 @@
 import Foundation
 import SwiftData
 
-/// A small write batch shared by synchronous local edits and asynchronous sync.
-/// Seed from the preceding saved day so older unchanged history is not rewritten.
+/// Bounded writes shared by local edits and sync. A durable request coalesces
+/// overlapping rebuilds; a suspended writer must adopt the latest request/seed.
 @MainActor
 final class LegacyHistoryRebuilder {
     private let context: ModelContext
     private let store: DataStore
-    private let end: Date
+    private let state: AppState
+    private var revision: Int = -1
+    private var end: Date
     private var day: Date
-    private var aggregates: [Date: DayAggregate]
-    private var ctl: Double
-    private var atl: Double
+    private var ctl = 0.0
+    private var atl = 0.0
     nonisolated deinit {}
 
     init(context: ModelContext, from start: Date?, now: Date) throws {
         self.context = context
         store = DataStore(modelContext: context)
-        end = now.startOfDay
-        let saved = Dictionary(uniqueKeysWithValues: try store.fetchAllDayAggregates().map { ($0.date, $0) })
-        aggregates = saved
-        var firstQuery = FetchDescriptor<Workout>(sortBy: [SortDescriptor(\.date)])
-        firstQuery.fetchLimit = 1
-        let firstWorkout = try context.fetch(firstQuery).first?.date
-        let first = (Array(aggregates.keys) + [firstWorkout].compactMap { $0 }).min() ?? start ?? end
-        var beginning = start?.startOfDay ?? first
-        if let last = aggregates.keys.max(), last < end { beginning = min(beginning, last.addingDays(1)) }
-        let previous = aggregates.keys.filter { $0 < beginning }.max()
-        if let previous { beginning = min(beginning, previous.addingDays(1)) }
-        else { beginning = min(beginning, first) }
-        day = beginning.startOfDay
-        ctl = previous.flatMap { saved[$0]?.ctl } ?? 0
-        atl = previous.flatMap { saved[$0]?.atl } ?? 0
+        state = try store.fetchAppState()
+        end = max(now.startOfDay, state.pendingLegacyHistoryEnd ?? now.startOfDay)
+        day = start?.startOfDay ?? end
+        // Only inspect boundary rows. A recent deletion must not load years of
+        // aggregates (or their workout relationships) before its first yield.
+        if start == nil { day = try firstDay() ?? day }
+        if let pending = state.pendingLegacyHistoryStart { day = min(day, pending) }
+        var lastQuery = FetchDescriptor<DayAggregate>(sortBy: [SortDescriptor(\.date, order: .reverse)])
+        lastQuery.fetchLimit = 1
+        if let last = try context.fetch(lastQuery).first, last.date < end {
+            day = min(day, last.date.addingDays(1))
+        }
+        try seed()
+        state.pendingLegacyHistoryStart = day
+        state.pendingLegacyHistoryEnd = end
+        state.legacyHistoryRevision += 1
+        revision = state.legacyHistoryRevision
+        // Save the edit and its recovery marker together before any suspension.
+        try context.save()
+    }
+
+    private func firstDay() throws -> Date? {
+        var days = FetchDescriptor<DayAggregate>(sortBy: [SortDescriptor(\.date)])
+        days.fetchLimit = 1
+        var workouts = FetchDescriptor<Workout>(sortBy: [SortDescriptor(\.date)])
+        workouts.fetchLimit = 1
+        workouts.propertiesToFetch = [\.date]
+        return try [context.fetch(days).first?.date, context.fetch(workouts).first?.date].compactMap { $0 }.min()
+    }
+
+    private func seed() throws {
+        let beginning = day
+        var query = FetchDescriptor<DayAggregate>(
+            predicate: #Predicate { $0.date < beginning },
+            sortBy: [SortDescriptor(\.date, order: .reverse)])
+        query.fetchLimit = 1
+        if let previous = try context.fetch(query).first {
+            day = previous.date.addingDays(1)
+            ctl = previous.ctl
+            atl = previous.atl
+        } else {
+            day = min(day, try firstDay() ?? day)
+            ctl = 0
+            atl = 0
+        }
     }
 
     func applyBatch() throws -> Bool {
+        guard let pending = state.pendingLegacyHistoryStart else { return true }
+        if revision != state.legacyHistoryRevision {
+            // Another edit/rebuild may have repaired days already consumed by
+            // this instance. Never continue with its cached recurrence state.
+            day = pending
+            end = state.pendingLegacyHistoryEnd ?? end
+            try seed()
+            revision = state.legacyHistoryRevision
+        }
         for _ in 0..<14 {
             guard day <= end else {
-                if context.hasChanges { try context.save() }
-                return true
+                return try finish()
             }
             let aggregate: DayAggregate
-            if let existing = try aggregates[day] ?? store.fetchDayAggregate(for: day) { aggregate = existing }
+            if let existing = try store.fetchDayAggregate(for: day) { aggregate = existing }
             else { aggregate = DayAggregate(date: day); context.insert(aggregate) }
-            aggregates[day] = aggregate
             // Fetch at application time: a local edit during a yield must win.
             let rows = try store.fetchWorkouts(from: day, to: day, includeSupressed: true)
             let active = rows.filter { !$0.isSuppressed && !$0.isTombstoned }
@@ -62,7 +100,7 @@ final class LegacyHistoryRebuilder {
             let score = BodyBatteryCalculator.calculateScoreWithModifiers(
                 tsb: tsb, hrvModifier: aggregate.hrvModifier, rhrModifier: aggregate.rhrModifier
             )
-            let ramp = aggregates[day.addingDays(-7)].map {
+            let ramp = try store.fetchDayAggregate(for: day.addingDays(-7)).map {
                 LoadCalculator.calculateCTLRampRate(currentCTL: ctl, ctlOneWeekAgo: $0.ctl)
             }
             if aggregate.ctl != ctl { aggregate.ctl = ctl }
@@ -72,7 +110,22 @@ final class LegacyHistoryRebuilder {
             if aggregate.rampRate != ramp { aggregate.rampRate = ramp }
             day = day.addingDays(1)
         }
+        if day > end { return try finish() }
         if context.hasChanges { try context.save() }
-        return day > end
+        return false
+    }
+
+    private func finish() throws -> Bool {
+        let pending = state.pendingLegacyHistoryStart
+        let pendingEnd = state.pendingLegacyHistoryEnd
+        state.pendingLegacyHistoryStart = nil
+        state.pendingLegacyHistoryEnd = nil
+        do { try context.save() }
+        catch {
+            state.pendingLegacyHistoryStart = pending
+            state.pendingLegacyHistoryEnd = pendingEnd
+            throw error
+        }
+        return true
     }
 }
