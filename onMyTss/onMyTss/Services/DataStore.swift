@@ -248,25 +248,73 @@ class DataStore {
     /// source responses do not dirty a model or trigger history reconciliation.
     @discardableResult
     func saveWorkouts(_ workouts: [Workout], reconcileSideEffects: Bool? = nil,
-                      prewarmed: WorkoutPrewarmedEndpoints? = nil) throws -> WorkoutChanges {
+                      prewarmed: WorkoutPrewarmedEndpoints? = nil,
+                      reconcileIsolatedInsertions: Bool = false) throws -> WorkoutChanges {
         try ensureLocalRepairAllowsMutation()
         var changes = WorkoutChanges()
+        var inserted: [Workout] = []
+        var changedExisting = false
         for workout in workouts {
             if let existing = try fetchWorkout(byId: workout.id) {
                 let oldDate = existing.date
                 guard try merge(workout, into: existing) else { continue }
+                changedExisting = true
                 changes.include(existing)
                 changes.dates.insert(oldDate)
             } else {
                 modelContext.insert(workout)
+                inserted.append(workout)
                 changes.include(workout)
             }
         }
         if !changes.isEmpty {
-            changes.formUnion(try reconcileWorkoutSources(applySideEffects: reconcileSideEffects, prewarmed: prewarmed))
+            if reconcileIsolatedInsertions, reconcileSideEffects == false, !changedExisting,
+               try canReconcileInsertionsIndependently(inserted) {
+                let endpoints = WorkoutEndpointCache(prewarmed: prewarmed)
+                var groups: [String: String] = [:]
+                for members in Self.matchingWorkoutGroups(inserted, endpoints: endpoints) {
+                    guard let group = members.map(\.id).min() else { continue }
+                    for row in members { groups[row.id] = group }
+                }
+                changes.formUnion(applyWorkoutSourceGroups(inserted, groupForID: groups,
+                                                           mayFinalize: false, unresolvedSources: []))
+            } else {
+                changes.formUnion(try reconcileWorkoutSources(applySideEffects: reconcileSideEffects, prewarmed: prewarmed))
+            }
             try modelContext.save()
         }
         return changes
+    }
+
+    /// A new batch with no saved temporal neighbors or durable links cannot
+    /// change an existing source group. Check the live context on every batch,
+    /// including pending UI edits; never cache this result across a suspension.
+    /// Corrections, deletions and ambiguous neighborhoods use full reconciliation.
+    private func canReconcileInsertionsIndependently(_ rows: [Workout]) throws -> Bool {
+        guard !rows.isEmpty, rows.allSatisfy({
+            $0.source != WorkoutSource.manual.rawValue && $0.startTime.timeIntervalSinceReferenceDate.isFinite
+                && !$0.isTombstoned && !$0.isSuppressed && $0.deletionOrigin == nil
+                && $0.sessionGroupID == nil && $0.linkedSessionID == nil
+        }), let first = rows.map(\.startTime).min(), let last = rows.map(\.startTime).max() else { return false }
+        let ids = rows.map(\.id)
+        let optionalIDs = ids.map(Optional.some)
+        let lower = first.addingTimeInterval(-60)
+        let upper = last.addingTimeInterval(60)
+        let manual = WorkoutSource.manual.rawValue
+        // The encompassing interval is deliberately conservative for scattered
+        // batches. Any saved candidate triggers the existing complete algorithm.
+        func exists(_ predicate: Predicate<Workout>) throws -> Bool {
+            var descriptor = FetchDescriptor<Workout>(predicate: predicate)
+            descriptor.fetchLimit = 1
+            descriptor.propertiesToFetch = [\.id]
+            return try !modelContext.fetch(descriptor).isEmpty
+        }
+        if try exists(#Predicate { row in
+            !ids.contains(row.id) && row.source != manual && row.startTime > lower && row.startTime < upper
+        }) { return false }
+        if try exists(#Predicate { optionalIDs.contains($0.sessionGroupID) }) { return false }
+        if try exists(#Predicate { optionalIDs.contains($0.linkedSessionID) }) { return false }
+        return true
     }
 
     private func merge(_ incoming: Workout, into existing: Workout) throws -> Bool {
@@ -522,7 +570,8 @@ class DataStore {
             try Task.checkCancellation()
             try validateSources?()
             changes.formUnion(try saveWorkouts(Array(workouts[offset..<min(offset + 20, workouts.count)]),
-                                              reconcileSideEffects: false, prewarmed: endpoints))
+                                              reconcileSideEffects: false, prewarmed: endpoints,
+                                              reconcileIsolatedInsertions: true))
             #if DEBUG
             await importedBatchDidSaveForTesting?(min(offset + 20, workouts.count))
             #endif
