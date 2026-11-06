@@ -963,7 +963,7 @@ class DataStore {
         refresh: while true {
             let thresholds = try fetchUserThresholds()
             let revision = thresholds.lastModified
-            let ftp = thresholds.preferStravaFTP ? thresholds.stravaFTP ?? thresholds.cyclingFTP : thresholds.cyclingFTP
+            let ftp = thresholds.effectiveCyclingFTP
             let maxHR = thresholds.maxHeartRate
             let rows = try allWorkouts().filter { $0.source != WorkoutSource.manual.rawValue && !$0.isTombstoned }
             for offset in stride(from: 0, to: rows.count, by: 20) {

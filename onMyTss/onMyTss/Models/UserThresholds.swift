@@ -31,6 +31,13 @@ final class UserThresholds {
     var stravaFTP: Int? // FTP from Strava athlete profile
     var preferStravaFTP: Bool // Whether to use Strava FTP over manual FTP
 
+    /// Imports and saved-history recalculation must use the same valid FTP.
+    /// An unavailable/invalid preferred Strava value falls back to manual FTP.
+    var effectiveCyclingFTP: Int? {
+        if preferStravaFTP, let stravaFTP, stravaFTP > 0 { return stravaFTP }
+        return cyclingFTP.flatMap { $0 > 0 ? $0 : nil }
+    }
+
     // Heart rate
     var maxHeartRate: Int? // Maximum heart rate (bpm)
 
