@@ -57,6 +57,14 @@ final class SwissStyleFlowTests: XCTestCase {
         XCTAssertTrue(app.textFields["settings.cardioHR"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["settings.saveCardio"].isHittable)
         attach(app, "Swiss — settings")
+        let retiredEntry = app.buttons["settings.morningStatus"]
+        let privacyLink = app.descendants(matching: .any)["Privacy Policy"].firstMatch
+        for _ in 0..<5 where !privacyLink.isHittable {
+            XCTAssertFalse(retiredEntry.exists)
+            app.swipeUp()
+        }
+        XCTAssertTrue(privacyLink.isHittable)
+        XCTAssertFalse(retiredEntry.exists)
         app.buttons["History"].firstMatch.tap()
         XCTAssertTrue(app.segmentedControls["history.trend"].waitForExistence(timeout: 5))
         attach(app, "Swiss — dark history")
