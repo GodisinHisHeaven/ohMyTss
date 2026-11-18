@@ -13,8 +13,6 @@ struct MainTabView: View {
     let engine: any BodyBatteryEngineProtocol
     let dataStore: DataStore
     @Environment(\.scenePhase) private var scenePhase
-    @Query private var appStates: [AppState]
-    @State private var morningSync = MorningSummarySync()
     @State private var autoSync: AutoSyncCoordinator
 
     @State private var selectedTab: Tab = .today
@@ -78,35 +76,7 @@ struct MainTabView: View {
                 catch { return }
             }
         }
-        .task(id: MorningSyncTrigger(isActive: scenePhase == .active,
-                                     computedAt: appStates.first?.lastComputationDate,
-                                     repairVersion: appStates.first?.localWorkoutRepairVersion,
-                                     repairInProgress: appStates.first?.localWorkoutRepairInProgress,
-                                     sourceFinalizationPending: appStates.first?.pendingWorkoutSourceFinalization,
-                                     computationInProgress: appStates.first?.isComputationInProgress)) {
-            await syncMorningSummaryIfActive()
-        }
     }
-
-    private func syncMorningSummaryIfActive() async {
-        guard scenePhase == .active else { return }
-        #if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("--v2-ui-tests") { return }
-        #endif
-        // Do not start a network request for a provisional local history.
-        guard let state = try? dataStore.fetchAppState(), !state.isComputationInProgress,
-              !state.pendingWorkoutSourceFinalization, !LocalWorkoutHistoryRepair.isRequired(state) else { return }
-        await morningSync.sync(store: dataStore)
-    }
-}
-
-struct MorningSyncTrigger: Equatable {
-    let isActive: Bool
-    let computedAt: Date?
-    let repairVersion: Int?
-    let repairInProgress: Bool?
-    let sourceFinalizationPending: Bool?
-    let computationInProgress: Bool?
 }
 
 // MARK: - Previews

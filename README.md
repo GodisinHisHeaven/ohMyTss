@@ -1,27 +1,8 @@
 # ohMyTss
 
-An iOS training-load app with a private backend for morning status SMS.
-
-The iOS app reads Apple Health and optional Strava activities. Users can enable
-morning texts using only a verified US phone number. The backend runs only
-morning status and consent replies; chat, training plans, activity summaries,
-other reminders, and web coaching signup are paused. Current-day data, the local
-06:00–10:30 window, and daily idempotency still govern delivery.
-
-Open **Settings → Morning Status** and enter your phone number.
-Verify it once with an SMS code to view today's summary and SMS state,
-change the delivery time zone, or unsubscribe. These controls and the feature's
-privacy information stay inside the app. No email or password is needed; the
-app session is stored in the device Keychain. Disconnecting does not unsubscribe.
-Verification alone does not subscribe or upload training data. **Enable Morning
-Texts** separately consents to share the latest readiness score, sleep duration
-and seven-day training minutes. The private service stores only the latest
-summary; raw HealthKit samples, routes and muscle notes stay on the device.
-Open and sync the app in the morning: uploads run in the foreground after local
-calculation, and iOS does not guarantee fresh data while the app is closed.
-All morning texts use app data. Existing subscribers connect their app summary
-with separate consent; Intervals sync and morning reads are disabled. Opted-out numbers must use SMS `START` before re-enabling. Refreshing
-status or uploading a summary never sends an immediate morning text.
+An iOS app for tracking training load and readiness using Apple Health and
+optional Strava activities. The private backend provides account access and
+historical dashboards. The morning SMS service ended on November 18, 2026.
 
 ## Today and History
 
@@ -70,9 +51,7 @@ The iOS URL scheme is `ohmytss`.
 
 The Xcode project/scheme/module path `onMyTss`, App Store bundle ID
 `mj6.onMyTss`, existing Keychain keys, and the previous URL scheme remain for
-installed-app and Xcode Cloud compatibility. The existing Fly app and hostname
-`coach-ota.fly.dev`, database, SMS sender, and delivery idempotency keys also
-remain stable. These are compatibility identifiers, not product names.
+installed-app and Xcode Cloud compatibility. The backend continues to use the Fly hostname `coach-ota.fly.dev`.
 
 ## Strava
 

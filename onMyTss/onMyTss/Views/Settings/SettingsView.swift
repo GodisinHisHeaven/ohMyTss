@@ -11,7 +11,6 @@ import SwiftData
 /// Settings screen for managing user preferences and app configuration
 struct SettingsView: View {
     private enum IntensityField: Hashable { case lt1, lt2 }
-    private let dataStore: DataStore
     @Environment(\.modelContext) private var modelContext
     @State private var cardioHR = ""
     @State private var cardioMessage: String?
@@ -27,7 +26,6 @@ struct SettingsView: View {
     @FocusState private var focusedIntensity: IntensityField?
 
     init(dataStore: DataStore, engine: any BodyBatteryEngineProtocol) {
-        self.dataStore = dataStore
         _viewModel = State(initialValue: SettingsViewModel(dataStore: dataStore, engine: engine))
     }
 
@@ -207,19 +205,6 @@ struct SettingsView: View {
                         Text(viewModel.lastSyncDisplay)
                             .foregroundStyle(.secondary)
                     }
-                }
-
-                Section {
-                    NavigationLink {
-                        MorningStatusView(dataStore: dataStore)
-                    } label: {
-                        Label("Morning Status", systemImage: "message")
-                    }
-                    .accessibilityIdentifier("settings.morningStatus")
-                } header: {
-                    Text("Morning Status SMS")
-                } footer: {
-                    Text("Connect with your phone number to view morning status, set the delivery time zone and manage your texts here.")
                 }
 
                 // App Information
