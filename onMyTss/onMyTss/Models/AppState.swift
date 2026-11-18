@@ -33,6 +33,8 @@ final class AppState {
 
     // Computation state
     var lastComputationDate: Date?
+    var lastComputedCyclingFTP: Int?
+    var lastComputedTimeZone: String?
     var isComputationInProgress: Bool
 
     // User engagement

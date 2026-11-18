@@ -409,6 +409,37 @@ final class PendingSyncRunnerTests: XCTestCase {
         }
     }
 
+    func testExclusiveCheckpointResetWaitsUntilTheRunningPassIsAcknowledged() async throws {
+        try await withStore { store in
+            let gate = SyncTestGate()
+            var checkpoint: Int? = 1
+            let runner = PendingSyncRunner(store: store) {
+                await gate.wait()
+                checkpoint = 2
+                return true
+            }
+            let running = Task { try await runner.markAndRun() }
+            defer { running.cancel(); gate.release() }
+            try await waitForSyncTestCondition("sync to hold the lock") { gate.isWaiting }
+            var requested = false
+            let reset = Task {
+                requested = true
+                try await runner.withExclusiveAccess {
+                    try store.markPending()
+                    checkpoint = nil
+                }
+            }
+            defer { reset.cancel() }
+            try await waitForSyncTestCondition("reset to reach the lock") { requested }
+            XCTAssertEqual(checkpoint, 1)
+            gate.release()
+            try await running.value
+            try await reset.value
+            XCTAssertNil(checkpoint)
+            XCTAssertNotNil(try store.pendingRevision())
+        }
+    }
+
     func testWaitTimeoutNamesTheBlockedOperation() async {
         do {
             try await waitForSyncTestCondition("fixture never started", timeout: .milliseconds(20)) { false }

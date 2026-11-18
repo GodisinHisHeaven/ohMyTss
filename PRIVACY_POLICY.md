@@ -1,6 +1,6 @@
 # Privacy Policy for ohMyTss
 
-**Last Updated:** October 26, 2026
+**Last Updated:** November 18, 2026
 
 ## Introduction
 
@@ -23,30 +23,9 @@ If you connect Strava, the iOS app reads your authorized activity and athlete
 profile data and stores access credentials in the iOS Keychain. OAuth and API
 requests go to Strava.
 
-Morning Status SMS is optional and stays inside Settings → Morning Status.
-Enter your US phone number and verify it with a Twilio code. Verification creates
-a private phone identity without subscribing you or sharing training data; no
-email, password or Intervals.icu account is required. The app stores only the
-signed session in this device's Keychain. Phone verification uses HTTPS.
+Morning texts, phone verification, and app-summary uploads have ended. The private service retains existing accounts, consent, delivery history, and the latest shared summary on encrypted storage. The former SMS feature used Twilio to verify phone numbers and deliver texts. With separate consent, it sent only readiness, sleep duration, and seven-day training minutes from the app. Raw HealthKit samples, routes, and muscle notes stayed on the device.
 
-Enabling morning texts separately consents to share three values: your latest
-readiness score, sleep duration and total training minutes over the last seven
-days. These values may be calculated from Apple Health or Strava data on your
-device. The private service stores only the latest summary in Supabase and
-includes it in the text processed by Twilio. Raw HealthKit samples, workout
-routes and muscle notes are not uploaded. App summaries are not sent to an LLM.
-
-All morning texts use app summaries, including for existing subscribers.
-Historical Intervals data remains stored but is not synced or used for morning
-delivery. Connecting an app summary requires separate consent. Delivery needs a current-day summary and is limited to one
-message per local day between 06:00 and 10:30. Open and sync the app in the
-morning; background refresh is not guaranteed. Refreshing status or uploading a
-summary does not send a message immediately. Message and data rates may apply.
-Reply STOP to stop SMS, START to resubscribe, or HELP for help. Turning texts off
-stops future summary uploads; disconnecting removes this device's session without
-changing the subscription. The [service privacy notice](https://coach-ota.fly.dev/privacy)
-describes backend processing and deletion requests. Web coaching signup, chat,
-plans and other alerts remain paused.
+The [service privacy notice](https://coach-ota.fly.dev/privacy) describes historical records and requests for account data.
 
 We do not collect payment information or advertising identifiers.
 
@@ -65,13 +44,12 @@ We use the health data you authorize solely for the following purposes:
 ### iOS HealthKit Storage
 
 - HealthKit data and calculated metrics are stored locally using Apple's SwiftData framework
-- Only the three summary values above are uploaded after separate morning-text consent
-- Optional Strava and SMS services use the connections described above
+- Optional Strava requests use the connection described above
 - Data is protected by iOS sandboxing and encryption mechanisms
 
 ### No Account Required
 
-The iOS HealthKit features do not require an account. Strava requires separate authorization; morning status requires phone verification and separate SMS/summary opt-in.
+The iOS HealthKit features do not require an account. Strava requires separate authorization.
 
 ## Data You Control
 
@@ -80,16 +58,12 @@ The iOS HealthKit features do not require an account. Strava requires separate a
 You have complete control over your data:
 
 - **Access**: View all calculated metrics within the app
-- **Delete**: Remove all calculated data using the "Reset All Data" option in Settings
+- **Sync**: Reset source checkpoints through **Reset Activity Sync** in Settings
 - **HealthKit Permissions**: Revoke HealthKit access at any time through iOS Settings → Health → Data Access & Devices → ohMyTss
 
-### What Happens When You Delete Data
+### Reset Activity Sync
 
-When you use "Reset All Data" in the app:
-- All calculated Body Battery scores, TSS, and training load metrics are permanently deleted
-- Your original HealthKit data remains untouched in Apple Health
-- You can recalculate metrics by syncing HealthKit data again
-- This reset does not delete your separate morning status account or change its SMS consent
+Resetting sync keeps saved workouts, metrics, estimates, and notes. The next sync rechecks Apple Health and connected Strava activity. Existing web account records are managed separately.
 
 ## HealthKit-Specific Disclosures
 
@@ -123,11 +97,11 @@ We may update this Privacy Policy from time to time. Changes will be reflected i
 
 ## Third-Party Services
 
-ohMyTss does not use third-party analytics or advertising. Optional Strava and morning status services process the data described above.
+ohMyTss does not use third-party analytics or advertising. Strava and the private backend process the data described above.
 
 ## International Users
 
-Raw iOS HealthKit data stays on your device. With separate consent, the optional morning status service and its providers process your phone, latest summary and SMS on their servers.
+Raw iOS HealthKit data stays on your device. See the SMS section above for the prior processing and continued retention of shared summaries and account data.
 
 ## Your Consent
 
@@ -144,8 +118,4 @@ If you have questions, concerns, or requests regarding this Privacy Policy or yo
 
 **In Plain English:**
 
-ohMyTss reads your workout data from Apple Health to calculate how ready you are to train. HealthKit calculations happen on your device. Optional Strava authorization and the separate morning SMS service use external providers as described above. Only the latest readiness score, sleep duration and seven-day training minutes are shared if you enable morning texts. Health data is never used for advertising. You can delete all calculated data anytime, and your original Health data stays safe in Apple Health.
-
----
-
-© 2026 ohMyTss. All rights reserved.
+ohMyTss calculates training load and readiness on your device from Apple Health and optional Strava activities. Health data is never used for advertising. Resetting activity sync keeps your saved training history and notes.

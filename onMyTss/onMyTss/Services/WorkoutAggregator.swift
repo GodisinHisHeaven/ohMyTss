@@ -215,6 +215,8 @@ final class WorkoutAggregator {
     /// activities older than the normal refresh window.
     func convertHealthKitWorkouts(_ source: [HKWorkout]) async throws -> [Workout] {
         let thresholds = try dataStore.fetchUserThresholds()
+        let ftp = try dataStore.effectiveCyclingFTP(for: thresholds)
+        let maxHR = thresholds.maxHeartRate
         var workouts: [Workout] = []
         for hkWorkout in source {
             try Task.checkCancellation()
@@ -233,7 +235,6 @@ final class WorkoutAggregator {
             let input = features
             let start = hkWorkout.startDate, end = hkWorkout.endDate, duration = hkWorkout.duration
             let cycling = hkWorkout.workoutActivityType == .cycling
-            let ftp = thresholds.cyclingFTP, maxHR = thresholds.maxHeartRate
             let calculation = Task.detached(priority: .utility) {
                 try Task.checkCancellation()
                 return try WorkoutImportCalculation(features: input, start: start, end: end, duration: duration,
@@ -309,7 +310,7 @@ final class WorkoutAggregator {
         let returnedIDs = Set(allActivities.map(\.id))
         let after = Date(timeIntervalSince1970: Double(Int(startDate.timeIntervalSince1970)))
         let before = Date(timeIntervalSince1970: Double(Int(endDate.timeIntervalSince1970)))
-        let known = try dataStore.fetchWorkouts(from: startDate, to: endDate, includeSupressed: true).filter {
+        let known = try dataStore.fetchWorkouts(startingAt: startDate, before: endDate, includeSuppressed: true).filter {
             $0.source == WorkoutSource.strava.rawValue && !$0.isTombstoned &&
             $0.startTime > after && $0.startTime < before &&
             $0.stravaId.map { !returnedIDs.contains($0) } == true
@@ -343,9 +344,8 @@ final class WorkoutAggregator {
 
         // Thresholds apply only to their sport. Unknown cycling FTP does not
         // prevent other activities (or cycling history itself) from importing.
-        let ftp: Int?
-        if thresholds.preferStravaFTP, let value = thresholds.stravaFTP, value > 0 { ftp = value }
-        else { ftp = thresholds.cyclingFTP.flatMap { $0 > 0 ? $0 : nil } }
+        let ftp = try dataStore.effectiveCyclingFTP(for: thresholds)
+        let maxHR = thresholds.maxHeartRate
 
         // Convert to Workout models
         var workouts: [Workout] = []
@@ -358,34 +358,35 @@ final class WorkoutAggregator {
                 continue
             }
 
-            // Calculate TSS from Strava data
-            let tss = calculateTSSFromStrava(
-                activity: activity,
-                userFTP: ftp,
-                userMaxHR: thresholds.maxHeartRate
-            )
+            let duration = TimeInterval(max(0, activity.movingTime))
+            let normalizedPower = activity.weightedAverageWatts.map(Double.init)
+            let signals = StravaSummarySignals(power: activity.hasPowerData, heartRate: activity.hasHeartrate)
+            let tss = LegacyWorkoutInput.stravaTSS(cycling: Self.normalizeWorkoutType(activity.sportType) == "cycling",
+                duration: duration, normalizedPower: signals.power ? normalizedPower : nil,
+                averageHeartRate: signals.heartRate ? activity.averageHeartrate : nil, ftp: ftp, maxHR: maxHR)
 
             let workout = Workout(
                 id: "\(activity.id)", // Strava ID as string
                 date: startTime.startOfDay,
                 startTime: startTime,
-                duration: TimeInterval(max(0, activity.movingTime)),
+                duration: duration,
                 workoutType: activity.sportType,
                 distance: activity.distance,
-                tss: tss.value,
+                tss: tss.tss,
                 calculationMethod: tss.method,
                 source: .strava,
                 stravaId: activity.id,
                 healthKitUUID: nil,
                 isSuppressed: false,
                 averagePower: activity.averageWatts,
-                normalizedPower: activity.weightedAverageWatts != nil ? Double(activity.weightedAverageWatts!) : nil,
+                normalizedPower: normalizedPower,
                 averageHeartRate: activity.averageHeartrate,
                 maxHeartRate: activity.maxHeartrate,
                 deviceName: activity.deviceName
             )
 
             var features = WorkoutFeatures()
+            features.stravaSummarySignals = signals
             if let elapsed = activity.reportedElapsedTime,
                elapsed > 0, elapsed >= max(0, activity.movingTime) {
                 features.end = startTime.addingTimeInterval(Double(elapsed))
@@ -529,40 +530,6 @@ final class WorkoutAggregator {
         }
     }
 
-    /// Calculate TSS from Strava activity data
-    private func calculateTSSFromStrava(activity: StravaActivity, userFTP: Int?, userMaxHR: Int?) -> (value: Double, method: String) {
-        // Prefer power-based if available
-        if Self.normalizeWorkoutType(activity.sportType) == "cycling", activity.hasPowerData,
-           let np = activity.weightedAverageWatts, np >= 0,
-           let userFTP = userFTP, userFTP > 0 {
-            // Use Strava's weighted average watts (their NP equivalent)
-            let intensityFactor = Double(np) / Double(userFTP)
-            let durationHours = Double(max(0, activity.movingTime)) / 3600.0
-            let tss = durationHours * Double(np) * intensityFactor / Double(userFTP) * 100
-
-            return (tss, "power")
-        }
-
-        // Fall back to HR-based if available
-        if activity.hasHeartrate, let avgHR = activity.averageHeartrate, avgHR.isFinite,
-           let userMaxHR = userMaxHR, userMaxHR > 60 {
-            let hrRatio = min(1, max(0, (avgHR - 60) / (Double(userMaxHR) - 60)))
-            let durationMinutes = Double(max(0, activity.movingTime)) / 60.0
-
-            // TRIMP calculation
-            let exerciseTRIMP = durationMinutes * hrRatio * exp(1.92 * hrRatio)
-            let oneHourFTPTRIMP = 60.0 * 0.85 * exp(1.92 * 0.85)
-            let hrTSS = (exerciseTRIMP / oneHourFTPTRIMP) * 100.0
-
-            return (hrTSS, "hr summary estimate")
-        }
-
-        // Fall back to duration estimate
-        let durationHours = Double(max(0, activity.movingTime)) / 3600.0
-        let estimatedTSS = durationHours * 60 // Very rough estimate
-
-        return (max(0, estimatedTSS), "duration estimate")
-    }
 }
 
 // MARK: - Concrete conformances

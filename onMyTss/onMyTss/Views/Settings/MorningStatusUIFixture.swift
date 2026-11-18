@@ -16,6 +16,10 @@ final class MorningStatusUIFixture: MorningStatusServing {
         }
     }
 
+    func fetchSMSAvailability() async throws -> MorningSMSAvailability {
+        ProcessInfo.processInfo.arguments.contains("--morning-sms-retired-fixture") ? .retired : .available
+    }
+
     func requestCode(phone: String) async throws -> MorningPhoneChallenge {
         guard phone == "+12025550100" else { throw MorningStatusError.invalidInput }
         return MorningPhoneChallenge(challenge: "ui-fixture-challenge", phoneHint: "Ending in 0100", expiresIn: 600, retryAfter: 60)

@@ -33,8 +33,8 @@ final class V2FlowTests: XCTestCase {
         let linkedSet = app.descendants(matching: .any)["activity.linkedSet"].firstMatch
         reach(linkedSet, in: app)
         XCTAssertTrue(linkedSet.label.contains("Squat") || app.staticTexts["Squat"].exists)
-        XCTAssertEqual(app.buttons.matching(identifier: "activity.linkedSet").count, 0)
-        XCTAssertTrue(app.staticTexts["Sets from linked sources are shown here but cannot be edited here yet."].exists)
+        XCTAssertTrue(app.buttons["activity.linkedSet"].firstMatch.exists)
+        XCTAssertTrue(app.staticTexts["Sets from linked sources stay with their original activities."].exists)
         let linkedReport = app.descendants(matching: .any)["activity.linkedReport"].firstMatch
         reach(linkedReport, in: app)
         XCTAssertTrue(linkedReport.label.contains("Front thighs") || app.staticTexts["Front thighs · Left"].exists)
@@ -42,7 +42,7 @@ final class V2FlowTests: XCTestCase {
     }
 
     @MainActor
-    func testLinkedPersonalDetailsRemainVisibleAndReadOnly() {
+    func testLinkedDetailsRemainVisibleAndSourceSetsCanBeEdited() {
         let app = XCUIApplication()
         app.launchArguments = ["--v2-ui-tests", "--v2-rpe-demo", "--v2-linked-details-fixture"]
         app.launch()
@@ -84,10 +84,12 @@ final class V2FlowTests: XCTestCase {
         app.navigationBars["Edit set"].buttons["Cancel"].tap()
         XCTAssertTrue(app.navigationBars["Swim"].waitForExistence(timeout: 5))
 
-        let linkedSet = app.descendants(matching: .any)["activity.linkedSet"].firstMatch
-        reach(linkedSet, in: app)
-        XCTAssertTrue(app.staticTexts["Sets from linked sources are shown here but cannot be edited here yet."].exists)
-        XCTAssertEqual(app.buttons.matching(identifier: "activity.linkedSet").count, 0)
+        let linkedSet = app.buttons["activity.linkedSet"].firstMatch
+        XCTAssertTrue(reachDashboardButton(linkedSet, in: app, navigationTitle: "Swim"))
+        linkedSet.tap()
+        XCTAssertTrue(app.navigationBars["Edit set"].waitForExistence(timeout: 10))
+        app.navigationBars["Edit set"].buttons["Cancel"].tap()
+        XCTAssertTrue(app.navigationBars["Swim"].waitForExistence(timeout: 5))
 
         let linkedReport = app.descendants(matching: .any)["activity.linkedReport"].firstMatch
         reach(linkedReport, in: app)

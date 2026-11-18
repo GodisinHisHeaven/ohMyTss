@@ -21,6 +21,11 @@ nonisolated struct SwimSegment: Codable, Equatable, Sendable {
     var stroke: String
 }
 
+nonisolated struct StravaSummarySignals: Codable, Equatable, Sendable {
+    let power: Bool
+    let heartRate: Bool
+}
+
 nonisolated struct WorkoutFeatures: Codable, Equatable, Sendable {
     var heartRate: [TimedValue] = [] // beats/minute
     var power: [TimedValue] = [] // watts
@@ -37,6 +42,7 @@ nonisolated struct WorkoutFeatures: Codable, Equatable, Sendable {
     var descentMeters: Double? = nil
     /// External elapsed endpoint preserves wall-clock gaps when duration is moving time.
     var end: Date? = nil
+    var stravaSummarySignals: StravaSummarySignals? = nil
 }
 
 nonisolated enum Region: String, Codable, CaseIterable, Identifiable, Sendable {

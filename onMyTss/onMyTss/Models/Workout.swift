@@ -15,7 +15,7 @@ final class Workout {
     /// Unique identifier (stravaId for Strava workouts, healthKitUUID string for HealthKit)
     @Attribute(.unique) var id: String
 
-    /// Date of the workout (start of day for grouping)
+    /// Import-time midnight retained for compatibility with older stores.
     var date: Date
 
     /// Workout start time

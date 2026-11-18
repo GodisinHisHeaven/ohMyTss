@@ -54,7 +54,7 @@ final class WorkoutStorageTests: XCTestCase {
         XCTAssertEqual(fetched?.tss, 75)
 
         // Ensure only one record exists
-        let all = try store.fetchWorkouts(from: date, to: date, includeSupressed: true)
+        let all = try store.fetchWorkouts(from: date, to: date, includeSuppressed: true)
         XCTAssertEqual(all.count, 1)
     }
 }

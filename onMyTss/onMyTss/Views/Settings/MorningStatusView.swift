@@ -2,7 +2,7 @@ import SwiftUI
 
 struct MorningStatusView: View {
     let dataStore: DataStore
-    @State private var model: MorningStatusViewModel
+    let model: MorningStatusViewModel
     @State private var phone = ""
     @State private var code = ""
     @State private var timezone = "UTC"
@@ -11,20 +11,22 @@ struct MorningStatusView: View {
     @FocusState private var focusedField: PhoneField?
     private enum PhoneField { case phone, code }
 
-    init(dataStore: DataStore) {
+    init(dataStore: DataStore, model: MorningStatusViewModel) {
         self.dataStore = dataStore
-        #if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("--morning-status-ui-fixture") {
-            _model = State(initialValue: MorningStatusViewModel(api: MorningStatusUIFixture(), tokenStore: MorningSessionUIFixture()))
-            return
-        }
-        #endif
-        _model = State(initialValue: MorningStatusViewModel())
+        self.model = model
     }
 
     var body: some View {
         SwissForm {
-            if model.isSignedIn {
+            if model.smsAvailability == .retired {
+                Section { Text(MorningStatusError.retired.localizedDescription) }
+            } else if model.smsAvailability == nil {
+                Section {
+                    Text("Morning status is unavailable.")
+                    Button("Check Availability") { Task { await model.refreshSMSAvailability() } }
+                        .disabled(model.isCheckingAvailability)
+                }
+            } else if model.isSignedIn {
                 if let status = model.status {
                     subscriptionSection(status)
                     deliverySection(status)
@@ -77,11 +79,13 @@ struct MorningStatusView: View {
                 Section { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(SwissStyle.critical) }
                     .accessibilityIdentifier("morning.error")
             }
-            Section {
-                NavigationLink("Data and Privacy") { MorningStatusPrivacyView() }
-                    .accessibilityIdentifier("morning.privacy")
-            } footer: {
-                Text("Use your app's latest summary for morning texts. No email, password or Intervals.icu account is required.")
+            if model.smsAvailability == .available {
+                Section {
+                    NavigationLink("Data and Privacy") { MorningStatusPrivacyView() }
+                        .accessibilityIdentifier("morning.privacy")
+                } footer: {
+                    Text("Use your app's latest summary for morning texts. No email, password or Intervals.icu account is required.")
+                }
             }
         }
         .navigationTitle("Morning Status")
@@ -296,7 +300,7 @@ struct MorningStatusPrivacyView: View {
                 Text("Twilio verifies your phone with a one-time text code. Your number and code are sent over HTTPS. The app stores only your signed session in this device's Keychain, so you do not need an email or password.")
             }
             Section("Morning texts") {
-                Text("When you enable app summaries, ohMyTss stores only your latest readiness score, sleep duration and seven-day training minutes in its private Supabase service. No raw HealthKit samples, workout routes or muscle notes are uploaded. Morning texts use only app summaries. Historical service records are not used for delivery.")
+                Text("When you enable app summaries, the service stores your latest readiness score, sleep duration and seven-day training minutes. Raw HealthKit samples, workout routes and muscle notes stay on your device.")
                 Text("Twilio processes SMS delivery and receives the text summary. Texts require opt-in and a current-day summary, and are limited to one morning message per local day. Message and data rates may apply.")
                 Text("Reply STOP to unsubscribe, START to resubscribe or HELP for help. Disconnecting this device does not unsubscribe you.")
             }

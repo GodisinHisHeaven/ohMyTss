@@ -105,7 +105,7 @@ final class SettingsResetConcurrencyTests: XCTestCase {
         try await source.value
     }
 
-    func testResetWaitsForInFlightHealthKitQueryAndAllowsInterruptedRecovery() async throws {
+    func testSettingsResetQueuesBehindInFlightHealthKitQuery() async throws {
         let fixture = try ResetFixture(count: 1, pauseQuery: true)
         let saved = fixture.manualWorkout()
         try fixture.store.saveWorkout(saved)
@@ -116,22 +116,24 @@ final class SettingsResetConcurrencyTests: XCTestCase {
         XCTAssertTrue(fixture.health.waiting)
         XCTAssertTrue(fixture.runtime.isProcessing)
 
-        await fixture.viewModel.resetAllData()
-        XCTAssertTrue(fixture.viewModel.errorMessage?.contains("Sync is in progress") == true)
+        let reset = Task { await fixture.viewModel.resetActivitySync() }
+        defer { reset.cancel() }
+        try await waitFor { fixture.viewModel.isSaving }
         XCTAssertNil(fixture.viewModel.successMessage)
         XCTAssertNotNil(try fixture.store.fetchWorkout(byId: saved.id))
 
         fixture.health.release()
         try await task.value
+        await reset.value
         XCTAssertFalse(fixture.runtime.isProcessing)
+        XCTAssertTrue(fixture.runtime.hasPendingChange)
         let state = try fixture.store.fetchAppState()
-        state.isComputationInProgress = true // Persisted interrupted work is not an active task.
-        try fixture.context.save()
-        await fixture.viewModel.resetAllData()
+        XCTAssertNil(state.healthKitAnchor)
+        XCTAssertNil(state.lastHealthKitSyncDate)
+        XCTAssertNotNil(state.lastComputationDate)
         XCTAssertNil(fixture.viewModel.errorMessage)
-        XCTAssertEqual(fixture.viewModel.successMessage, "All data reset successfully")
-        XCTAssertTrue(try fixture.store.allWorkouts().isEmpty)
-        XCTAssertFalse(state.isComputationInProgress)
+        XCTAssertEqual(fixture.viewModel.successMessage, "Activity sync reset")
+        XCTAssertEqual(try fixture.store.allWorkouts().count, 2)
     }
 
     func testResetWaitsForActualBoundedImportAndPreservesSavedRows() async throws {
@@ -157,8 +159,9 @@ final class SettingsResetConcurrencyTests: XCTestCase {
         let before = Set(try fixture.store.allWorkouts().map(\.id))
         XCTAssertEqual(before.count, 20)
         XCTAssertTrue(try fixture.store.fetchAppState().isComputationInProgress)
-        await fixture.viewModel.resetAllData()
-        XCTAssertTrue(fixture.viewModel.errorMessage?.contains("Sync is in progress") == true)
+        let reset = Task { await fixture.viewModel.resetActivitySync() }
+        defer { reset.cancel() }
+        try await waitFor { fixture.viewModel.isSaving }
         XCTAssertNil(fixture.viewModel.successMessage)
         XCTAssertEqual(Set(try fixture.store.allWorkouts().map(\.id)), before)
 
@@ -166,12 +169,20 @@ final class SettingsResetConcurrencyTests: XCTestCase {
         gate.release()
         do { try await task.value; XCTFail("Cancellation must stop the next import batch") }
         catch is CancellationError { } catch { throw error }
+        await reset.value
         XCTAssertFalse(fixture.runtime.isProcessing)
         XCTAssertEqual(Set(try fixture.store.allWorkouts().map(\.id)), before)
         XCTAssertTrue(try fixture.store.fetchAppState().isComputationInProgress)
-        await fixture.viewModel.resetAllData()
+        XCTAssertNil(try fixture.store.fetchAppState().healthKitAnchor)
         XCTAssertNil(fixture.viewModel.errorMessage)
-        XCTAssertTrue(try fixture.store.allWorkouts().isEmpty)
+        XCTAssertTrue(fixture.runtime.hasPendingChange)
+
+        fixture.store.importedBatchDidSaveForTesting = nil
+        try await fixture.engine.incrementalUpdate()
+        XCTAssertFalse(try fixture.store.fetchAppState().isComputationInProgress)
+        let recovered = Set(try fixture.store.allWorkouts().map(\.id))
+        XCTAssertEqual(recovered.count, 21)
+        XCTAssertTrue(before.isSubset(of: recovered))
     }
 
     private func waitFor(_ condition: () throws -> Bool) async throws {

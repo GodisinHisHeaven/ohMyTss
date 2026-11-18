@@ -1,27 +1,14 @@
 # ohMyTss
 
-An iOS training-load app with a private backend for morning status SMS.
+ohMyTss reads Apple Health and optional Strava activities to show training load
+and readiness. Use **Settings → Reset Activity Sync** to clear source
+checkpoints. The next sync rechecks the sources and keeps saved workouts,
+estimates, and notes available.
 
-The iOS app reads Apple Health and optional Strava activities. Users can enable
-morning texts using only a verified US phone number. The backend runs only
-morning status and consent replies; chat, training plans, activity summaries,
-other reminders, and web coaching signup are paused. Current-day data, the local
-06:00–10:30 window, and daily idempotency still govern delivery.
-
-Open **Settings → Morning Status** and enter your phone number.
-Verify it once with an SMS code to view today's summary and SMS state,
-change the delivery time zone, or unsubscribe. These controls and the feature's
-privacy information stay inside the app. No email or password is needed; the
-app session is stored in the device Keychain. Disconnecting does not unsubscribe.
-Verification alone does not subscribe or upload training data. **Enable Morning
-Texts** separately consents to share the latest readiness score, sleep duration
-and seven-day training minutes. The private service stores only the latest
-summary; raw HealthKit samples, routes and muscle notes stay on the device.
-Open and sync the app in the morning: uploads run in the foreground after local
-calculation, and iOS does not guarantee fresh data while the app is closed.
-All morning texts use app data. Existing subscribers connect their app summary
-with separate consent; Intervals sync and morning reads are disabled. Opted-out numbers must use SMS `START` before re-enabling. Refreshing
-status or uploading a summary never sends an immediate morning text.
+Morning text messages, phone verification, and app-summary uploads have ended.
+iOS checks the service before offering the SMS flow. Existing web accounts and
+historical training dashboards remain available. Coaching signup, chat,
+training plans, and Intervals synchronization remain paused.
 
 ## Today and History
 

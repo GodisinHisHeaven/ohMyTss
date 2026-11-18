@@ -13,10 +13,12 @@ struct SettingsView: View {
     private enum IntensityField: Hashable { case lt1, lt2 }
     private let dataStore: DataStore
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.scenePhase) private var scenePhase
     @State private var cardioHR = ""
     @State private var cardioMessage: String?
     @State private var savingCardio = false
     @State private var viewModel: SettingsViewModel
+    @State private var morningStatus = MorningStatusViewModel()
     @State private var showingResetConfirmation = false
     @State private var showingFTPEditor = false
     @AppStorage("intensityLT1HeartRate") private var intensityLT1HeartRate = 0
@@ -29,6 +31,12 @@ struct SettingsView: View {
     init(dataStore: DataStore, engine: any BodyBatteryEngineProtocol) {
         self.dataStore = dataStore
         _viewModel = State(initialValue: SettingsViewModel(dataStore: dataStore, engine: engine))
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--morning-status-ui-fixture") {
+            _morningStatus = State(initialValue: MorningStatusViewModel(api: MorningStatusUIFixture(),
+                                                                       tokenStore: MorningSessionUIFixture()))
+        }
+        #endif
     }
 
     var body: some View {
@@ -120,14 +128,12 @@ struct SettingsView: View {
 
                         // FTP Source Toggle (only if both FTPs exist)
                         if viewModel.showFTPToggle {
-                            Toggle(isOn: $viewModel.preferStravaFTP) {
+                            Toggle(isOn: Binding(get: { viewModel.preferStravaFTP }, set: { enabled in
+                                Task { await viewModel.setStravaFTPPreference(enabled) }
+                            })) {
                                 Label("Use Strava FTP", systemImage: "chart.line.uptrend.xyaxis")
                             }
-                            .onChange(of: viewModel.preferStravaFTP) { _, _ in
-                                Task {
-                                    await viewModel.toggleStravaFTPPreference()
-                                }
-                            }
+                            .disabled(viewModel.isSaving)
 
                             HStack {
                                 Text("Active FTP Source")
@@ -210,16 +216,28 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    NavigationLink {
-                        MorningStatusView(dataStore: dataStore)
-                    } label: {
-                        Label("Morning Status", systemImage: "message")
+                    switch morningStatus.smsAvailability {
+                    case .available:
+                        NavigationLink {
+                            MorningStatusView(dataStore: dataStore, model: morningStatus)
+                        } label: {
+                            Label("Morning Status", systemImage: "message")
+                        }
+                        .accessibilityIdentifier("settings.morningStatus")
+                    case .retired:
+                        Text(MorningStatusError.retired.localizedDescription)
+                            .accessibilityIdentifier("settings.morningStatusRetired")
+                    case nil:
+                        if morningStatus.isCheckingAvailability {
+                            ProgressView("Checking morning status…")
+                        } else {
+                            Button("Check Morning Status Availability") {
+                                Task { await checkMorningStatus() }
+                            }
+                        }
                     }
-                    .accessibilityIdentifier("settings.morningStatus")
                 } header: {
                     Text("Morning Status SMS")
-                } footer: {
-                    Text("Connect with your phone number to view morning status, set the delivery time zone and manage your texts here.")
                 }
 
                 // App Information
@@ -241,11 +259,11 @@ struct SettingsView: View {
                     Button(role: .destructive) {
                         showingResetConfirmation = true
                     } label: {
-                        Label("Reset All Data", systemImage: "trash.fill")
+                        Label("Reset Activity Sync", systemImage: "arrow.counterclockwise")
                     }
                     .disabled(viewModel.isSaving)
                 } footer: {
-                    Text("This will delete all calculated metrics. Your HealthKit data will not be affected.")
+                    Text("Reset sync checkpoints and rebuild from your sources. Your saved training history is kept.")
                         .font(.caption)
                 }
             }
@@ -262,18 +280,21 @@ struct SettingsView: View {
             .task {
                 await viewModel.loadSettings()
             }
+            .task(id: scenePhase) {
+                if scenePhase == .active { await checkMorningStatus() }
+            }
             .sheet(isPresented: $showingFTPEditor) {
                 FTPEditorSheet(viewModel: viewModel)
             }
-            .alert("Reset All Data?", isPresented: $showingResetConfirmation) {
+            .alert("Reset activity sync?", isPresented: $showingResetConfirmation) {
                 Button("Cancel", role: .cancel) { }
-                Button("Reset", role: .destructive) {
+                Button("Reset Sync") {
                     Task {
-                        await viewModel.resetAllData()
+                        await viewModel.resetActivitySync()
                     }
                 }
             } message: {
-                Text("This will delete all calculated Body Battery data. This action cannot be undone.")
+                Text("The next sync will recheck your sources and keep your saved workouts, estimates and notes.")
             }
             .overlay {
                 if let successMessage = viewModel.successMessage {
@@ -283,6 +304,14 @@ struct SettingsView: View {
                 }
             }
         }
+    }
+
+    @MainActor private func checkMorningStatus() async {
+        #if DEBUG
+        let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("--v2-ui-tests"), !arguments.contains("--morning-status-ui-fixture") { return }
+        #endif
+        await morningStatus.refreshSMSAvailability()
     }
 
     private func saveIntensityThresholds() {

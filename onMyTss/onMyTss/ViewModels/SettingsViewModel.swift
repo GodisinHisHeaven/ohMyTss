@@ -31,7 +31,7 @@ class SettingsViewModel {
     // Strava State
     var stravaAuth: StravaAuth?
     var isConnectingStrava: Bool = false
-    var preferStravaFTP: Bool = false
+    var preferStravaFTP: Bool { thresholds?.preferStravaFTP == true }
 
     init(dataStore: DataStore, engine: any BodyBatteryEngineProtocol, stravaAuthManager: any StravaConnectionManaging) {
         self.dataStore = dataStore
@@ -66,7 +66,6 @@ class SettingsViewModel {
 
             // Load Strava auth state
             stravaAuth = try dataStore.fetchStravaAuth()
-            preferStravaFTP = thresholds?.preferStravaFTP ?? false
 
         } catch {
             errorMessage = "Failed to load settings: \(error.localizedDescription)"
@@ -145,32 +144,22 @@ class SettingsViewModel {
         isSaving = false
     }
 
-    /// Reset all data
-    func resetAllData() async {
+    func resetActivitySync() async {
+        guard !isSaving else { return }
         isSaving = true
+        defer { isSaving = false }
         errorMessage = nil
         successMessage = nil
 
-        // This check and the reset writes are synchronous on the main actor.
-        // A persisted interrupted marker alone must not prevent recovery.
-        guard !engine.isProcessing else {
-            errorMessage = "Sync is in progress. Wait for it to finish, then try again."
-            isSaving = false
-            return
-        }
-
         do {
-            try dataStore.deleteAllDayAggregates()
-            try dataStore.deleteAllWorkouts()
-            try dataStore.resetAppState()
-
-            successMessage = "All data reset successfully"
+            try await engine.resetActivitySync()
+            lastSyncDate = try dataStore.fetchAppState().lastHealthKitSyncDate
+            successMessage = "Activity sync reset"
 
         } catch {
-            errorMessage = "Failed to reset data: \(error.localizedDescription)"
+            errorMessage = "Failed to reset activity sync: \(error.localizedDescription)"
         }
 
-        isSaving = false
     }
 
     // MARK: - Strava Actions
@@ -186,12 +175,6 @@ class SettingsViewModel {
 
             // Reload Strava auth state
             stravaAuth = try dataStore.fetchStravaAuth()
-
-            // Update Strava FTP from athlete profile if available
-            if let stravaFTP = stravaAuth?.stravaFTP, let thresholds {
-                thresholds.stravaFTP = stravaFTP
-                try dataStore.saveUserThresholds(thresholds)
-            }
 
             successMessage = "Connected to Strava successfully"
 
@@ -228,12 +211,13 @@ class SettingsViewModel {
             stravaAuth = nil
 
             // Reset prefer Strava FTP flag
-            preferStravaFTP = false
-            thresholds?.preferStravaFTP = false
-            thresholds?.stravaFTP = nil
-            try dataStore.saveUserThresholds(thresholds!)
+            if let thresholds, thresholds.preferStravaFTP {
+                try dataStore.setStravaFTPPreference(false, for: thresholds)
+            }
 
             successMessage = "Disconnected from Strava"
+            do { try await engine.recomputeAll() }
+            catch { errorMessage = "Strava disconnected. Sync again to update training load." }
 
             // Clear success message after 3 seconds
             Task {
@@ -248,37 +232,31 @@ class SettingsViewModel {
         isSaving = false
     }
 
-    /// Toggle Strava FTP preference
-    func toggleStravaFTPPreference() async {
-        guard var thresholds = thresholds else { return }
+    func setStravaFTPPreference(_ enabled: Bool) async {
+        guard !isSaving, let thresholds, enabled != thresholds.preferStravaFTP else { return }
 
         isSaving = true
+        defer { isSaving = false }
         errorMessage = nil
+        successMessage = nil
 
         do {
-            preferStravaFTP.toggle()
-            thresholds.preferStravaFTP = preferStravaFTP
-            try dataStore.saveUserThresholds(thresholds)
+            try dataStore.setStravaFTPPreference(enabled, for: thresholds)
+        } catch {
+            errorMessage = "Failed to save FTP preference: \(error.localizedDescription)"
+            return
+        }
 
-            // Recompute with new FTP preference
+        do {
             try await engine.recomputeAll()
-
-            let source = preferStravaFTP ? "Strava" : "manual"
-            successMessage = "Now using \(source) FTP"
-
-            // Clear success message after 3 seconds
+            successMessage = "FTP preference saved"
             Task {
                 try? await Task.sleep(nanoseconds: 3_000_000_000)
                 successMessage = nil
             }
-
         } catch {
-            errorMessage = "Failed to update FTP preference: \(error.localizedDescription)"
-            // Revert toggle on error
-            preferStravaFTP.toggle()
+            errorMessage = "FTP preference saved. Sync again to update training load."
         }
-
-        isSaving = false
     }
 
     // MARK: - Computed Properties
@@ -322,7 +300,7 @@ class SettingsViewModel {
     }
 
     var stravaFTPDisplay: String? {
-        guard let stravaFTP = stravaAuth?.stravaFTP else {
+        guard let stravaFTP = stravaAuth?.validFTP else {
             return nil
         }
         return "\(stravaFTP) W"
@@ -330,15 +308,11 @@ class SettingsViewModel {
 
     var showFTPToggle: Bool {
         // Only show toggle if both manual and Strava FTP exist
-        return thresholds?.cyclingFTP != nil && stravaAuth?.stravaFTP != nil
+        return thresholds?.cyclingFTP != nil && stravaAuth?.validFTP != nil
     }
 
     var activeFTPSource: String {
-        if preferStravaFTP, let _ = stravaAuth?.stravaFTP {
-            return "Strava"
-        } else {
-            return "Manual"
-        }
+        thresholds?.effectiveCyclingFTP(strava: stravaAuth).fromStrava == true ? "Strava" : "Manual"
     }
 }
 

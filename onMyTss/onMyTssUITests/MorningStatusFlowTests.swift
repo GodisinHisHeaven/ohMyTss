@@ -51,6 +51,21 @@ final class MorningStatusFlowTests: XCTestCase {
     // someone runs all UI tests against a normal Release app.
     #if DEBUG
     @MainActor
+    func testRetiredMorningStatusHasNoSignupEntry() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--v2-ui-tests", "--morning-status-ui-fixture", "--morning-sms-retired-fixture"]
+        app.launch()
+        XCTAssertTrue(app.tabBars.buttons["Settings"].waitForExistence(timeout: 10))
+        app.tabBars.buttons["Settings"].tap()
+        let retired = app.staticTexts["settings.morningStatusRetired"]
+        reach(retired, app: app)
+        XCTAssertEqual(retired.label, "Morning text messages have ended.")
+        XCTAssertFalse(app.buttons["settings.morningStatus"].exists)
+        XCTAssertFalse(app.textFields["morning.phone"].exists)
+    }
+
+    @MainActor
     func testNewPhoneUserEnablesSummaryWithoutAccountForm() {
         continueAfterFailure = false
         let app = XCUIApplication()

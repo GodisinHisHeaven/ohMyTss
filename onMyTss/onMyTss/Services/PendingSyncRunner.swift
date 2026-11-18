@@ -43,9 +43,14 @@ final class PendingSyncRunner {
 
     /// A manual request waits its turn and performs its own pass.
     func run() async throws {
+        try await withExclusiveAccess { try await drain() }
+    }
+
+    /// A reset must wait for the pass and its revision acknowledgement.
+    func withExclusiveAccess(_ operation: () async throws -> Void) async throws {
         try await acquire()
         defer { running = false }
-        try await drain()
+        try await operation()
     }
 
     /// A request can reuse a pass that processed its revision while it waited.

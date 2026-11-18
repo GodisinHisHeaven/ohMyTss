@@ -55,6 +55,25 @@ final class SettingsStravaTests: XCTestCase {
         XCTAssertNil(viewModel.successMessage)
         XCTAssertTrue(viewModel.errorMessage?.hasPrefix("Failed to connect Strava:") == true)
     }
+
+    func testFTPPreferenceRemainsConsistentAfterRecalculationFails() async throws {
+        let container = try ModelContainer(for: UserThresholds.self, StravaAuth.self, AppState.self,
+                                           configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let store = DataStore(modelContainer: container)
+        let thresholds = try store.fetchUserThresholds()
+        thresholds.cyclingFTP = 200
+        try store.saveUserThresholds(thresholds)
+        try store.saveStravaAuth(StravaAuth(isConnected: true, stravaFTP: 250))
+        let viewModel = SettingsViewModel(dataStore: store, engine: FailingSyncEngine(),
+                                          stravaAuthManager: StubStravaConnection(store: store))
+        await viewModel.loadSettings()
+        await viewModel.setStravaFTPPreference(true)
+        XCTAssertTrue(viewModel.preferStravaFTP)
+        XCTAssertTrue(try store.fetchUserThresholds().preferStravaFTP)
+        XCTAssertEqual(viewModel.activeFTPSource, "Strava")
+        XCTAssertEqual(try store.effectiveCyclingFTP(for: thresholds), 250)
+        XCTAssertNotNil(viewModel.errorMessage)
+    }
 }
 
 @MainActor
@@ -80,6 +99,7 @@ private final class FailingSyncEngine: BodyBatteryEngineProtocol {
     var isProcessing = false
     func recomputeAll() async throws { throw URLError(.notConnectedToInternet) }
     func incrementalUpdate() async throws { throw URLError(.notConnectedToInternet) }
+    func resetActivitySync() async throws { throw URLError(.notConnectedToInternet) }
 }
 
 @MainActor
@@ -98,4 +118,5 @@ private final class CompletingSyncEngine: BodyBatteryEngineProtocol {
     }
 
     func incrementalUpdate() async throws { try await recomputeAll() }
+    func resetActivitySync() async throws { try store.resetSyncCheckpoints() }
 }

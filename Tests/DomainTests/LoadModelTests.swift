@@ -183,7 +183,7 @@ final class LoadModelTests: XCTestCase {
         let original = estimate(features: features)
         let decoded = try JSONDecoder().decode(LoadEstimateValue.self, from: JSONEncoder().encode(original))
         XCTAssertEqual(decoded, original)
-        XCTAssertEqual(decoded.version, "v2-exposure-1")
+        XCTAssertEqual(decoded.version, "v2-exposure-2")
         XCTAssertNotEqual(decoded.cardio?.method, decoded.regions.first?.method)
         XCTAssertEqual(ExerciseCatalog.exercises.count, 26)
         XCTAssertEqual(Set(ExerciseCatalog.exercises.map(\.id)).count, 26)

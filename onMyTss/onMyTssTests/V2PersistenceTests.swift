@@ -92,8 +92,9 @@ final class V2PersistenceTests: XCTestCase {
         let active = try context.fetch(FetchDescriptor<Workout>()).filter { !$0.isTombstoned && !$0.isSuppressed }
         XCTAssertEqual(active.count, 1)
         XCTAssertEqual(active.first?.id, external.id)
-        XCTAssertEqual(row.sessionID, external.id)
-        XCTAssertEqual(observation.sessionID, external.id)
+        XCTAssertEqual(row.sessionID, manual.id)
+        XCTAssertEqual(observation.sessionID, manual.id)
+        XCTAssertFalse(try latest(context, sessionID: external.id).value?.regions.isEmpty ?? true)
         XCTAssertEqual(try context.fetch(FetchDescriptor<StrengthSetRecord>()).count, 1)
         XCTAssertEqual(try context.fetch(FetchDescriptor<LocalObservation>()).count, 1)
     }
@@ -177,6 +178,39 @@ final class V2PersistenceTests: XCTestCase {
         let reloaded = try XCTUnwrap(context.fetch(FetchDescriptor<Workout>()).first)
         XCTAssertEqual(reloaded.startTime.timeIntervalSince1970, late.timeIntervalSince1970)
         XCTAssertEqual(reloaded.duration, 1200)
+    }
+
+    func testDailyRollupUsesStartTimeAndConsistentSavedDayAfterChangingTimeZones() throws {
+        let context = ModelContext(try container())
+        let store = DataStore(modelContext: context)
+        var chicago = Calendar(identifier: .gregorian)
+        chicago.timeZone = try XCTUnwrap(TimeZone(identifier: "America/Chicago"))
+        var newYork = chicago
+        newYork.timeZone = try XCTUnwrap(TimeZone(identifier: "America/New_York"))
+        let start = try XCTUnwrap(chicago.date(from: DateComponents(year: 2026, month: 11, day: 18, minute: 30)))
+        let now = start.addingTimeInterval(3600)
+        let oldMidnight = chicago.startOfDay(for: start)
+        let day = try XCTUnwrap(newYork.dateInterval(of: .day, for: now))
+        XCTAssertNotEqual(oldMidnight, day.start)
+
+        let row = Workout(id: "time-zone-ride", date: oldMidnight, startTime: start, duration: 600,
+                          workoutType: "Cycling", tss: 25, calculationMethod: "power", source: .strava)
+        try store.saveWorkout(row)
+        let old = DayAggregate(date: oldMidnight, totalTSS: 25, bodyBatteryScore: 72, workoutCount: 1)
+        try store.saveDayAggregate(old)
+        XCTAssertEqual(try store.fetchDayAggregate(for: now, calendar: newYork)?.bodyBatteryScore, 72)
+        XCTAssertEqual(try store.fetchWorkoutsForDay(now, calendar: newYork).map(\.id), [row.id])
+        XCTAssertEqual(try store.fetchWorkouts(startingAt: day.start, before: day.end).map(\.id), [row.id])
+
+        let exact = DayAggregate(date: day.start, totalTSS: 36, bodyBatteryScore: 60)
+        try store.saveDayAggregate(exact)
+        XCTAssertEqual(TodayReadiness(days: [old, exact], lastComputation: nil, now: now, calendar: newYork).score, 60)
+        XCTAssertEqual(try store.fetchDayAggregate(for: now, calendar: newYork)?.bodyBatteryScore, 60)
+        try store.rebuildLegacyLoadHistory(now: now, calendar: newYork)
+        XCTAssertEqual(try store.fetchDayAggregates(from: now, to: now, calendar: newYork).map(\.totalTSS), [25])
+        XCTAssertEqual(row.dayAggregate?.date, exact.date)
+        XCTAssertEqual(row.date, oldMidnight)
+        XCTAssertEqual(try store.fetchAllDayAggregates().count, 2, "Existing saved day rows must remain available")
     }
 
     func testRepeatedEstimationWithSameInputIsIdempotent() throws {
@@ -285,29 +319,6 @@ final class V2PersistenceTests: XCTestCase {
         XCTAssertTrue(savedIDs.isSubset(of: Set(resumed.map(\.id))))
     }
 
-    func testResetAllDataClearsPendingSourceBackfillsAndFinalization() throws {
-        let context = ModelContext(try container())
-        let dataStore = DataStore(modelContext: context)
-        let state = try dataStore.fetchAppState()
-        state.healthKitTypeBackfillVersion = 1
-        state.pendingHealthKitTypeBackfillIDs = ["old-type-uuid"]
-        state.healthKitSourceBackfillVersion = 1
-        state.pendingHealthKitSourceBackfillIDs = ["old-source-uuid"]
-        state.pendingWorkoutSourceFinalization = true
-        try dataStore.saveWorkout(imported())
-        try dataStore.deleteAllWorkouts()
-        try dataStore.resetAppState()
-
-        let reset = try dataStore.fetchAppState()
-        XCTAssertEqual(reset.healthKitTypeBackfillVersion, 0)
-        XCTAssertTrue(reset.pendingHealthKitTypeBackfillIDs.isEmpty)
-        XCTAssertEqual(reset.healthKitSourceBackfillVersion, 0)
-        XCTAssertTrue(reset.pendingHealthKitSourceBackfillIDs.isEmpty)
-        XCTAssertFalse(reset.pendingWorkoutSourceFinalization)
-        XCTAssertNoThrow(try dataStore.ensureWorkoutMutationAllowed())
-        XCTAssertTrue(try dataStore.allWorkouts().isEmpty)
-    }
-
     func testCrossSourceDuplicateAndSourceDeletionKeepOneActiveContribution() throws {
         let context = ModelContext(try container())
         let dataStore = DataStore(modelContext: context)
@@ -413,7 +424,7 @@ final class V2PersistenceTests: XCTestCase {
         let corrected = imported(id: garmin.id, tss: 45)
         corrected.sourceBundleIdentifier = "com.apple.Health"
         let changes = try store.saveWorkouts([corrected])
-        XCTAssertTrue(changes.dates.contains(start.startOfDay))
+        XCTAssertTrue(changes.dates.contains(start))
         try store.rebuildLegacyLoadHistory(now: start.addingTimeInterval(1200))
         XCTAssertEqual(try store.fetchWorkoutsForDay(start).count, 3)
         XCTAssertEqual(try store.fetchDayAggregate(for: start)?.totalTSS, 105)
@@ -479,6 +490,8 @@ final class V2PersistenceTests: XCTestCase {
         XCTAssertEqual(health.userTags, ["saved-tag"])
         XCTAssertEqual(set.sessionID, health.id)
         XCTAssertEqual(observation.sessionID, health.id)
+        let saved = try JSONDecoder().decode(V2SnapshotProbe.self, from: latest(context, sessionID: strava.id).inputData)
+        XCTAssertEqual(saved.tags, ["saved-tag"])
     }
 
     func testUnresolvedSourceDoesNotSpreadUserTombstoneUntilResolved() throws {
@@ -519,6 +532,7 @@ final class V2PersistenceTests: XCTestCase {
         XCTAssertEqual(try store.fetchWorkoutsForDay(start).map(\.id), [strava.id])
         XCTAssertEqual(set.sessionID, garmin.id)
         XCTAssertEqual(observation.sessionID, garmin.id)
+        XCTAssertFalse(try latest(context, sessionID: strava.id).value?.regions.isEmpty ?? true)
         XCTAssertTrue(garmin.isTombstoned)
         XCTAssertFalse(apple.isTombstoned)
     }
@@ -759,6 +773,7 @@ final class V2PersistenceTests: XCTestCase {
         let sets = try XCTUnwrap(stravaInput["sets"] as? [[String: Any]])
         XCTAssertEqual(sets.count, 1)
         XCTAssertEqual(sets.first?["id"] as? String, row.id.uuidString)
+        XCTAssertFalse(try latest(context, sessionID: "synthetic-strava").value?.regions.isEmpty ?? true)
         try dataStore.applySourceDeletions(["synthetic-strava"])
         try await store.refreshEstimates()
         XCTAssertEqual(row.sessionID, "synthetic-hk")
@@ -790,6 +805,49 @@ final class V2PersistenceTests: XCTestCase {
         invalid.reps = 8
         try store.saveSets([valid, invalid])
         XCTAssertEqual(try context.fetch(FetchDescriptor<StrengthSetRecord>()).count, 2)
+    }
+
+    func testSplittingAnImportedGroupRestoresEachSourcesSetReportAndTags() async throws {
+        let context = ModelContext(try container())
+        let dataStore = DataStore(modelContext: context)
+        let store = V2Store(context: context)
+        let health = imported()
+        health.userTags = ["health-tag"]
+        try dataStore.saveWorkout(health)
+        let healthSet = StrengthSetRecord(sessionID: health.id, exerciseID: "squat", reps: 8, rir: 0)
+        try store.saveSet(healthSet)
+        let healthReport = LocalObservation(regionRaw: "quads", observedAt: start, sessionID: health.id)
+        try store.saveObservation(healthReport)
+
+        let strava = imported(id: "corrected-strava", source: .strava)
+        try dataStore.saveWorkout(strava)
+        let stravaReport = LocalObservation(regionRaw: "calves", observedAt: start, sessionID: strava.id)
+        try store.saveObservation(stravaReport)
+        try store.saveTags(["health-tag": true, "strava-tag": true], for: strava)
+        try await store.refreshEstimates()
+        let linked = V2ActivityDetailProjection.linkedSources(for: strava, in: try dataStore.allWorkouts())
+        XCTAssertEqual(linked.map(\.id), [health.id])
+        XCTAssertFalse(try latest(context, sessionID: strava.id).value?.regions.isEmpty ?? true)
+        healthSet.reps = 10
+        try store.saveSet(healthSet)
+        XCTAssertEqual(healthSet.sessionID, health.id)
+
+        let corrected = imported(id: strava.id, source: .strava)
+        corrected.startTime = start.addingTimeInterval(3600)
+        corrected.date = corrected.startTime.startOfDay
+        corrected.features.end = corrected.startTime.addingTimeInterval(corrected.duration)
+        try dataStore.saveWorkout(corrected)
+        try await store.refreshEstimates()
+
+        let split = try dataStore.allWorkouts()
+        XCTAssertTrue(V2ActivityDetailProjection.linkedSources(for: health, in: split).isEmpty)
+        XCTAssertTrue(V2ActivityDetailProjection.linkedSources(for: strava, in: split).isEmpty)
+        XCTAssertEqual(healthReport.sessionID, health.id)
+        XCTAssertEqual(stravaReport.sessionID, strava.id)
+        XCTAssertEqual(health.userTags, ["health-tag"])
+        XCTAssertEqual(strava.userTags, ["strava-tag"])
+        XCTAssertTrue(try XCTUnwrap(latest(context, sessionID: strava.id).value).regions.isEmpty)
+        XCTAssertFalse(try XCTUnwrap(latest(context, sessionID: health.id).value).regions.isEmpty)
     }
 
     func testLateNewSourceCannotResurrectUserDeletedLogicalSession() throws {
@@ -909,15 +967,76 @@ final class V2PersistenceTests: XCTestCase {
         try dataStore.saveWorkouts([imported()])
         let external = try XCTUnwrap(dataStore.fetchWorkout(byId: "synthetic-hk"))
         try store.linkSession(manual: manual, to: external)
-        XCTAssertEqual(external.userTags, ["paddles"])
-        XCTAssertTrue(manual.userTags.isEmpty)
-        external.userTags = []
-        try store.recalculate(external)
+        XCTAssertTrue(external.userTags.isEmpty)
+        XCTAssertEqual(manual.userTags, ["paddles"])
+        try store.saveTags(["paddles": false], for: external)
         try dataStore.saveWorkouts([imported()])
         try await store.refreshEstimates()
         let snapshot = try JSONDecoder().decode(V2SnapshotProbe.self, from: latest(context, sessionID: external.id).inputData)
         XCTAssertTrue(external.userTags.isEmpty)
+        XCTAssertTrue(manual.userTags.isEmpty)
         XCTAssertTrue(snapshot.tags.isEmpty)
+    }
+
+    func testCardioAndIntensityUseTheSameTimeAfterNonGarminSourceSelection() throws {
+        let context = ModelContext(try container())
+        let store = DataStore(modelContext: context)
+        let thresholds = try store.fetchUserThresholds()
+        thresholds.cardioMaxHeartRate = 200
+        try store.saveUserThresholds(thresholds)
+        let canonical = imported(id: "a-canonical")
+        let alias = imported(id: "b-alias")
+        canonical.sourceBundleIdentifier = "example.canonical"
+        alias.sourceBundleIdentifier = "example.alias"
+        canonical.features.heartRate = [.init(start: start, end: start.addingTimeInterval(60), value: 130)]
+        canonical.features.pauses = [.init(start: start.addingTimeInterval(120), end: start.addingTimeInterval(240))]
+        let end = start.addingTimeInterval(600)
+        alias.features.heartRate = [.init(start: start, end: end, value: 180)]
+        try store.saveWorkouts([canonical, alias])
+        XCTAssertEqual(alias.linkedSessionID, canonical.id)
+
+        let sources = [canonical, alias].map { row in
+            let features = row.features
+            return IntensitySource(id: row.id, linkedID: row.linkedSessionID, isGarmin: false,
+                isSuppressed: row.isSuppressed, isDeleted: false,
+                workout: .init(start: row.startTime, end: end, heartRate: features.heartRate, pauses: features.pauses))
+        }
+        let intensity = try XCTUnwrap(IntensityDistribution.calculate(sources: sources, lt1: 140, lt2: 170,
+                                                                     window: TimeRange(start: start, end: end)))
+        try V2Store(context: context).recalculate(canonical)
+        let cardio = try XCTUnwrap(latest(context, sessionID: canonical.id).value?.cardio)
+        XCTAssertEqual(intensity.highSeconds, 480)
+        XCTAssertEqual(cardio.points, intensity.highSeconds / 60 * 5, accuracy: 0.0001)
+    }
+
+    func testCardioAndIntensityShareElapsedEndpointFromLinkedSource() throws {
+        let context = ModelContext(try container())
+        let store = DataStore(modelContext: context)
+        let thresholds = try store.fetchUserThresholds()
+        thresholds.cardioMaxHeartRate = 200
+        try store.saveUserThresholds(thresholds)
+        let canonical = imported(id: "strava", source: .strava)
+        canonical.features = WorkoutFeatures()
+        let alias = imported()
+        let end = start.addingTimeInterval(660)
+        alias.features = WorkoutFeatures(
+            heartRate: [.init(start: start, end: end, value: 180)],
+            pauses: [.init(start: start.addingTimeInterval(120), end: start.addingTimeInterval(180))],
+            end: end
+        )
+        alias.isSuppressed = true
+        alias.linkedSessionID = canonical.id
+        context.insert(canonical)
+        context.insert(alias)
+        try context.save()
+
+        let request = IntensityCalculationRequest.snapshot(workouts: [canonical], sources: [canonical, alias],
+            lt1: 140, lt2: 170, window: TimeRange(start: start, end: end))
+        let intensity = try XCTUnwrap(request.calculate())
+        try V2Store(context: context).recalculate(canonical)
+        let cardio = try XCTUnwrap(latest(context, sessionID: canonical.id).value?.cardio)
+        XCTAssertEqual(intensity.highSeconds, 600)
+        XCTAssertEqual(cardio.points, intensity.highSeconds / 60 * 5, accuracy: 0.0001)
     }
 
     func testSourceWithMoreValidTimeCoverageWinsOverMoreDuplicateSamples() async throws {

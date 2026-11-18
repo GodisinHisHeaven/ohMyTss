@@ -65,4 +65,6 @@ private final class MockEngine: BodyBatteryEngineProtocol {
     func incrementalUpdate() async throws {
         // No-op for this test
     }
+
+    func resetActivitySync() async throws {}
 }

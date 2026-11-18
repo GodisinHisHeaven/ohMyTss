@@ -92,7 +92,7 @@ nonisolated struct V2EstimateBatch: Sendable {
         previous = includePrevious ? try Self.latestEstimates(context: context, sessionIDs: sessionID.map { [$0] }) : [:]
     }
 
-    @MainActor private static func sourceGroup(context: ModelContext, sessionID: String) throws -> [Workout] {
+    @MainActor static func sourceGroup(context: ModelContext, sessionID: String) throws -> [Workout] {
         var rows = try context.fetch(FetchDescriptor(predicate: #Predicate<Workout> { $0.id == sessionID }))
         var seen = Set(rows.map(\.id))
         var frontier = Array(seen)
@@ -156,8 +156,9 @@ nonisolated struct V2EstimateBatch: Sendable {
             return (start: $0.startTime, end: end, duration: $0.duration)
         }
         let byID = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0) })
-        // A user-deleted node and its descendants must not contribute to an active group.
-        let children = Dictionary(grouping: sessions.filter { $0.linkedID != nil && !($0.deleted && $0.deletionOrigin != "source") }, by: { $0.linkedID! })
+        // Cutting a user-deleted link also excludes its descendants from the active group.
+        let links = WorkoutLinkGraph(sessions.filter { !$0.deleted || $0.deletionOrigin == "source" }
+            .map { .init(id: $0.id, parentID: $0.linkedID) })
         var result: [Pending] = []
         for session in sessions where !session.deleted && !session.suppressed && (sessionID == nil || session.id == sessionID) {
             try Task.checkCancellation()
@@ -166,105 +167,38 @@ nonisolated struct V2EstimateBatch: Sendable {
                saved.maxHeartRate == maxHeartRate && saved.thresholdsModifiedAt == thresholdsModifiedAt {
                 continue
             }
-            var ids: Set<String> = [session.id]
-            var pendingIDs = [session.id]
-            while let id = pendingIDs.popLast() {
-                for child in children[id] ?? [] where ids.insert(child.id).inserted { pendingIDs.append(child.id) }
-            }
-            let sources = ids.compactMap { byID[$0] }.filter { !$0.deleted }.sorted { $0.id < $1.id }
+            let ids = links.relatedIDs(to: session.id)
+            let members = ids.compactMap { byID[$0] }
+            let sources = members.filter { !$0.deleted }.sorted { $0.id < $1.id }
             var features = decodedFeatures(for: session)
-            let window = TimeRange(start: session.startTime, end: features.end ?? session.startTime.addingTimeInterval(session.duration))
-            func supported(_ values: [TimedValue], pauses: [TimeRange], range: ClosedRange<Double>) -> Double {
-                SignalProcessing.coveredSeconds(SignalProcessing.intervals(samples: values, window: window, pauses: pauses, validRange: range))
-            }
-            if sources.count > 1 && sources.contains(where: \.isGarmin) {
-                // Materialize each source's valid support using its own pauses.
-                // Garmin samples win overlaps; other sources fill only gaps.
-                let inputs = sources.map { ($0, $0.id == session.id ? features : decodedFeatures(for: $0)) }
-                let primaryPauses = session.isGarmin ? features.pauses
-                    : inputs.first(where: { $0.0.isGarmin })?.1.pauses ?? features.pauses
-                func fillGaps(_ selected: [TimedValue], with additions: [TimedValue]) -> [TimedValue] {
-                    var uncovered: [TimedValue] = []
-                    var firstPossible = 0
-                    for sample in additions {
-                        while firstPossible < selected.count && selected[firstPossible].end <= sample.start { firstPossible += 1 }
-                        var cursor = sample.start
-                        var index = firstPossible
-                        while index < selected.count && selected[index].start < sample.end {
-                            let existing = selected[index]
-                            if existing.start > cursor {
-                                uncovered.append(TimedValue(start: cursor, end: min(existing.start, sample.end), value: sample.value))
-                            }
-                            cursor = max(cursor, existing.end)
-                            if cursor >= sample.end { break }
-                            index += 1
-                        }
-                        if cursor < sample.end { uncovered.append(TimedValue(start: cursor, end: sample.end, value: sample.value)) }
-                    }
-                    return (selected + uncovered).sorted { $0.start < $1.start }
+            if sources.count > 1 {
+                let inputs = sources.map { source in
+                    WorkoutSignals.Source(id: source.id, isGarmin: source.isGarmin,
+                                          features: source.id == session.id ? features : decodedFeatures(for: source))
                 }
-                func merged(_ key: KeyPath<WorkoutFeatures, [TimedValue]>, range: ClosedRange<Double>) -> [TimedValue] {
-                    let candidates = inputs.map { source, value in
-                        let intervals = SignalProcessing.intervals(samples: value[keyPath: key], window: window,
-                                                                   pauses: value.pauses + primaryPauses, validRange: range)
-                        return (source, intervals, SignalProcessing.coveredSeconds(intervals))
-                    }.filter { !$0.1.isEmpty }.sorted {
-                        if $0.0.isGarmin != $1.0.isGarmin { return $0.0.isGarmin }
-                        if $0.0.isGarmin && ($0.0.id == session.id) != ($1.0.id == session.id) { return $0.0.id == session.id }
-                        return $0.2 == $1.2 ? $0.0.id < $1.0.id : $0.2 > $1.2
-                    }
-                    guard let first = candidates.first else { return [] }
-                    // Without any usable Garmin intervals retain the existing
-                    // highest-coverage fallback, rather than combining sources.
-                    guard first.0.isGarmin else { return first.1 }
-                    return candidates.dropFirst().reduce(first.1) { fillGaps($0, with: $1.1) }
+                let signals = WorkoutSignals(canonicalID: session.id, sources: inputs,
+                    start: session.startTime, fallbackEnd: session.startTime.addingTimeInterval(session.duration))
+                features.heartRate = signals.intervals(\.heartRate, validRange: 30...240)
+                features.power = signals.intervals(\.power, validRange: 0...2500)
+                features.cadence = signals.intervals(\.cadence, validRange: 0...250)
+                features.speed = signals.intervals(\.speed, validRange: 0...15)
+                features.elevation = signals.intervals(\.elevation, validRange: -500...9000)
+                features.grade = signals.intervals(\.grade, validRange: -0.5...0.5)
+                features.pauses = signals.pauses
+                features.end = signals.recordedEnd
+                features.ascentMeters = signals.sources.compactMap { $0.features.ascentMeters }.first
+                features.descentMeters = signals.sources.compactMap { $0.features.descentMeters }.first
+                let segments = signals.sources.map { $0.features.swimSegments }
+                if signals.sources.first?.isGarmin == true {
+                    features.swimSegments = segments.first { !$0.isEmpty } ?? []
+                } else {
+                    features.swimSegments = segments.max { $0.count < $1.count } ?? []
                 }
-                features.heartRate = merged(\.heartRate, range: 30...240)
-                features.power = merged(\.power, range: 0...2500)
-                features.cadence = merged(\.cadence, range: 0...250)
-                features.speed = merged(\.speed, range: 0...15)
-                features.elevation = merged(\.elevation, range: -500...9000)
-                features.grade = merged(\.grade, range: -0.5...0.5)
-                // The canonical Garmin timeline controls overall activity pauses;
-                // a different source's pauses must not erase Garmin measurements.
-                features.pauses = primaryPauses
-                let ranked = inputs.sorted {
-                    if $0.0.isGarmin != $1.0.isGarmin { return $0.0.isGarmin }
-                    if ($0.0.id == session.id) != ($1.0.id == session.id) { return $0.0.id == session.id }
-                    return $0.0.id < $1.0.id
-                }
-                features.ascentMeters = ranked.compactMap { $0.1.ascentMeters }.first
-                features.descentMeters = ranked.compactMap { $0.1.descentMeters }.first
-                features.swimSegments = ranked.first { !$0.1.swimSegments.isEmpty }?.1.swimSegments ?? []
-                for (source, other) in inputs where source.id != session.id {
-                    if features.end == nil { features.end = other.end }
-                    features.provenance = Array(Set(features.provenance + other.provenance)).sorted()
-                }
-            } else {
-                // Preserve the existing highest-coverage rule for non-Garmin groups.
-                // Single-source sessions skip coverage comparisons entirely.
-                for source in sources where source.id != session.id {
-                    let other = decodedFeatures(for: source)
-                    if supported(other.heartRate, pauses: other.pauses, range: 30...240) > supported(features.heartRate, pauses: features.pauses, range: 30...240) { features.heartRate = other.heartRate }
-                    if supported(other.power, pauses: other.pauses, range: 0...2500) > supported(features.power, pauses: features.pauses, range: 0...2500) { features.power = other.power }
-                    if supported(other.cadence, pauses: other.pauses, range: 0...250) > supported(features.cadence, pauses: features.pauses, range: 0...250) { features.cadence = other.cadence }
-                    if supported(other.speed, pauses: other.pauses, range: 0...15) > supported(features.speed, pauses: features.pauses, range: 0...15) { features.speed = other.speed }
-                    if supported(other.elevation, pauses: other.pauses, range: -500...9000) > supported(features.elevation, pauses: features.pauses, range: -500...9000) { features.elevation = other.elevation }
-                    if supported(other.grade, pauses: other.pauses, range: -0.5...0.5) > supported(features.grade, pauses: features.pauses, range: -0.5...0.5) { features.grade = other.grade }
-                    if features.ascentMeters == nil { features.ascentMeters = other.ascentMeters }
-                    if features.descentMeters == nil { features.descentMeters = other.descentMeters }
-                    if other.swimSegments.count > features.swimSegments.count { features.swimSegments = other.swimSegments }
-                    if features.pauses.isEmpty { features.pauses = other.pauses }
-                    if features.end == nil { features.end = other.end }
-                    features.provenance = Array(Set(features.provenance + other.provenance)).sorted()
-                }
+                features.provenance = Array(Set(signals.sources.flatMap { $0.features.provenance })).sorted()
             }
             let recordedSets = sets.filter { ids.contains($0.sessionID) }
             let inputs = recordedSets.map(\.input)
-            // Read attached labels through the current logical group without
-            // migrating them. A later source correction can split that group.
-            let tagSources = ids.compactMap { byID[$0] }.filter { !$0.deleted || $0.deletionOrigin == "source" }
-            let groupTags = WorkoutTagProjection.merged(tagSources.map(\.tags))
+            let groupTags = WorkoutTagProjection.merged(members.map(\.tags))
             let priorRuns = runningHistory.filter {
                 $0.start < session.startTime && $0.start >= session.startTime.addingTimeInterval(-28 * 86400)
                     && $0.end <= session.startTime

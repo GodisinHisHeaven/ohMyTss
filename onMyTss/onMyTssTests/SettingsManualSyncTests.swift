@@ -79,4 +79,5 @@ private final class ManualSyncEngine: BodyBatteryEngineProtocol {
     init(work: @escaping () throws -> Void) { self.work = work }
     func recomputeAll() async throws { try work() }
     func incrementalUpdate() async throws { try work() }
+    func resetActivitySync() async throws { XCTFail("Unexpected activity sync reset") }
 }

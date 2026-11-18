@@ -20,7 +20,7 @@ class BodyBatteryEngine {
     private let clock: () -> Date
 
     // Observable state
-    var isProcessing: Bool = false
+    private(set) var isProcessing: Bool = false
     var lastError: Error?
     var lastSyncDate: Date?
     private(set) var lastSyncHadWarnings = true
@@ -59,12 +59,7 @@ class BodyBatteryEngine {
     /// Offline history repair shares the same gate as every source sync.
     /// No HealthKit or network access is needed for a completed local store.
     func repairLocalWorkoutHistoryIfNeeded(reconcile: (@MainActor () async throws -> Void)? = nil) async throws {
-        while isProcessing {
-            try Task.checkCancellation()
-            try await Task.sleep(for: .milliseconds(200))
-        }
-        try Task.checkCancellation()
-        isProcessing = true
+        try await beginExclusiveOperation()
         defer { isProcessing = false }
         let key = dataStore.workoutMaintenanceKey
         try await WorkoutMaintenanceGate.acquire(key, kind: .localRepair)
@@ -76,14 +71,27 @@ class BodyBatteryEngine {
         try await repair.run()
     }
 
-    private func synchronize() async throws {
-        // A manual request can arrive while automatic synchronization is running.
-        // Wait for it rather than reporting a false failure or dropping a settings change.
+    func resetActivitySync() async throws {
+        try await beginExclusiveOperation()
+        defer { isProcessing = false }
+        let key = dataStore.workoutMaintenanceKey
+        try await WorkoutMaintenanceGate.acquire(key, kind: .sourceSync)
+        defer { WorkoutMaintenanceGate.release(key) }
+        try dataStore.resetSyncCheckpoints()
+        lastSyncDate = nil
+    }
+
+    private func beginExclusiveOperation() async throws {
         while isProcessing {
             try Task.checkCancellation()
             try await Task.sleep(for: .milliseconds(200))
         }
+        try Task.checkCancellation()
         isProcessing = true
+    }
+
+    private func synchronize() async throws {
+        try await beginExclusiveOperation()
         defer { isProcessing = false }
         let key = dataStore.workoutMaintenanceKey
         try await WorkoutMaintenanceGate.acquire(key, kind: .sourceSync)
@@ -94,6 +102,7 @@ class BodyBatteryEngine {
             let thresholds = try dataStore.fetchUserThresholds()
             guard thresholds.hasCompletedOnboarding else { throw EngineError.onboardingIncomplete }
             let now = clock()
+            let calendar = Calendar.current
             let state = try dataStore.fetchAppState()
             let auth = try dataStore.fetchStravaAuth()
             let stravaRequired = auth?.isConnected == true
@@ -106,9 +115,12 @@ class BodyBatteryEngine {
                 return current === auth && current?.connectedAt == stravaConnectedAt
                     && current?.athleteId == stravaAthleteID
             }
-            let plan = ActivitySyncPlan(now: now, state: state, strava: auth)
+            let plan = ActivitySyncPlan(now: now, state: state, strava: auth, calendar: calendar)
             let interrupted = state.isComputationInProgress
-            let thresholdsChanged = state.lastComputationDate.map { $0 < thresholds.lastModified } ?? true
+            let timeZoneChanged = state.lastComputedTimeZone != calendar.timeZone.identifier
+            let initialFTP = thresholds.effectiveCyclingFTP(strava: auth).watts
+            let thresholdsChanged = state.lastComputedCyclingFTP != initialFTP
+                || (state.lastComputationDate.map { $0 < thresholds.lastModified } ?? true)
             let initialThresholdRevision = thresholds.lastModified
             let anchor = state.healthKitAnchor.flatMap { healthKitManager.decodeAnchor(from: $0) }
             try await workoutAggregator.fetchChanges(plan: plan, anchor: anchor, now: now)
@@ -154,18 +166,23 @@ class BodyBatteryEngine {
             completeSources = completeSources && connectionStable
             if completeSources { changes.formUnion(try dataStore.finalizeWorkoutSources(prewarmed: endpoints)) }
             var appliedThresholdRevision: Date? = thresholdsChanged || interrupted ? nil : initialThresholdRevision
+            var appliedFTP = initialFTP
             var recoveryWarnings: [String] = []
             var recoveryNeedsRetry = false
+            var thresholdsChangedDuringSync: Bool
             repeat {
-                if appliedThresholdRevision != thresholds.lastModified {
-                    changes.formUnion(try await dataStore.refreshLegacyWorkoutTSS())
-                    appliedThresholdRevision = thresholds.lastModified
+                let ftp = try dataStore.effectiveCyclingFTP(for: thresholds)
+                if appliedThresholdRevision != thresholds.lastModified || appliedFTP != ftp {
+                    let refresh = try await dataStore.refreshLegacyWorkoutTSS()
+                    changes.formUnion(refresh.changes)
+                    appliedThresholdRevision = refresh.thresholdRevision
+                    appliedFTP = refresh.ftp
                 }
                 // A cancelled prior write may already have changed persisted rows.
                 // Rebuild fully once on recovery before advancing either cursor.
-                let start = interrupted ? nil : changes.dates.min() ?? plan.recoveryStart
-                try await dataStore.refreshLegacyLoadHistory(from: start, now: now)
-                let recovery = try await updateRecoveryMetrics(from: plan.recoveryStart, to: now)
+                let start = interrupted || timeZoneChanged ? nil : changes.dates.min() ?? plan.recoveryStart
+                try await dataStore.refreshLegacyLoadHistory(from: start, now: now, calendar: calendar)
+                let recovery = try await updateRecoveryMetrics(from: plan.recoveryStart, to: now, calendar: calendar)
                 recoveryWarnings = recovery.warnings
                 recoveryNeedsRetry = recovery.needsRetry
                 if connectionStable { connectionStable = try sameStravaConnection() }
@@ -175,7 +192,9 @@ class BodyBatteryEngine {
                 }
                 else { try await dataStore.backfillV2Estimates() }
                 // Settings may change while queries or calculations are suspended.
-            } while appliedThresholdRevision != thresholds.lastModified
+                let currentFTP = try dataStore.effectiveCyclingFTP(for: thresholds)
+                thresholdsChangedDuringSync = appliedThresholdRevision != thresholds.lastModified || appliedFTP != currentFTP
+            } while thresholdsChangedDuringSync
             try Task.checkCancellation()
             if connectionStable { connectionStable = try sameStravaConnection() }
             completeSources = completeSources && connectionStable
@@ -208,6 +227,8 @@ class BodyBatteryEngine {
                 ? "Sync complete. Saved history remains available offline."
                 : warnings.joined(separator: "\n")
             state.lastComputationDate = now
+            state.lastComputedCyclingFTP = appliedFTP
+            state.lastComputedTimeZone = calendar.timeZone.identifier
             if !recoveryNeedsRetry { state.lastRecoverySyncDate = now }
             state.healthKitTypeBackfillVersion = 1
             state.pendingHealthKitTypeBackfillIDs = typeBackfill.pending
@@ -219,7 +240,7 @@ class BodyBatteryEngine {
             // Historical metadata retries continue on subsequent syncs, but do
             // not invalidate this week's widget when they cannot affect it.
             let pendingMetadata = Set(typeBackfill.pending + state.pendingHealthKitSourceBackfillIDs)
-            let currentWeek = Calendar.current.dateInterval(of: .weekOfYear, for: now)
+            let currentWeek = calendar.dateInterval(of: .weekOfYear, for: now)
             let pendingAffectsWeek: Bool
             if pendingMetadata.isEmpty { pendingAffectsWeek = false }
             else if let currentWeek {
@@ -444,12 +465,13 @@ class BodyBatteryEngine {
     }
 
     /// Fetch and process HRV/RHR data for a date range
-    private func processPhysiologyData(from startDate: Date, to endDate: Date) async throws -> (days: [Date: (hrv: Double?, rhr: Double?, hrvMod: Double?, rhrMod: Double?)], hrvAvailable: Bool, rhrAvailable: Bool) {
+    private func processPhysiologyData(from startDate: Date, to endDate: Date, calendar: Calendar) async throws -> (days: [Date: (hrv: Double?, rhr: Double?, hrvMod: Double?, rhrMod: Double?)], hrvAvailable: Bool, rhrAvailable: Bool) {
         var physiologyMap: [Date: (hrv: Double?, rhr: Double?, hrvMod: Double?, rhrMod: Double?)] = [:]
 
         // Fetch all HRV and RHR samples in parallel
-        async let hrvSamples = captureHealthRead { try await self.healthKitManager.fetchHRVSamples(from: startDate.addingDays(-14), to: endDate) }
-        async let rhrSamples = captureHealthRead { try await self.healthKitManager.fetchRestingHeartRateSamples(from: startDate.addingDays(-14), to: endDate) }
+        let baselineStart = calendar.date(byAdding: .day, value: -14, to: startDate) ?? startDate
+        async let hrvSamples = captureHealthRead { try await self.healthKitManager.fetchHRVSamples(from: baselineStart, to: endDate) }
+        async let rhrSamples = captureHealthRead { try await self.healthKitManager.fetchRestingHeartRateSamples(from: baselineStart, to: endDate) }
 
         let (hrvResult, rhrResult) = await (hrvSamples, rhrSamples)
         try Task.checkCancellation()
@@ -463,12 +485,12 @@ class BodyBatteryEngine {
         var dailyRHRSamples: [Date: [HKQuantitySample]] = [:]
 
         for sample in hrv {
-            let day = sample.startDate.startOfDay
+            let day = calendar.startOfDay(for: sample.startDate)
             dailyHRVSamples[day, default: []].append(sample)
         }
 
         for sample in rhr {
-            let day = sample.startDate.startOfDay
+            let day = calendar.startOfDay(for: sample.startDate)
             dailyRHRSamples[day, default: []].append(sample)
         }
 
@@ -477,9 +499,10 @@ class BodyBatteryEngine {
         let baselineRHR = PhysiologyModifier.calculateBaselineRHR(from: rhr)
 
         // Process each day
-        var currentDate = startDate.startOfDay
+        var currentDate = calendar.startOfDay(for: startDate)
+        let end = calendar.startOfDay(for: endDate)
 
-        while currentDate <= endDate.startOfDay {
+        while currentDate <= end {
             // Calculate daily averages
             let dailyHRV = dailyHRVSamples[currentDate].flatMap {
                 PhysiologyModifier.calculateDailyAverageHRV(from: $0)
@@ -501,14 +524,15 @@ class BodyBatteryEngine {
             }
 
             physiologyMap[currentDate] = (dailyHRV, dailyRHR, hrvModifier, rhrModifier)
-            currentDate = currentDate.addingDays(1)
+            guard let next = calendar.dateInterval(of: .day, for: currentDate)?.end else { break }
+            currentDate = next
         }
 
         return (physiologyMap, hrvValue != nil, rhrValue != nil)
     }
 
     /// Fetch and process sleep data for a date range
-    private func processSleepData(from startDate: Date, to endDate: Date) async throws -> [Date: SleepQuality] {
+    private func processSleepData(from startDate: Date, to endDate: Date, calendar: Calendar) async throws -> [Date: SleepQuality] {
         var sleepMap: [Date: SleepQuality] = [:]
 
         // Fetch all sleep samples for the range
@@ -520,7 +544,7 @@ class BodyBatteryEngine {
 
         for sample in sleepSamples {
             // Assign sleep to the day it ends (morning day)
-            let day = sample.endDate.startOfDay
+            let day = calendar.startOfDay(for: sample.endDate)
             dailySleepSamples[day, default: []].append(sample)
         }
 
@@ -534,9 +558,9 @@ class BodyBatteryEngine {
         return sleepMap
     }
 
-    private func updateRecoveryMetrics(from start: Date, to end: Date) async throws -> (warnings: [String], needsRetry: Bool) {
-        async let physiologyMap = captureHealthRead { try await self.processPhysiologyData(from: start, to: end) }
-        async let sleepMap = captureHealthRead { try await self.processSleepData(from: start, to: end) }
+    private func updateRecoveryMetrics(from start: Date, to end: Date, calendar: Calendar) async throws -> (warnings: [String], needsRetry: Bool) {
+        async let physiologyMap = captureHealthRead { try await self.processPhysiologyData(from: start, to: end, calendar: calendar) }
+        async let sleepMap = captureHealthRead { try await self.processSleepData(from: start, to: end, calendar: calendar) }
         let (physiologyResult, sleepResult) = await (physiologyMap, sleepMap)
         try Task.checkCancellation()
         let physiology = try healthValue(physiologyResult)
@@ -552,10 +576,11 @@ class BodyBatteryEngine {
         var retainedHRV = false
         var retainedRHR = false
         var retainedSleep = false
-        var day = start.startOfDay
+        var day = calendar.startOfDay(for: start)
+        let lastDay = calendar.startOfDay(for: end)
         var count = 0
-        while day <= end.startOfDay {
-            if let row = try dataStore.fetchDayAggregate(for: day) {
+        while day <= lastDay {
+            if let row = try dataStore.fetchDayAggregate(for: day, calendar: calendar) {
                 if let physiology {
                     let value = physiology.days[day]
                     // Absence on one day is not evidence that saved data was deleted.
@@ -595,7 +620,8 @@ class BodyBatteryEngine {
                 try dataStore.saveAppState(dataStore.fetchAppState())
                 try await Task.sleep(for: .milliseconds(1))
             }
-            day = day.addingDays(1)
+            guard let next = calendar.dateInterval(of: .day, for: day)?.end else { break }
+            day = next
         }
         if retainedHRV { warnings.append("Some days had no new HealthKit HRV samples. Saved HRV retained.") }
         if retainedRHR { warnings.append("Some days had no new HealthKit resting heart rate samples. Saved resting heart rate retained.") }

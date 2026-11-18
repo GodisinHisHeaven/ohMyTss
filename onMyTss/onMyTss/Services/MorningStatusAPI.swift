@@ -2,6 +2,7 @@ import Foundation
 
 enum MorningStatusError: LocalizedError, Equatable {
     case unauthorized, invalidInput, rateLimited, unavailable, invalidResponse, secureStorage, noSubscription, consentRequired
+    case retired
 
     var errorDescription: String? {
         switch self {
@@ -9,12 +10,17 @@ enum MorningStatusError: LocalizedError, Equatable {
         case .invalidInput: "Check the information you entered and try again."
         case .rateLimited: "Too many attempts. Wait before trying again."
         case .unavailable: "Morning status is unavailable. Please try again later."
+        case .retired: "Morning text messages have ended."
         case .invalidResponse: "Morning status returned an unexpected response. Please try again later."
         case .secureStorage: "Unable to access your saved morning status session. Unlock your device and try again."
         case .noSubscription: "This phone number has no morning status subscription yet."
         case .consentRequired: "Check your morning text consent and delivery time zone. If you opted out by text, reply START first."
         }
     }
+}
+
+enum MorningSMSAvailability: Equatable {
+    case available, retired
 }
 
 struct MorningPhoneChallenge: Decodable, Equatable {
@@ -42,6 +48,7 @@ enum MorningPhoneInput {
 
 @MainActor
 protocol MorningStatusServing {
+    func fetchSMSAvailability() async throws -> MorningSMSAvailability
     func requestCode(phone: String) async throws -> MorningPhoneChallenge
     func verifyCode(challenge: String, code: String) async throws -> String
     func fetchStatus(token: String) async throws -> MorningStatus
@@ -90,6 +97,25 @@ final class MorningStatusAPI: MorningStatusServing {
         return URLSession(configuration: configuration, delegate: MorningStatusRedirectDelegate(), delegateQueue: nil)
     }()
 
+    func fetchSMSAvailability() async throws -> MorningSMSAvailability {
+        struct Health: Decodable {
+            let morningSmsEnabled: Bool?
+            let mode: String?
+            let maintenance: Bool?
+        }
+        let origin = baseURL.deletingLastPathComponent().deletingLastPathComponent()
+        let health: Health = try await request("health", base: origin)
+        if let enabled = health.morningSmsEnabled {
+            if !enabled { return .retired }
+            if health.maintenance != true { return .available }
+        } else {
+            // Older servers describe SMS retirement through their operating mode.
+            if health.mode == "accounts_only" { return .retired }
+            if health.mode == "morning_sms_only", health.maintenance != true { return .available }
+        }
+        throw MorningStatusError.unavailable
+    }
+
     func requestCode(phone: String) async throws -> MorningPhoneChallenge {
         let result: MorningPhoneChallenge = try await request("phone/start", method: "POST", body: ["phone": phone])
         guard !result.challenge.isEmpty, !result.phoneHint.isEmpty,
@@ -131,8 +157,9 @@ final class MorningStatusAPI: MorningStatusServing {
         try await request("morning-status/summary", method: "PUT", token: token, body: summary.payload)
     }
 
-    private func request<T: Decodable>(_ path: String, method: String = "GET", token: String? = nil,
+    private func request<T: Decodable>(_ path: String, method: String = "GET", base: URL? = nil, token: String? = nil,
                                        body: [String: Any]? = nil) async throws -> T {
+        let baseURL = base ?? self.baseURL
         guard baseURL.scheme == "https" else { throw MorningStatusError.invalidResponse }
         var request = URLRequest(url: baseURL.appendingPathComponent(path))
         request.httpMethod = method
@@ -150,6 +177,7 @@ final class MorningStatusAPI: MorningStatusServing {
         case 401: throw MorningStatusError.unauthorized
         case 403: throw MorningStatusError.consentRequired
         case 409: throw MorningStatusError.noSubscription
+        case 410: throw MorningStatusError.retired
         case 422: throw MorningStatusError.invalidInput
         case 429: throw MorningStatusError.rateLimited
         default: throw MorningStatusError.unavailable
