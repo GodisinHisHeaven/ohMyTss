@@ -3,8 +3,8 @@
 ## Project Structure & Module Organization
 - Product spelling is `ohMyTss`; use `ohmytss` in new machine identifiers. Preserve the existing `onMyTss` Xcode project/scheme, App Store bundle ID, and Keychain keys for compatibility.
 - `backend` is the private `ohmytss-backend` submodule, formerly CoachOTA. Its repository owns deployment, cron, secrets, and migrations; do not copy its source into this public repository or duplicate cron. Read `backend/AGENTS.md` before backend edits.
-- Only morning status SMS and consent replies are active in the backend. Native phone-verified morning signup is allowed; keep web coaching signup, chat, plans and other alerts paused. Preserve data, local morning windows, separate summary/SMS opt-in, and idempotency.
-- Morning texts use only consented App summaries. Do not restore Intervals sync or an Intervals fallback; retain historical records without using them for delivery.
+- The backend serves existing accounts and historical dashboards. SMS delivery, phone verification, and app-summary uploads are retired. Keep the historical records and follow the current operating mode in `backend/AGENTS.md`.
+- Keep web coaching, signup, chat, plans, and Intervals synchronization paused. iOS reads SMS availability from the service.
 - App code lives in `onMyTss/onMyTss` with feature folders: `Models` (SwiftData entities and DTOs), `Services` (HealthKit, Strava, BodyBattery computation engines), `Utilities` (helpers), `ViewModels`, and `Views` (subfolders for Today, History, Settings, Onboarding, Shared components). Assets are in `Assets.xcassets`. Put local Strava credentials in the ignored `onMyTss/Config/Secrets.xcconfig`; `StravaConfig.swift` is the tracked loader.
 - Tests sit in `onMyTss/onMyTssTests` (unit/logic) and `onMyTss/onMyTssUITests` (launch/flow). The Xcode project is `onMyTss/onMyTss.xcodeproj`.
 

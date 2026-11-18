@@ -70,9 +70,10 @@ struct MainTabView: View {
             while !Task.isCancelled {
                 // Let a started import finish when the scene becomes inactive.
                 Task { @MainActor in
-                    let last = (try? dataStore.fetchAppState())?.lastComputationDate
+                    let state = try? dataStore.fetchAppState()
                     let pending = (engine as? AppSyncRuntime)?.hasPendingChange ?? false
-                    await autoSync.requestIfNeeded(lastComputation: last, force: pending)
+                    let timeZoneChanged = state?.lastComputedTimeZone != Calendar.current.timeZone.identifier
+                    await autoSync.requestIfNeeded(lastComputation: state?.lastComputationDate, force: pending || timeZoneChanged)
                 }
                 do { try await Task.sleep(for: .seconds(60)) }
                 catch { return }

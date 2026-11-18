@@ -7,7 +7,7 @@ struct ActivitySyncPlan {
     let recoveryStart: Date
     let healthKitRetryIDs: [String]
 
-    init(now: Date, state: AppState, strava: StravaAuth?) {
+    init(now: Date, state: AppState, strava: StravaAuth?, calendar: Calendar = .current) {
         healthKitRetryIDs = state.pendingHealthKitWorkoutIDs
         let initial = now.addingDays(-Constants.initialSyncDays)
         reconcileStrava = strava?.lastReconciliationDate.map {
@@ -20,8 +20,10 @@ struct ActivitySyncPlan {
         refreshHealthKitSamples = state.lastHealthKitSampleRefreshDate.map {
             now.timeIntervalSince($0) >= 6 * 3600
         } ?? true
-        recoveryStart = state.lastRecoverySyncDate.map { min($0, now).addingDays(-3).startOfDay }
-            ?? initial.startOfDay
+        let recovery = state.lastRecoverySyncDate.flatMap {
+            calendar.date(byAdding: .day, value: -3, to: min($0, now))
+        } ?? initial
+        recoveryStart = calendar.startOfDay(for: recovery)
     }
 }
 
@@ -90,7 +92,17 @@ nonisolated struct LegacyWorkoutInput: Equatable, Sendable {
             return (value.tss, value.method)
         }
         guard source == "strava" else { return (tss, method) }
-        if cycling, let power = normalizedPower, power >= 0, let ftp, ftp > 0 {
+        let saved = featuresData.flatMap { try? JSONDecoder().decode(StravaSummaryMetadata.self, from: $0) }
+        return Self.stravaTSS(cycling: cycling, duration: duration,
+                              normalizedPower: saved?.stravaSummarySignals?.power == false ? nil : normalizedPower,
+                              averageHeartRate: saved?.stravaSummarySignals?.heartRate == false ? nil : averageHeartRate,
+                              ftp: ftp, maxHR: maxHR)
+    }
+
+    static func stravaTSS(cycling: Bool, duration: Double, normalizedPower: Double?, averageHeartRate: Double?,
+                          ftp: Int?, maxHR: Int?) -> (tss: Double, method: String) {
+        let duration = max(0, duration)
+        if cycling, let power = normalizedPower, power.isFinite, power >= 0, let ftp, ftp > 0 {
             return (duration / 3600 * pow(power / Double(ftp), 2) * 100, "power")
         }
         if let hr = averageHeartRate, hr.isFinite, let maxHR, maxHR > 60 {
@@ -98,6 +110,8 @@ nonisolated struct LegacyWorkoutInput: Equatable, Sendable {
             return (duration / 60 * ratio * exp(1.92 * ratio) / (60 * 0.85 * exp(1.92 * 0.85)) * 100,
                     "hr summary estimate")
         }
-        return (max(0, duration) / 3600 * 60, "duration estimate")
+        return (duration / 3600 * 60, "duration estimate")
     }
+
+    private struct StravaSummaryMetadata: Decodable { let stravaSummarySignals: StravaSummarySignals? }
 }

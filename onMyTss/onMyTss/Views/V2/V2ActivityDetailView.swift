@@ -79,7 +79,7 @@ private struct V2ActivityDetailContent: View {
     @State private var templateName = ""
     @State private var namingTemplate = false
     @State private var confirmDelete = false
-    @State private var tags: Set<String>
+    @State private var tagEdits: [String: Bool] = [:]
     @State private var error: String?
 
     init(workout: Workout, linked: [Workout], linkedTarget: Workout?) {
@@ -90,7 +90,15 @@ private struct V2ActivityDetailContent: View {
         _allSets = Query(V2ActivityDetailProjection.sets(sessionIDs: ids))
         _observations = Query(V2ActivityDetailProjection.reports(sessionIDs: ids))
         _estimates = Query(V2ActivityDetailProjection.revisions(sessionID: workout.id))
-        _tags = State(initialValue: Set(workout.userTags))
+    }
+
+    private var tags: Set<String> {
+        let saved = [workout.userTags] + linked.map(\.userTags)
+        var labels = Set(saved.flatMap { $0 })
+        for (label, enabled) in tagEdits {
+            if enabled { labels.insert(label) } else { labels.remove(label) }
+        }
+        return Set(WorkoutTagProjection.merged([Array(labels)]))
     }
 
     private var sets: [StrengthSetRecord] { allSets.filter { $0.sessionID == workout.id } }
@@ -173,8 +181,11 @@ private struct V2ActivityDetailContent: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     Button("Save details and recalculate") {
-                        workout.userTags = tags.sorted()
-                        recalculate()
+                        do {
+                            try V2Store(context: context).saveTags(tagEdits, for: workout)
+                            tagEdits.removeAll()
+                            error = nil
+                        } catch { context.rollback(); self.error = error.localizedDescription }
                     }
                     .accessibilityIdentifier("activity.saveTags")
                     .disabled(workout.isSuppressed || workout.isTombstoned)
@@ -182,7 +193,7 @@ private struct V2ActivityDetailContent: View {
             }
             if linked.contains(where: { !$0.userTags.isEmpty }) {
                 Section("Details from linked sources") {
-                    Text("These details stay with their original records. Changes above affect only this activity record.")
+                    Text("These details stay with their original records until you remove them.")
                         .font(.caption).foregroundStyle(.secondary)
                     ForEach(linked.filter { !$0.userTags.isEmpty }) { source in
                         VStack(alignment: .leading, spacing: 4) {
@@ -208,14 +219,16 @@ private struct V2ActivityDetailContent: View {
                     .disabled(workout.isSuppressed || workout.isTombstoned)
                 }
                 if !linkedSets.isEmpty {
-                    Text("Sets from linked sources are shown here but cannot be edited here yet.")
+                    Text("Sets from linked sources stay with their original activities.")
                         .font(.caption).foregroundStyle(.secondary)
                     ForEach(linkedSets) { set in
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(V2Presentation.exerciseName(set.exerciseID)).font(.headline)
-                            Text(setDescription(set)).font(.caption)
-                            Text("Linked source · view only").font(.caption).foregroundStyle(.secondary)
-                        }
+                        Button { editingSet = set } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(V2Presentation.exerciseName(set.exerciseID)).font(.headline)
+                                Text(setDescription(set)).font(.caption)
+                                Text("Linked source").font(.caption).foregroundStyle(.secondary)
+                            }
+                        }.foregroundStyle(.primary)
                         .accessibilityIdentifier("activity.linkedSet")
                     }
                 }
@@ -255,7 +268,7 @@ private struct V2ActivityDetailContent: View {
             if workout.source == "manual" && !workout.isSuppressed && !workout.isTombstoned {
                 Section("Already imported elsewhere?") {
                     Button("Link to an imported activity") { linkSession = true }
-                    Text("Moves these details to the chosen session, preserving your sets and reports and leaving one contribution.")
+                    Text("Shows these details with the imported activity and counts the session once.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -280,7 +293,7 @@ private struct V2ActivityDetailContent: View {
         .navigationTitle(workout.workoutType)
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $addSet) { StrengthSetEditor(sessionID: workout.id) }
-        .sheet(item: $editingSet) { StrengthSetEditor(sessionID: workout.id, existing: $0) }
+        .sheet(item: $editingSet) { StrengthSetEditor(sessionID: $0.sessionID, existing: $0) }
         .sheet(isPresented: $addReport) { ObservationEditor(sessionID: workout.id) }
         .sheet(isPresented: $linkSession) { LinkSessionView(manual: workout) }
         .alert("Template name", isPresented: $namingTemplate) {
@@ -305,14 +318,13 @@ private struct V2ActivityDetailContent: View {
 
     private func tag(_ label: String, raw: String) -> some View {
         Toggle(label, isOn: Binding(get: { tags.contains(raw) }, set: { selected in
-            if selected { tags.insert(raw) } else { tags.remove(raw) }
+            tagEdits[raw] = selected
         }))
     }
 
     private func singleTagBinding(_ options: [String]) -> Binding<String> {
         Binding(get: { options.first(where: { tags.contains($0) }) ?? "" }, set: { newValue in
-            for option in options { tags.remove(option) }
-            if !newValue.isEmpty { tags.insert(newValue) }
+            for option in options { tagEdits[option] = option == newValue }
         })
     }
 

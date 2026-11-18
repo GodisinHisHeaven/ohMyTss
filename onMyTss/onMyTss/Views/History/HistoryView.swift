@@ -37,7 +37,8 @@ private struct HistoryContent: View {
     init(days: Int, now: Date) {
         let cutoff = Calendar.current.date(byAdding: .day, value: -(days - 1),
                                           to: Calendar.current.startOfDay(for: now)) ?? now
-        _aggregates = Query(filter: #Predicate<DayAggregate> { $0.date >= cutoff && $0.date <= now }, sort: \.date)
+        let end = Calendar.current.dateInterval(of: .day, for: now)?.end ?? now
+        _aggregates = Query(filter: #Predicate<DayAggregate> { $0.date >= cutoff && $0.date < end }, sort: \.date)
         var recent = FetchDescriptor<Workout>(predicate: #Predicate {
             $0.startTime >= cutoff && $0.startTime <= now && !$0.isTombstoned && !$0.isSuppressed
         }, sortBy: [SortDescriptor(\.startTime, order: .reverse)])
@@ -80,8 +81,12 @@ private struct HistoryContent: View {
         }
     }
 
+    private var days: [DayAggregate] {
+        DayAggregate.byLocalDay(aggregates, calendar: .current).values.sorted { $0.date < $1.date }
+    }
+
     @ViewBuilder private var readinessChart: some View {
-        let readings = aggregates.filter { TodayReadiness.validScore($0) != nil }
+        let readings = days.filter { TodayReadiness.validScore($0) != nil }
         if readings.isEmpty {
             trendEmpty("Readiness appears when recovery data is available.")
         } else {
@@ -101,7 +106,7 @@ private struct HistoryContent: View {
     }
 
     @ViewBuilder private var loadChart: some View {
-        let readings = aggregates.filter { $0.ctl.isFinite && $0.atl.isFinite }
+        let readings = days.filter { $0.ctl.isFinite && $0.atl.isFinite }
         if readings.isEmpty {
             trendEmpty("Sync activities to see your training load trend.")
         } else {

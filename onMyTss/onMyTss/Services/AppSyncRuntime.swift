@@ -123,6 +123,20 @@ final class AppSyncRuntime: BodyBatteryEngineProtocol {
         try await runner.run()
     }
 
+    func resetActivitySync() async throws {
+        try await runner.withExclusiveAccess {
+            if engine == nil { _ = try open() }
+            guard let engine else { throw BackgroundSyncError.incomplete }
+            try pending.markPending()
+            defer { AppBackgroundDelegate.current?.scheduleRefresh() }
+            if dataStore != nil, WeeklyWorkoutSync.allowsPublishing(arguments: ProcessInfo.processInfo.arguments),
+               !WeeklyWorkoutSync.invalidateSource() {
+                markUntrackedChange()
+            }
+            try await engine.resetActivitySync()
+        }
+    }
+
     /// Persist first: if the process is killed or data is locked, the next run retries.
     func healthKitChanged() {
         // Invalidate before recording: a crash between these writes can only

@@ -6,6 +6,7 @@ nonisolated struct IntensityWorkout {
     let end: Date
     let heartRate: [TimedValue]
     let pauses: [TimeRange]
+    var recordedEnd: Date? = nil
 }
 
 /// A source row and its canonical link. Suppressed aliases may contain the
@@ -17,6 +18,7 @@ nonisolated struct IntensitySource {
     let isSuppressed: Bool
     let isDeleted: Bool
     let workout: IntensityWorkout
+    var isSourceDeleted = false
 }
 
 /// Time in each heart-rate range, using user-supplied lactate thresholds.
@@ -31,59 +33,80 @@ nonisolated struct IntensityDistribution {
                           window: TimeRange) -> IntensityDistribution? {
         guard (30...240).contains(lt1), (30...240).contains(lt2), lt1 < lt2,
               window.duration > 0, window.duration.isFinite else { return nil }
-        let live = sources.filter { !$0.isDeleted }
-        let children = Dictionary(grouping: live.compactMap { source -> (String, IntensitySource)? in
-            source.linkedID.map { ($0, source) }
-        }, by: { $0.0 })
+        let byID = Dictionary(uniqueKeysWithValues: sources.map { ($0.id, $0) })
+        let links = WorkoutLinkGraph(sources.filter { !$0.isDeleted || $0.isSourceDeleted }
+            .map { .init(id: $0.id, parentID: $0.linkedID) })
         var low = 0.0, moderate = 0.0, high = 0.0
-        for canonical in live where !canonical.isSuppressed {
+        for canonical in sources where !canonical.isDeleted && !canonical.isSuppressed {
             let start = max(canonical.workout.start, window.start)
-            let end = min(canonical.workout.end, window.end)
+            let group = links.relatedIDs(to: canonical.id).compactMap { byID[$0] }.filter { !$0.isDeleted }.map { source in
+                WorkoutSignals.Source(id: source.id, isGarmin: source.isGarmin,
+                    features: WorkoutFeatures(heartRate: source.workout.heartRate, pauses: source.workout.pauses,
+                                              end: source.workout.recordedEnd))
+            }
+            let signals = WorkoutSignals(canonicalID: canonical.id, sources: group,
+                start: canonical.workout.start, fallbackEnd: canonical.workout.end)
+            let end = min(signals.window.end, window.end)
             guard end > start else { continue }
-            let activityWindow = TimeRange(start: start, end: end)
-            var group = [canonical]
-            var visited: Set<String> = [canonical.id]
-            var pending = [canonical.id]
-            while let id = pending.popLast() {
-                for (_, child) in children[id] ?? [] where visited.insert(child.id).inserted {
-                    group.append(child)
-                    pending.append(child.id)
-                }
-            }
-            group.sort { $0.id < $1.id }
-            let hasGarmin = group.contains { $0.isGarmin }
-            let primaryPauses = canonical.isGarmin ? canonical.workout.pauses
-                : group.first(where: { $0.isGarmin })?.workout.pauses ?? canonical.workout.pauses
-            let candidates = group.map { source in
-                let pauses = hasGarmin ? source.workout.pauses + primaryPauses : source.workout.pauses
-                let intervals = SignalProcessing.intervals(samples: source.workout.heartRate,
-                    window: activityWindow, pauses: pauses, validRange: 30...240)
-                return (source: source, intervals: intervals, coverage: SignalProcessing.coveredSeconds(intervals))
-            }.filter { !$0.intervals.isEmpty }.sorted {
-                if hasGarmin && $0.source.isGarmin != $1.source.isGarmin { return $0.source.isGarmin }
-                if hasGarmin && $0.source.isGarmin && ($0.source.id == canonical.id) != ($1.source.id == canonical.id) {
-                    return $0.source.id == canonical.id
-                }
-                if !hasGarmin && $0.coverage == $1.coverage && ($0.source.id == canonical.id) != ($1.source.id == canonical.id) {
-                    return $0.source.id == canonical.id
-                }
-                return $0.coverage == $1.coverage ? $0.source.id < $1.source.id : $0.coverage > $1.coverage
-            }
-            guard let first = candidates.first else { continue }
-            var intervals = first.intervals
-            if hasGarmin && first.source.isGarmin {
-                for candidate in candidates.dropFirst() {
-                    intervals = fillingGaps(in: intervals, with: candidate.intervals)
-                }
-            }
-            for interval in intervals {
-                if interval.value < Double(lt1) { low += interval.duration }
-                else if interval.value < Double(lt2) { moderate += interval.duration }
-                else { high += interval.duration }
+            for interval in signals.intervals(\.heartRate, validRange: 30...240) {
+                let seconds = max(0, min(interval.end, end).timeIntervalSince(max(interval.start, start)))
+                if interval.value < Double(lt1) { low += seconds }
+                else if interval.value < Double(lt2) { moderate += seconds }
+                else { high += seconds }
             }
         }
         let result = IntensityDistribution(lowSeconds: low, moderateSeconds: moderate, highSeconds: high)
         return result.totalSeconds > 0 ? result : nil
+    }
+}
+
+nonisolated struct WorkoutSignals {
+    struct Source {
+        let id: String
+        let isGarmin: Bool
+        let features: WorkoutFeatures
+    }
+
+    let sources: [Source]
+    let pauses: [TimeRange]
+    let recordedEnd: Date?
+    let window: TimeRange
+    private let canonicalID: String
+
+    init(canonicalID: String, sources: [Source], start: Date, fallbackEnd: Date) {
+        self.canonicalID = canonicalID
+        self.sources = sources.sorted {
+            if $0.isGarmin != $1.isGarmin { return $0.isGarmin }
+            if ($0.id == canonicalID) != ($1.id == canonicalID) { return $0.id == canonicalID }
+            return $0.id < $1.id
+        }
+        pauses = self.sources.first?.features.pauses ?? []
+        let canonicalEnd = self.sources.first { $0.id == canonicalID }?.features.end
+        let linkedEnd = self.sources.compactMap { $0.features.end }.first { $0 >= fallbackEnd }
+        recordedEnd = canonicalEnd ?? linkedEnd
+        window = TimeRange(start: start, end: recordedEnd ?? fallbackEnd)
+    }
+
+    func intervals(_ key: KeyPath<WorkoutFeatures, [TimedValue]>, validRange: ClosedRange<Double>) -> [TimedValue] {
+        let useGarminPriority = sources.first?.isGarmin == true
+        let candidates = sources.map { source in
+            let intervals = SignalProcessing.intervals(samples: source.features[keyPath: key], window: window,
+                pauses: source.features.pauses + pauses, validRange: validRange)
+            return (source: source, intervals: intervals, coverage: SignalProcessing.coveredSeconds(intervals))
+        }.filter { !$0.intervals.isEmpty }.sorted {
+            if $0.source.isGarmin != $1.source.isGarmin { return $0.source.isGarmin }
+            if ($0.source.isGarmin || (!useGarminPriority && $0.coverage == $1.coverage))
+                && ($0.source.id == canonicalID) != ($1.source.id == canonicalID) {
+                return $0.source.id == canonicalID
+            }
+            if $0.coverage != $1.coverage { return $0.coverage > $1.coverage }
+            return $0.source.id < $1.source.id
+        }
+        guard let first = candidates.first else { return [] }
+        if first.source.isGarmin {
+            return candidates.dropFirst().reduce(first.intervals) { Self.fillingGaps(in: $0, with: $1.intervals) }
+        }
+        return first.intervals
     }
 
     /// Preferred-source intervals win overlaps; later sources fill only gaps.
@@ -107,8 +130,6 @@ nonisolated struct IntensityDistribution {
         }
         return (selected + uncovered).sorted { $0.start < $1.start }
     }
-
-
 }
 
 /// Timestamp-based integration shared by the import adapter and v2 model.

@@ -66,8 +66,7 @@ final class V2Store {
                   record.effortRaw.map({ StrengthEffort(rawValue: $0) != nil }) ?? true,
                   record.manualRegionsRaw.allSatisfy({ Region(rawValue: $0) != nil }),
                   ExerciseCatalog.exercises.contains(where: { $0.id == record.exerciseID }) || !record.manualRegionsRaw.isEmpty,
-                  let session = try sessionLookup[record.sessionID] ?? workout(record.sessionID),
-                  !session.isTombstoned, !session.isSuppressed else {
+                  let session = try sessionLookup[record.sessionID] ?? editableWorkout(record.sessionID) else {
                 throw V2StoreError.invalidSet
             }
             sessionLookup[record.sessionID] = session
@@ -88,36 +87,48 @@ final class V2Store {
     }
 
     func deleteSet(_ record: StrengthSetRecord) throws {
-        let session = try workout(record.sessionID)
+        let session = try editableWorkout(record.sessionID)
         context.delete(record)
         if let session { try recalculate(session) } else { try context.save() }
     }
 
-    /// Explicit user-confirmed merge keeps imported cardio only once and moves independent local records.
+    /// An explicit link keeps one contribution and preserves source ownership.
     func linkSession(manual: Workout, to target: Workout) throws {
         try DataStore(modelContext: context).ensureWorkoutMutationAllowed(for: target)
         guard manual.source == WorkoutSource.manual.rawValue, manual.id != target.id,
               !target.isTombstoned, !target.isSuppressed, target.source != WorkoutSource.manual.rawValue,
-              manual.linkedSessionID == nil else { throw V2StoreError.invalidSession }
-        for row in try context.fetch(FetchDescriptor<StrengthSetRecord>()) where row.sessionID == manual.id {
-            row.sessionID = target.id
+              !manual.isTombstoned, !manual.isSuppressed, manual.linkedSessionID == nil else {
+            throw V2StoreError.invalidSession
         }
-        for row in try context.fetch(FetchDescriptor<LocalObservation>()) where row.sessionID == manual.id {
-            row.sessionID = target.id
-        }
-        target.userTags = Array(Set(target.userTags + manual.userTags)).sorted()
-        manual.userTags = []
         manual.linkedSessionID = target.id
         manual.isSuppressed = true
         try recalculate(target)
         try DataStore(modelContext: context).rebuildLegacyLoadHistory(now: clock())
     }
 
+    /// Apply only the labels explicitly edited by the user. Existing labels
+    /// stay with their source, and deselection clears the label across the group.
+    func saveTags(_ edits: [String: Bool], for session: Workout) throws {
+        try DataStore(modelContext: context).ensureWorkoutMutationAllowed(for: session)
+        guard !session.isTombstoned, !session.isSuppressed else { throw V2StoreError.invalidSession }
+        let group = try V2EstimateBatch.sourceGroup(context: context, sessionID: session.id)
+        let removed = Set(edits.keys.filter { edits[$0] == false })
+        let existing = Set(group.flatMap(\.userTags))
+        let added = Set(edits.keys.filter { edits[$0] == true }).subtracting(existing)
+        for row in group {
+            var tags = Set(row.userTags).subtracting(removed)
+            if row.id == session.id { tags.formUnion(added) }
+            if tags != Set(row.userTags) { row.userTags = tags.sorted() }
+        }
+        try recalculate(session)
+    }
+
     func deleteSession(_ session: Workout) async throws {
         try DataStore(modelContext: context).ensureWorkoutMutationAllowed(for: session)
         // Delete the logical session, retaining source tombstones and all user records for audit.
         let all = try context.fetch(FetchDescriptor<Workout>())
-        let ids = relatedIDs(to: session.id, in: all)
+        let graph = WorkoutLinkGraph(all.map { .init(id: $0.id, parentID: $0.linkedSessionID) })
+        let ids = graph.relatedIDs(to: session.id)
         for row in all where ids.contains(row.id) {
             row.isTombstoned = true
             row.deletionOrigin = "user"
@@ -212,17 +223,15 @@ final class V2Store {
         try DataStore(modelContext: context).fetchWorkout(byId: id)
     }
 
-    private func relatedIDs(to id: String, in rows: [Workout]) -> Set<String> {
-        var ids: Set<String> = [id]
-        var changed = true
-        while changed {
-            let old = ids.count
-            for row in rows {
-                if let link = row.linkedSessionID, ids.contains(link) { ids.insert(row.id) }
-            }
-            changed = old != ids.count
+    private func editableWorkout(_ id: String) throws -> Workout? {
+        var linkedID: String? = id
+        var visited: Set<String> = []
+        while let id = linkedID, visited.insert(id).inserted, let row = try workout(id) {
+            if row.isTombstoned && row.deletionOrigin != "source" { return nil }
+            if !row.isTombstoned && !row.isSuppressed { return row }
+            linkedID = row.linkedSessionID
         }
-        return ids
+        return nil
     }
 
     private func input(_ record: StrengthSetRecord) -> StrengthSetInput {

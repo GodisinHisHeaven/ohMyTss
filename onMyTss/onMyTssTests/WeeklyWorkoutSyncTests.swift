@@ -371,8 +371,9 @@ final class WeeklyWorkoutSyncTests: XCTestCase {
         XCTAssertFalse(WeeklyWorkoutSync.publish(store: store, now: now, defaults: defaults, arguments: [], reload: {}))
         state.localWorkoutRepairInProgress = false
         state.pendingWorkoutSourceFinalization = true
-        XCTAssertFalse(WeeklyWorkoutSync.publish(store: store, now: now, defaults: defaults, arguments: [], reload: {}))
-        state.pendingWorkoutSourceFinalization = false
+        state.lastComputationDate = now
+        state.lastHealthKitSyncDate = now
+        try context.save()
         XCTAssertTrue(WeeklyWorkoutSync.publish(store: store, now: now, defaults: defaults, arguments: [], reload: {}))
         XCTAssertEqual(WeeklyWorkoutSnapshot.load(defaults: defaults)?.records.map(\.workoutType), ["Ride"])
         XCTAssertNil(WeeklyWorkoutSnapshot.load(defaults: defaults)?.sourceSyncedAt)
@@ -416,7 +417,7 @@ final class WeeklyWorkoutSyncTests: XCTestCase {
 
 @MainActor
 private final class FailingWidgetDataStore: onMyTss.DataStore {
-    override func fetchWeeklyWidgetWorkouts(from start: Date, to end: Date) throws -> [Workout] {
+    override func fetchWorkouts(startingAt start: Date, before end: Date, includeSuppressed: Bool) throws -> [Workout] {
         throw NSError(domain: "WeeklyWidgetTests", code: 1)
     }
 }

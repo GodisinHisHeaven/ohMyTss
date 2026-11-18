@@ -129,34 +129,37 @@ final class ActivitySyncTests: XCTestCase {
         XCTAssertNil(newAuth.lastSyncDate)
     }
 
-    func testResetAllowsFreshHistoricalSourceBackfillAndRemoval() async throws {
+    func testResetRetainsHistoricalSourceBackfillUntilReplay() async throws {
         let fixture = try SyncFixture()
-        let state = try fixture.store.fetchAppState()
-        state.healthKitSourceBackfillVersion = 1
-        state.pendingHealthKitSourceBackfillIDs = ["old-source"]
-        state.healthKitTypeBackfillVersion = 1
-        state.pendingHealthKitTypeBackfillIDs = ["old-type"]
-        state.pendingWorkoutSourceFinalization = true
-        try fixture.context.save()
-        try fixture.store.deleteAllWorkouts()
-        try fixture.store.resetAppState()
-        XCTAssertNoThrow(try fixture.store.ensureWorkoutMutationAllowed())
-
         let start = fixture.clock.now.addingDays(-60)
         let workout = HKWorkout(activityType: .running, start: start, end: start.addingTimeInterval(600))
         fixture.health.all = [workout]
-        let row = Workout(id: workout.uuid.uuidString, date: start.startOfDay, startTime: start,
+        let id = workout.uuid.uuidString
+        let row = Workout(id: id, date: start.startOfDay, startTime: start,
                           duration: 600, workoutType: "Running", tss: 25,
-                          calculationMethod: "duration", source: .healthKit, healthKitUUID: workout.uuid.uuidString)
+                          calculationMethod: "duration", source: .healthKit, healthKitUUID: id)
         fixture.context.insert(row)
+        let state = try fixture.store.fetchAppState()
+        state.healthKitSourceBackfillVersion = 1
+        state.pendingHealthKitSourceBackfillIDs = [id]
+        state.healthKitTypeBackfillVersion = 1
+        state.pendingHealthKitTypeBackfillIDs = [id]
+        state.pendingWorkoutSourceFinalization = true
         state.healthKitAnchor = fixture.health.encodeAnchor(HKQueryAnchor(fromValue: 1))
-        state.lastHealthKitSampleRefreshDate = fixture.clock.now
         try fixture.context.save()
+
+        try await fixture.engine.resetActivitySync()
+        XCTAssertEqual(state.pendingHealthKitSourceBackfillIDs, [id])
+        XCTAssertEqual(state.pendingHealthKitTypeBackfillIDs, [id])
+        XCTAssertTrue(state.pendingWorkoutSourceFinalization)
+        XCTAssertEqual(try fixture.store.fetchWorkout(byId: id)?.persistentModelID, row.persistentModelID)
+
         try await fixture.engine.incrementalUpdate()
         XCTAssertNotNil(row.sourceBundleIdentifier)
         XCTAssertEqual(state.healthKitSourceBackfillVersion, 1)
         XCTAssertTrue(state.pendingHealthKitSourceBackfillIDs.isEmpty)
         XCTAssertTrue(state.pendingHealthKitTypeBackfillIDs.isEmpty)
+        XCTAssertFalse(state.pendingWorkoutSourceFinalization)
         XCTAssertNoThrow(try fixture.store.deleteWorkout(row))
     }
 
@@ -332,6 +335,9 @@ final class ActivitySyncTests: XCTestCase {
         try await fixture.engine.incrementalUpdate()
         XCTAssertTrue(state.pendingHealthKitSourceBackfillIDs.isEmpty)
         XCTAssertEqual(set.sessionID, health.id)
+        let estimates = try fixture.context.fetch(FetchDescriptor<LoadEstimateRecord>())
+        XCTAssertTrue(estimates.contains { $0.sessionID == strava.id &&
+            $0.value?.regions.contains { $0.unit == "strength set equivalents" } == true })
         XCTAssertEqual(try fixture.context.fetchCount(FetchDescriptor<StrengthSetRecord>()), 1)
     }
 
@@ -619,12 +625,13 @@ final class ActivitySyncTests: XCTestCase {
         state.pendingWorkoutSourceFinalization = false
         try fixture.context.save()
         try store.linkSession(manual: manual, to: imported)
-        XCTAssertEqual(set.sessionID, imported.id)
+        XCTAssertEqual(manual.linkedSessionID, imported.id)
+        XCTAssertEqual(set.sessionID, manual.id)
         try await store.deleteSession(imported)
         XCTAssertTrue(imported.isTombstoned)
     }
 
-    func testConcurrentEstimateRefreshDoesNotMoveAliasesDuringImport() async throws {
+    func testEstimateRefreshReadsAliasSetsWithoutReassigningThemDuringImport() async throws {
         let fixture = try SyncFixture()
         let start = fixture.clock.now.addingDays(-2)
         let health = Workout(id: "alias-hk", date: start.startOfDay, startTime: start,
@@ -641,8 +648,12 @@ final class ActivitySyncTests: XCTestCase {
         try fixture.context.save()
         try await V2Store(context: fixture.context).refreshEstimates()
         XCTAssertEqual(row.sessionID, health.id)
+        state.isComputationInProgress = false
+        try fixture.store.saveAppState(state)
         try await fixture.store.refreshV2Estimates()
         XCTAssertEqual(row.sessionID, health.id)
+        let estimates = try fixture.context.fetch(FetchDescriptor<LoadEstimateRecord>())
+        XCTAssertTrue(estimates.contains { $0.sessionID == strava.id && $0.value?.regions.isEmpty == false })
     }
 
     func testAmbiguityInLaterImportBatchDoesNotDeleteEarlierSource() async throws {
@@ -743,6 +754,7 @@ final class ActivitySyncTests: XCTestCase {
         let estimateInput = try XCTUnwrap(JSONSerialization.jsonObject(with: estimate.inputData) as? [String: Any])
         XCTAssertEqual(estimateInput["tags"] as? [String], ["personal"])
         XCTAssertEqual(try fixture.context.fetch(FetchDescriptor<LocalObservation>()).first?.id, note.id)
+        XCTAssertEqual(note.sessionID, hike.uuid.uuidString)
         XCTAssertEqual(state.healthKitTypeBackfillVersion, 1)
         XCTAssertTrue(state.pendingHealthKitTypeBackfillIDs.isEmpty)
         XCTAssertEqual(fixture.health.identityRequests.count, 2) // Type and source metadata are independently backfilled.
@@ -831,6 +843,62 @@ final class ActivitySyncTests: XCTestCase {
         let latest = try XCTUnwrap(V2EstimateBatch.latestEstimates(context: fixture.context)[row.id])
         XCTAssertEqual(try JSONDecoder().decode(SyncThresholdProbe.self, from: latest.inputData).maxHeartRate, 205)
         XCTAssertEqual(fixture.health.featureRequests.count, 1)
+    }
+
+    func testHealthKitCyclingUsesTheSameStravaFTPOnImportRecalculationAndReimport() async throws {
+        let fixture = try SyncFixture()
+        let thresholds = try fixture.store.fetchUserThresholds()
+        thresholds.cyclingFTP = 200
+        thresholds.preferStravaFTP = true
+        thresholds.stravaFTP = 300 // A pre-upgrade copy may disagree with the athlete profile.
+        try fixture.store.saveUserThresholds(thresholds)
+        let auth = StravaAuth(isConnected: true, stravaFTP: 250)
+        try fixture.store.saveStravaAuth(auth)
+        fixture.health.powerWatts = 200
+        let start = fixture.clock.now.addingTimeInterval(-7200)
+        let ride = HKWorkout(activityType: .cycling, start: start, end: start.addingTimeInterval(3600))
+        let importer = WorkoutAggregator(healthKitManager: fixture.health, stravaAuthManager: SyncToken(),
+                                         dataStore: fixture.store, stravaClient: fixture.strava)
+        let imported = try await importer.convertHealthKitWorkouts([ride])
+        let record = try XCTUnwrap(imported.first)
+        XCTAssertEqual(record.tss, 64, accuracy: 0.0001)
+        try fixture.store.saveWorkout(record)
+        _ = try await fixture.store.refreshLegacyWorkoutTSS()
+        XCTAssertEqual(record.tss, 64, accuracy: 0.0001)
+        let reimported = try await importer.convertHealthKitWorkouts([ride])
+        XCTAssertTrue(try fixture.store.saveWorkouts(reimported).isEmpty)
+
+        // A changed athlete profile also invalidates saved estimates when user settings are unchanged.
+        try await fixture.engine.incrementalUpdate()
+        auth.stravaFTP = 200
+        try fixture.store.updateStravaAuth(auth)
+        try await fixture.engine.incrementalUpdate()
+        XCTAssertEqual(record.tss, 100, accuracy: 0.0001)
+    }
+
+    func testStravaRecalculationRetainsSamplesAndHonorsTheirRecordedAvailability() async throws {
+        let fixture = try SyncFixture()
+        let thresholds = try fixture.store.fetchUserThresholds()
+        thresholds.cyclingFTP = 200
+        try fixture.store.saveUserThresholds(thresholds)
+        try fixture.store.saveStravaAuth(StravaAuth(isConnected: true))
+        let start = fixture.clock.now.addingTimeInterval(-7200)
+        let activity = [
+            "id": 777, "start_date": ISO8601DateFormatter().string(from: start), "moving_time": 3600,
+            "sport_type": "Ride", "device_watts": false, "weighted_average_watts": 200,
+            "has_heartrate": false, "average_heartrate": 160
+        ] as [String: Any]
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        fixture.strava.listed = [try decoder.decode(StravaActivity.self, from: JSONSerialization.data(withJSONObject: activity))]
+        try await fixture.engine.incrementalUpdate()
+        let row = try XCTUnwrap(fixture.store.fetchWorkout(byId: "777"))
+        XCTAssertEqual(row.normalizedPower, 200)
+        XCTAssertEqual(row.averageHeartRate, 160)
+        XCTAssertEqual(row.calculationMethod, "duration estimate")
+        XCTAssertEqual(row.tss, 60)
+        let recalculated = try await fixture.store.refreshLegacyWorkoutTSS()
+        XCTAssertTrue(recalculated.changes.isEmpty)
     }
 
     func testFailedSensorRetryQueueRotatesPastPersistentlyFailingBatch() async throws {
@@ -1134,6 +1202,59 @@ final class ActivitySyncTests: XCTestCase {
         XCTAssertNotNil(try fixture.store.fetchWorkout(byId: laterWorkout.uuid.uuidString))
     }
 
+    func testResetWaitsForInFlightSyncThenReplaysWithoutDeletingHistory() async throws {
+        let fixture = try SyncFixture()
+        let start = fixture.clock.now.addingDays(-10)
+        let existing = fixture.health.addWorkout(at: start)
+        try await fixture.engine.incrementalUpdate()
+        let state = try fixture.store.fetchAppState()
+        let savedAnchor = try XCTUnwrap(state.healthKitAnchor)
+        let local = V2Store(context: fixture.context, clock: { fixture.clock.now })
+        let manual = try local.createStrengthSession(start: start, duration: 600)
+        let set = StrengthSetRecord(sessionID: manual.id, exerciseID: "squat", reps: 8)
+        try local.saveSet(set)
+        let report = LocalObservation(regionRaw: "quads", observedAt: start, sessionID: manual.id)
+        try local.saveObservation(report)
+        let summary = DayAggregate(date: start.addingDays(-2).startOfDay, totalTSS: 45)
+        try fixture.store.saveDayAggregate(summary)
+        let estimates = Set(try fixture.context.fetch(FetchDescriptor<LoadEstimateRecord>()).map(\.id))
+        let strava = StravaAuth(lastSyncDate: start, syncCursor: 99)
+        strava.lastReconciliationDate = start
+        try fixture.store.saveStravaAuth(strava)
+
+        fixture.health.pauseNextChange = true
+        let running = Task { try await fixture.engine.incrementalUpdate() }
+        defer { running.cancel(); fixture.health.changesGate?.release() }
+        try await waitForSyncTestCondition("HealthKit query to pause") { fixture.health.changesGate?.isWaiting == true }
+        let gate = try XCTUnwrap(fixture.health.changesGate)
+        let settings = SettingsViewModel(dataStore: fixture.store, engine: fixture.engine)
+        let reset = Task { await settings.resetActivitySync() }
+        defer { reset.cancel() }
+        try await waitForSyncTestCondition("reset to reach the sync lock") { settings.isSaving }
+        XCTAssertEqual(state.healthKitAnchor, savedAnchor)
+
+        let missed = HKWorkout(activityType: .running, start: start.addingDays(-1), end: start.addingDays(-1).addingTimeInterval(600))
+        fixture.health.all.append(missed)
+        gate.release()
+        try await running.value
+        await reset.value
+        XCTAssertNil(settings.errorMessage)
+        XCTAssertNil(state.healthKitAnchor)
+        XCTAssertNil(strava.lastSyncDate)
+        XCTAssertNil(strava.lastReconciliationDate)
+        XCTAssertNil(strava.syncCursor)
+        XCTAssertNotNil(try fixture.store.fetchWorkout(byId: existing.uuid.uuidString))
+        XCTAssertNotNil(try fixture.store.fetchWorkout(byId: manual.id))
+        XCTAssertEqual(try fixture.store.fetchDayAggregate(for: summary.date)?.totalTSS, 45)
+
+        try await fixture.engine.incrementalUpdate()
+        XCTAssertNil(try XCTUnwrap(fixture.health.anchors.last))
+        XCTAssertNotNil(try fixture.store.fetchWorkout(byId: missed.uuid.uuidString))
+        XCTAssertEqual(try fixture.context.fetch(FetchDescriptor<StrengthSetRecord>()).map(\.id), [set.id])
+        XCTAssertEqual(try fixture.context.fetch(FetchDescriptor<LocalObservation>()).map(\.id), [report.id])
+        XCTAssertTrue(estimates.isSubset(of: Set(try fixture.context.fetch(FetchDescriptor<LoadEstimateRecord>()).map(\.id))))
+    }
+
     func testThousandDiskRecordsStayResponsiveDuringSyncAndRepeatedSyncDoesNoWork() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -1145,6 +1266,7 @@ final class ActivitySyncTests: XCTestCase {
         state.lastHealthKitSampleRefreshDate = fixture.clock.now
         state.lastComputationDate = fixture.clock.now
         state.lastRecoverySyncDate = fixture.clock.now
+        state.lastComputedTimeZone = Calendar.current.timeZone.identifier
         for index in 0..<1000 {
             let start = fixture.clock.now.addingTimeInterval(-Double(index + 2) * 3600)
             let row = Workout(id: "saved-\(index)", date: start.startOfDay, startTime: start, duration: 300,
@@ -1261,6 +1383,7 @@ final class ActivitySyncTests: XCTestCase {
     var failRange = false
     var failFeatures: Set<String> = []
     var sampleCount = 1
+    var powerWatts: Double?
     var onRecoveryRead: (() -> Void)?
     var pauseNextChange = false
     var changesGate: SyncTestGate?
@@ -1305,6 +1428,9 @@ final class ActivitySyncTests: XCTestCase {
         featureRequests.append(workout.uuid.uuidString)
         if failFeatures.contains(workout.uuid.uuidString) { throw HealthKitError.noData }
         var features = WorkoutFeatures()
+        if let powerWatts {
+            features.power = [.init(start: workout.startDate, end: workout.endDate, value: powerWatts)]
+        }
         features.heartRate = (0..<sampleCount).map { index in
             let length = workout.duration / Double(sampleCount)
             return .init(start: workout.startDate.addingTimeInterval(Double(index) * length),

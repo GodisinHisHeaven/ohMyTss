@@ -24,13 +24,11 @@ struct MorningAppSummary: Equatable {
               zone.secondsFromGMT(for: now) == TimeZone.current.secondsFromGMT(for: now) else { return nil }
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = zone
-        let start = calendar.startOfDay(for: now)
-        let end = calendar.date(byAdding: .day, value: 1, to: start)!
         let state = try store.fetchAppState()
         // Do not upload provisional history while its local repair is pending.
         guard !state.isComputationInProgress, !state.pendingWorkoutSourceFinalization,
               !LocalWorkoutHistoryRepair.isRequired(state) else { return nil }
-        let days = try store.fetchDayAggregates(from: start, to: end)
+        let days = try store.fetchDayAggregate(for: now, calendar: calendar).map { [$0] } ?? []
         let lastComputation = state.lastComputationDate
         let readiness = TodayReadiness(days: days, lastComputation: lastComputation, now: now, calendar: calendar)
         let score = readiness.updatedAt == nil ? nil : readiness.score
@@ -38,12 +36,9 @@ struct MorningAppSummary: Equatable {
             $0.isFinite && (0...24).contains($0) ? $0 : nil
         }
         let cutoff = calendar.date(byAdding: .day, value: -7, to: now)!
-        // The store's day query normalizes its inclusive end to midnight.
-        // Include today, then enforce the exact seven-day start-time window.
-        let workouts = try store.fetchWorkouts(from: cutoff, to: end)
-        let seconds = workouts.filter {
-            !$0.isTombstoned && !$0.isSuppressed && $0.startTime >= cutoff && $0.startTime <= now
-        }
+        let end = calendar.dateInterval(of: .day, for: now)?.end ?? now
+        let workouts = try store.fetchWorkouts(startingAt: cutoff, before: end)
+        let seconds = workouts.filter { $0.startTime <= now }
             .reduce(0.0) { sum, workout in
                 sum + (workout.duration.isFinite && workout.duration > 0 ? min(workout.duration, 86400) : 0)
             }

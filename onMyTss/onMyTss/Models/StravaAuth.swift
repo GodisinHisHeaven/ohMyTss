@@ -50,6 +50,8 @@ final class StravaAuth {
     /// Strava FTP value (if available from athlete profile)
     var stravaFTP: Int?
 
+    var validFTP: Int? { isConnected ? stravaFTP.flatMap { $0 > 0 ? $0 : nil } : nil }
+
     init(
         athleteId: Int? = nil,
         athleteName: String? = nil,

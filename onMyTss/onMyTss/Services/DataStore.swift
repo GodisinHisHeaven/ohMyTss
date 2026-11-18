@@ -67,31 +67,23 @@ class DataStore {
         try modelContext.save()
     }
 
-    func fetchDayAggregate(for date: Date) throws -> DayAggregate? {
-        let calendar = Calendar.current
-        let startOfDay = calendar.startOfDay(for: date)
-
-        let descriptor = FetchDescriptor<DayAggregate>(
-            predicate: #Predicate { $0.date == startOfDay }
-        )
-
-        let results = try modelContext.fetch(descriptor)
-        return results.first
+    func fetchDayAggregate(for date: Date, calendar: Calendar = .current) throws -> DayAggregate? {
+        try fetchDayAggregates(from: date, to: date, calendar: calendar).first
     }
 
-    func fetchDayAggregates(from startDate: Date, to endDate: Date) throws -> [DayAggregate] {
-        let calendar = Calendar.current
+    func fetchDayAggregates(from startDate: Date, to endDate: Date,
+                            calendar: Calendar = .current) throws -> [DayAggregate] {
         let start = calendar.startOfDay(for: startDate)
-        let end = calendar.startOfDay(for: endDate)
+        guard let end = calendar.dateInterval(of: .day, for: endDate)?.end else { return [] }
 
         let descriptor = FetchDescriptor<DayAggregate>(
             predicate: #Predicate { aggregate in
-                aggregate.date >= start && aggregate.date <= end
-            },
-            sortBy: [SortDescriptor(\.date, order: .forward)]
+                aggregate.date >= start && aggregate.date < end
+            }
         )
 
-        return try modelContext.fetch(descriptor)
+        return try DayAggregate.byLocalDay(modelContext.fetch(descriptor), calendar: calendar)
+            .values.sorted { $0.date < $1.date }
     }
 
     func fetchAllDayAggregates() throws -> [DayAggregate] {
@@ -117,16 +109,6 @@ class DataStore {
         try modelContext.save()
     }
 
-    func deleteAllDayAggregates() throws {
-        try ensureLocalRepairAllowsMutation()
-        let descriptor = FetchDescriptor<DayAggregate>()
-        let allAggregates = try modelContext.fetch(descriptor)
-        for aggregate in allAggregates {
-            modelContext.delete(aggregate)
-        }
-        try modelContext.save()
-    }
-
     // MARK: - UserThresholds Operations
 
     func fetchUserThresholds() throws -> UserThresholds {
@@ -147,6 +129,20 @@ class DataStore {
     func saveUserThresholds(_ thresholds: UserThresholds) throws {
         thresholds.lastModified = Date()
         try modelContext.save()
+    }
+
+    func effectiveCyclingFTP(for thresholds: UserThresholds) throws -> Int? {
+        let auth = thresholds.preferStravaFTP ? try fetchStravaAuth() : nil
+        return thresholds.effectiveCyclingFTP(strava: auth).watts
+    }
+
+    func setStravaFTPPreference(_ enabled: Bool, for thresholds: UserThresholds) throws {
+        thresholds.preferStravaFTP = enabled
+        do { try saveUserThresholds(thresholds) }
+        catch {
+            modelContext.rollback()
+            throw error
+        }
     }
 
     func updateFTP(_ ftp: Int) throws {
@@ -213,29 +209,25 @@ class DataStore {
         try modelContext.save()
     }
 
-    func resetAppState() throws {
+    /// Invalidate source checkpoints in one commit. Stored history is kept for the next import to reconcile.
+    func resetSyncCheckpoints() throws {
         try ensureLocalRepairAllowsMutation()
         let appState = try fetchAppState()
+        let auth = try fetchStravaAuth()
         appState.lastHealthKitSyncDate = nil
         appState.healthKitAnchor = nil
         appState.lastHealthKitSampleRefreshDate = nil
-        appState.pendingHealthKitWorkoutIDs = []
-        appState.healthKitTypeBackfillVersion = 0
-        appState.pendingHealthKitTypeBackfillIDs = []
-        appState.healthKitSourceBackfillVersion = 0
-        appState.pendingHealthKitSourceBackfillIDs = []
-        appState.pendingWorkoutSourceFinalization = false
-        appState.localWorkoutRepairVersion = 0
-        appState.localWorkoutRepairInProgress = false
         appState.lastRecoverySyncDate = nil
-        appState.lastComputationDate = nil
-        appState.isComputationInProgress = false
-        if let auth = try fetchStravaAuth() {
-            auth.lastSyncDate = nil
-            auth.lastReconciliationDate = nil
-            auth.syncCursor = nil
+        appState.lastSyncMessage = "Activity sync reset. Saved training history is available."
+        auth?.lastSyncDate = nil
+        auth?.lastReconciliationDate = nil
+        auth?.syncCursor = nil
+        do {
+            try modelContext.save()
+        } catch {
+            modelContext.rollback()
+            throw error
         }
-        try modelContext.save()
     }
 
     // MARK: - Workout Operations
@@ -253,10 +245,10 @@ class DataStore {
         var changes = WorkoutChanges()
         for workout in workouts {
             if let existing = try fetchWorkout(byId: workout.id) {
-                let oldDate = existing.date
+                let oldStart = existing.startTime
                 guard try merge(workout, into: existing) else { continue }
                 changes.include(existing)
-                changes.dates.insert(oldDate)
+                changes.dates.insert(oldStart)
             } else {
                 modelContext.insert(workout)
                 changes.include(workout)
@@ -357,7 +349,9 @@ class DataStore {
             existing.legacyTSS = existing.tss
             existing.legacyCalculationMethod = existing.calculationMethod
         }
-        if existing.date != incoming.date, let oldDay = try fetchDayAggregate(for: existing.date) {
+        let calendar = Calendar.current
+        if !calendar.isDate(existing.startTime, inSameDayAs: incoming.startTime),
+           let oldDay = try fetchDayAggregate(for: existing.startTime, calendar: calendar) {
             oldDay.hasWorkoutDetails = true
             oldDay.totalTSS = 0
         }
@@ -828,43 +822,24 @@ class DataStore {
         return results.first
     }
 
-    func fetchWorkouts(from startDate: Date, to endDate: Date, includeSupressed: Bool = false) throws -> [Workout] {
-        let calendar = Calendar.current
+    func fetchWorkouts(from startDate: Date, to endDate: Date, includeSuppressed: Bool = false,
+                       calendar: Calendar = .current) throws -> [Workout] {
         let start = calendar.startOfDay(for: startDate)
-        let end = calendar.startOfDay(for: endDate)
-
-        let descriptor = FetchDescriptor<Workout>(
-            predicate: #Predicate { workout in
-                workout.date >= start && workout.date <= end && (includeSupressed || (!workout.isSuppressed && !workout.isTombstoned))
-            },
-            sortBy: [SortDescriptor(\.startTime, order: .forward)]
-        )
-
-        return try modelContext.fetch(descriptor)
+        guard let end = calendar.dateInterval(of: .day, for: endDate)?.end else { return [] }
+        return try fetchWorkouts(startingAt: start, before: end, includeSuppressed: includeSuppressed)
     }
 
-    /// Uses the actual start time so the interval remains correct after a time zone change.
-    func fetchWeeklyWidgetWorkouts(from start: Date, to end: Date) throws -> [Workout] {
+    func fetchWorkouts(startingAt start: Date, before end: Date, includeSuppressed: Bool = false) throws -> [Workout] {
         let descriptor = FetchDescriptor<Workout>(
-            predicate: #Predicate { workout in
-                workout.startTime >= start && workout.startTime < end
-                    && !workout.isSuppressed && !workout.isTombstoned
-            },
-            sortBy: [SortDescriptor(\.startTime, order: .forward)]
+            predicate: #Predicate {
+                $0.startTime >= start && $0.startTime < end && (includeSuppressed || (!$0.isSuppressed && !$0.isTombstoned))
+            }
         )
-        return try modelContext.fetch(descriptor)
+        return try modelContext.fetch(descriptor).sorted { $0.startTime < $1.startTime }
     }
 
-    func fetchWorkoutsForDay(_ date: Date) throws -> [Workout] {
-        let calendar = Calendar.current
-        let startOfDay = calendar.startOfDay(for: date)
-
-        let descriptor = FetchDescriptor<Workout>(
-            predicate: #Predicate { $0.date == startOfDay && !$0.isSuppressed && !$0.isTombstoned },
-            sortBy: [SortDescriptor(\.startTime, order: .forward)]
-        )
-
-        return try modelContext.fetch(descriptor)
+    func fetchWorkoutsForDay(_ date: Date, calendar: Calendar = .current) throws -> [Workout] {
+        try fetchWorkouts(from: date, to: date, calendar: calendar)
     }
 
     func ensureWorkoutMutationAllowed(for workout: Workout? = nil) throws {
@@ -928,26 +903,16 @@ class DataStore {
         return changes
     }
 
-    func deleteAllWorkouts() throws {
-        try ensureLocalRepairAllowsMutation()
-        let descriptor = FetchDescriptor<Workout>()
-        let allWorkouts = try modelContext.fetch(descriptor)
-        for workout in allWorkouts {
-            modelContext.delete(workout)
-        }
-        try modelContext.save()
-    }
-
     /// Summary-only legacy days stay intact; affected days and their dependent
     /// CTL/ATL tail are rebuilt from persisted canonical sessions.
-    func rebuildLegacyLoadHistory(now: Date = Date()) throws {
+    func rebuildLegacyLoadHistory(now: Date = Date(), calendar: Calendar = .current) throws {
         try ensureLocalRepairAllowsMutation()
-        let rebuild = try LegacyHistoryRebuilder(context: modelContext, from: nil, now: now)
+        let rebuild = try LegacyHistoryRebuilder(context: modelContext, from: nil, now: now, calendar: calendar)
         while try !rebuild.applyBatch() {}
     }
 
-    func refreshLegacyLoadHistory(from start: Date?, now: Date) async throws {
-        let rebuild = try LegacyHistoryRebuilder(context: modelContext, from: start, now: now)
+    func refreshLegacyLoadHistory(from start: Date?, now: Date, calendar: Calendar = .current) async throws {
+        let rebuild = try LegacyHistoryRebuilder(context: modelContext, from: start, now: now, calendar: calendar)
         repeat {
             try Task.checkCancellation()
             let finished = try rebuild.applyBatch()
@@ -958,12 +923,12 @@ class DataStore {
 
     /// Threshold edits reuse saved samples and summaries; they do not redownload
     /// the source history. Recheck input values after each off-actor calculation.
-    func refreshLegacyWorkoutTSS() async throws -> WorkoutChanges {
+    func refreshLegacyWorkoutTSS() async throws -> (changes: WorkoutChanges, thresholdRevision: Date, ftp: Int?) {
         var changes = WorkoutChanges()
         refresh: while true {
             let thresholds = try fetchUserThresholds()
             let revision = thresholds.lastModified
-            let ftp = thresholds.preferStravaFTP ? thresholds.stravaFTP ?? thresholds.cyclingFTP : thresholds.cyclingFTP
+            let ftp = try effectiveCyclingFTP(for: thresholds)
             let maxHR = thresholds.maxHeartRate
             let rows = try allWorkouts().filter { $0.source != WorkoutSource.manual.rawValue && !$0.isTombstoned }
             for offset in stride(from: 0, to: rows.count, by: 20) {
@@ -980,7 +945,7 @@ class DataStore {
                     try await calculation.value
                 } onCancel: { calculation.cancel() }
                 try Task.checkCancellation()
-                guard revision == thresholds.lastModified,
+                guard revision == thresholds.lastModified, ftp == (try effectiveCyclingFTP(for: thresholds)),
                       inputs == batch.map(LegacyWorkoutInput.init) else { continue refresh }
                 for (row, value) in zip(batch, result) where row.tss != value.tss || row.calculationMethod != value.method {
                     if row.legacyTSS == nil { row.legacyTSS = row.tss; row.legacyCalculationMethod = row.calculationMethod }
@@ -991,8 +956,8 @@ class DataStore {
                 if modelContext.hasChanges { try modelContext.save() }
                 try await Task.sleep(for: .milliseconds(1))
             }
-            guard revision == thresholds.lastModified else { continue refresh }
-            return changes
+            guard revision == thresholds.lastModified, ftp == (try effectiveCyclingFTP(for: thresholds)) else { continue refresh }
+            return (changes, revision, ftp)
         }
     }
 
@@ -1054,7 +1019,7 @@ struct WorkoutChanges {
     var ids: Set<String> = []
     var dates: Set<Date> = []
     var isEmpty: Bool { ids.isEmpty }
-    mutating func include(_ row: Workout) { ids.insert(row.id); dates.insert(row.date) }
+    mutating func include(_ row: Workout) { ids.insert(row.id); dates.insert(row.startTime) }
     mutating func formUnion(_ other: Self) { ids.formUnion(other.ids); dates.formUnion(other.dates) }
 }
 
@@ -1132,10 +1097,9 @@ private struct WorkoutCanonicalState: Equatable {
     let origin: String?
     let link: String?
     let group: String?
-    let tags: [String]
     init(_ row: Workout) {
         suppressed = row.isSuppressed; deleted = row.isTombstoned
         origin = row.deletionOrigin; link = row.linkedSessionID
-        group = row.sessionGroupID; tags = row.userTags
+        group = row.sessionGroupID
     }
 }

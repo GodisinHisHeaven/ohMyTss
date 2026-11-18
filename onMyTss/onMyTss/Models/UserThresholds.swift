@@ -28,7 +28,7 @@ final class UserThresholds {
     var cyclingFTP: Int? // Functional Threshold Power (watts)
 
     // Strava integration
-    var stravaFTP: Int? // FTP from Strava athlete profile
+    var stravaFTP: Int? // Retained for stores that copied FTP before StravaAuth became its owner.
     var preferStravaFTP: Bool // Whether to use Strava FTP over manual FTP
 
     // Heart rate
@@ -51,6 +51,11 @@ final class UserThresholds {
     // App settings
     var hasCompletedOnboarding: Bool
     var lastModified: Date
+
+    func effectiveCyclingFTP(strava: StravaAuth?) -> (watts: Int?, fromStrava: Bool) {
+        if preferStravaFTP, let watts = strava?.validFTP { return (watts, true) }
+        return (cyclingFTP.flatMap { $0 > 0 ? $0 : nil }, false)
+    }
 
     init(
         id: String = "user_thresholds",

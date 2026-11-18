@@ -42,7 +42,8 @@ final class MorningStatusTests: XCTestCase {
     func testAPIRejectsRedirectsHTMLAndHTTPFailures() async throws {
         let cases: [(Int, String, MorningStatusError)] = [
             (302, "application/json", .unavailable), (401, "application/json", .unauthorized),
-            (422, "application/json", .invalidInput), (429, "application/json", .rateLimited),
+            (410, "application/json", .retired), (422, "application/json", .invalidInput),
+            (429, "application/json", .rateLimited),
             (503, "application/json", .unavailable), (200, "text/html", .invalidResponse)
         ]
         for (code, type, expected) in cases {
@@ -55,6 +56,72 @@ final class MorningStatusTests: XCTestCase {
                 XCTFail("Expected status \(code) / \(type) to fail")
             } catch { XCTAssertEqual(error as? MorningStatusError, expected) }
         }
+    }
+
+    @MainActor
+    func testUncredentialedHealthCapabilityControlsSMSAvailability() async throws {
+        let cases: [(String, MorningSMSAvailability)] = [
+            (#"{"mode":"full","morning_sms_enabled":false}"#, .retired),
+            (#"{"mode":"full","morning_sms_enabled":true}"#, .available),
+            (#"{"mode":"accounts_only"}"#, .retired),
+            (#"{"mode":"morning_sms_only"}"#, .available)
+        ]
+        for (body, expected) in cases {
+            let api = MorningStatusAPI { request in
+                let url = try XCTUnwrap(request.url)
+                XCTAssertEqual(url.path, "/health")
+                XCTAssertEqual(request.httpMethod, "GET")
+                XCTAssertNil(request.httpBody)
+                XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
+                return (Data(body.utf8), HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil,
+                    headerFields: ["Content-Type": "application/json"])!)
+            }
+            let availability = try await api.fetchSMSAvailability()
+            XCTAssertEqual(availability, expected)
+        }
+    }
+
+    @MainActor
+    func testRetiredOrUnconfirmedServiceCannotRequestACode() async {
+        let api = MorningServiceStub()
+        let model = MorningStatusViewModel(api: api, tokenStore: MorningSessionStub())
+        await model.requestCode(phone: "+12025550100")
+        api.availability = .retired
+        await model.refreshSMSAvailability()
+        await model.requestCode(phone: "+12025550100")
+        XCTAssertEqual(model.smsAvailability, .retired)
+        XCTAssertEqual(api.requestCalls, 0)
+    }
+
+    @MainActor
+    func test410AfterHealthCheckClosesVerificationFlow() async {
+        let api = MorningServiceStub()
+        let model = MorningStatusViewModel(api: api, tokenStore: MorningSessionStub())
+        await model.refreshSMSAvailability()
+        await model.requestCode(phone: "+12025550100")
+        XCTAssertNotNil(model.verification)
+        api.error = MorningStatusError.retired
+        await model.verifyCode("123456")
+        XCTAssertEqual(model.smsAvailability, .retired)
+        XCTAssertNil(model.verification)
+        XCTAssertFalse(model.isSignedIn)
+    }
+
+    @MainActor
+    func testEarlierHealthResponseCannotReopenRetiredSMSFlow() async throws {
+        let api = MorningServiceStub()
+        let model = MorningStatusViewModel(api: api, tokenStore: MorningSessionStub())
+        await model.refreshSMSAvailability()
+        let gate = SyncTestGate()
+        api.availabilityGate = gate
+        let refresh = Task { await model.refreshSMSAvailability() }
+        defer { refresh.cancel(); gate.release() }
+        try await waitForSyncTestCondition("SMS health response to pause") { gate.isWaiting }
+        api.error = MorningStatusError.retired
+        await model.requestCode(phone: "+12025550100")
+        gate.release()
+        await refresh.value
+        XCTAssertEqual(model.smsAvailability, .retired)
     }
 
     @MainActor
@@ -93,6 +160,7 @@ final class MorningStatusTests: XCTestCase {
         let api = MorningServiceStub()
         let store = MorningSessionStub()
         let model = MorningStatusViewModel(api: api, tokenStore: store)
+        await model.refreshSMSAvailability()
         await model.requestCode(phone: " (202) 555-0100 ")
         XCTAssertNil(store.token)
         XCTAssertFalse(model.isSignedIn)
@@ -103,6 +171,7 @@ final class MorningStatusTests: XCTestCase {
         XCTAssertNil(model.verification)
         XCTAssertEqual(model.status?.displayName, "Fixture Athlete")
         let reopened = MorningStatusViewModel(api: api, tokenStore: store)
+        await reopened.refreshSMSAvailability()
         await reopened.load()
         XCTAssertTrue(reopened.isSignedIn)
         XCTAssertEqual(reopened.status?.timezone, "America/Chicago")
@@ -113,6 +182,7 @@ final class MorningStatusTests: XCTestCase {
         let api = MorningServiceStub()
         let store = MorningSessionStub(token: "fixture-session")
         let model = MorningStatusViewModel(api: api, tokenStore: store)
+        await model.refreshSMSAvailability()
         await model.load()
         let previous = model.status
         api.error = URLError(.notConnectedToInternet)
@@ -128,6 +198,7 @@ final class MorningStatusTests: XCTestCase {
         let api = MorningServiceStub()
         let store = MorningSessionStub(token: "fixture-session")
         let model = MorningStatusViewModel(api: api, tokenStore: store)
+        await model.refreshSMSAvailability()
         await model.load()
         api.error = MorningStatusError.unauthorized
         await model.refresh()
@@ -141,6 +212,7 @@ final class MorningStatusTests: XCTestCase {
         let api = MorningServiceStub()
         let store = MorningSessionStub(token: "fixture-session")
         let model = MorningStatusViewModel(api: api, tokenStore: store)
+        await model.refreshSMSAvailability()
         await model.load()
         model.signOut()
         XCTAssertNil(store.token)
@@ -154,6 +226,7 @@ final class MorningStatusTests: XCTestCase {
         let api = MorningServiceStub()
         let store = MorningSessionStub(token: "fixture-session")
         let model = MorningStatusViewModel(api: api, tokenStore: store)
+        await model.refreshSMSAvailability()
         await model.load()
         api.error = MorningStatusError.unavailable
         await model.unsubscribe()
@@ -173,6 +246,7 @@ final class MorningStatusTests: XCTestCase {
         let api = MorningServiceStub()
         let store = MorningSessionStub(token: "fixture-session")
         let model = MorningStatusViewModel(api: api, tokenStore: store)
+        await model.refreshSMSAvailability()
         await model.load()
         api.json = morningFixtureJSON.replacingOccurrences(of: "America/Chicago", with: "Asia/Shanghai")
         await model.saveTimezone("Asia/Shanghai")
@@ -187,6 +261,7 @@ final class MorningStatusTests: XCTestCase {
         let store = MorningSessionStub()
         store.failWrites = true
         let model = MorningStatusViewModel(api: api, tokenStore: store)
+        await model.refreshSMSAvailability()
         await model.requestCode(phone: "+12025550100")
         await model.verifyCode("123456")
         XCTAssertFalse(model.isSignedIn)
@@ -201,6 +276,7 @@ final class MorningStatusTests: XCTestCase {
         let api = MorningServiceStub()
         let store = MorningSessionStub()
         let model = MorningStatusViewModel(api: api, tokenStore: store, now: { now })
+        await model.refreshSMSAvailability()
         await model.requestCode(phone: "+12025550100")
         await model.resendCode()
         XCTAssertEqual(api.requestCalls, 1)
@@ -226,6 +302,7 @@ final class MorningStatusTests: XCTestCase {
         let api = MorningServiceStub()
         let store = MorningSessionStub()
         let model = MorningStatusViewModel(api: api, tokenStore: store)
+        await model.refreshSMSAvailability()
         await model.requestCode(phone: "+12025550100")
         api.error = MorningStatusError.unauthorized
         await model.verifyCode("000000")
@@ -255,6 +332,7 @@ final class MorningStatusTests: XCTestCase {
         }
         let api = MorningServiceStub()
         let model = MorningStatusViewModel(api: api, tokenStore: MorningSessionStub())
+        await model.refreshSMSAvailability()
         await model.requestCode(phone: "bad phone")
         XCTAssertEqual(api.requestCalls, 0)
         await model.requestCode(phone: "+12025550100")
@@ -281,6 +359,7 @@ final class MorningStatusTests: XCTestCase {
         let api = MorningServiceStub()
         let store = MorningSessionStub()
         let model = MorningStatusViewModel(api: api, tokenStore: store)
+        await model.refreshSMSAvailability()
         await model.requestCode(phone: "+12025550100")
         api.error = MorningStatusError.noSubscription
         await model.verifyCode("123456")
@@ -294,6 +373,8 @@ final class MorningStatusTests: XCTestCase {
 
 @MainActor
 final class MorningServiceStub: MorningStatusServing {
+    var availability = MorningSMSAvailability.available
+    var availabilityGate: SyncTestGate?
     var error: Error?
     var json = morningFixtureJSON
     var requestedPhone: String?
@@ -304,6 +385,11 @@ final class MorningServiceStub: MorningStatusServing {
     var fetchCalls = 0
     var subscribeCalls = 0
     var uploadedSummaries: [MorningAppSummary] = []
+    func fetchSMSAvailability() async throws -> MorningSMSAvailability {
+        let available = availability
+        await availabilityGate?.wait()
+        return available
+    }
     func requestCode(phone: String) async throws -> MorningPhoneChallenge {
         if let error { throw error }
         requestCalls += 1

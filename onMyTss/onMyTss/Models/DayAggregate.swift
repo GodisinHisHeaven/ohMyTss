@@ -39,6 +39,17 @@ final class DayAggregate {
     @Relationship(deleteRule: .nullify, inverse: \Workout.dayAggregate)
     var workouts: [Workout] = []
 
+    /// Prefer the earliest saved row in each local day, including an exact midnight when present.
+    static func byLocalDay(_ rows: [DayAggregate], calendar: Calendar) -> [Date: DayAggregate] {
+        var days: [Date: DayAggregate] = [:]
+        for row in rows {
+            let day = calendar.startOfDay(for: row.date)
+            if let saved = days[day], saved.date <= row.date { continue }
+            days[day] = row
+        }
+        return days
+    }
+
     init(
         date: Date,
         totalTSS: Double = 0.0,

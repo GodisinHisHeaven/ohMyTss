@@ -118,7 +118,7 @@ enum WeeklyWorkoutSync {
 
     /// Do not turn a cache read into evidence of an external source sync.
     static func sourceSyncDate(state: AppState?, auth: StravaAuth?) -> Date? {
-        guard let state, let computation = state.lastComputationDate,
+        guard let state, !state.pendingWorkoutSourceFinalization, let computation = state.lastComputationDate,
               let healthKit = state.lastHealthKitSyncDate, healthKit == computation else { return nil }
         guard let auth, auth.isConnected else { return healthKit }
         guard let strava = auth.lastSyncDate, strava == computation,
@@ -126,7 +126,11 @@ enum WeeklyWorkoutSync {
         return min(healthKit, strava)
     }
 
-    /// Publish only after the caller has successfully saved a completed sync.
+    static func canPublishCommittedHistory(_ state: AppState) -> Bool {
+        !state.isComputationInProgress && !LocalWorkoutHistoryRepair.isRequired(state)
+    }
+
+    /// The display can advance after a pass that saved data but needs a source retry.
     @discardableResult
     static func publish(store: DataStore, now: Date = Date(), calendar: Calendar = .current,
                         defaults: UserDefaults? = UserDefaults(suiteName: WeeklyWorkoutSnapshot.appGroup),
@@ -139,10 +143,9 @@ enum WeeklyWorkoutSync {
             state = try store.fetchAppState()
             auth = try store.fetchStravaAuth()
         } catch { return false }
-        guard !state.isComputationInProgress, !state.pendingWorkoutSourceFinalization,
-              !LocalWorkoutHistoryRepair.isRequired(state) else { return false }
+        guard canPublishCommittedHistory(state) else { return false }
         guard let week = calendar.dateInterval(of: .weekOfYear, for: now),
-              let workouts = try? store.fetchWeeklyWidgetWorkouts(from: week.start, to: week.end),
+              let workouts = try? store.fetchWorkouts(startingAt: week.start, before: week.end),
               !Task.isCancelled else { return false }
         let sourceSyncedAt = sourceSyncDate(state: state, auth: auth)
         return publish(workouts: workouts, now: now, calendar: calendar, sourceSyncedAt: sourceSyncedAt,
@@ -184,10 +187,7 @@ private struct WeeklyWorkoutDayObserver: View {
     }
 
     var body: some View {
-        let canPublish = isActive && appStates.first.map {
-            !$0.isComputationInProgress && !$0.pendingWorkoutSourceFinalization &&
-                !LocalWorkoutHistoryRepair.isRequired($0)
-        } == true
+        let canPublish = isActive && appStates.first.map { WeeklyWorkoutSync.canPublishCommittedHistory($0) } == true
         let sourceSyncedAt = WeeklyWorkoutSync.sourceSyncDate(state: appStates.first, auth: stravaAuths.first)
         let trigger = Trigger(day: Calendar.current.startOfDay(for: now),
                               timeZone: Calendar.current.timeZone.identifier,

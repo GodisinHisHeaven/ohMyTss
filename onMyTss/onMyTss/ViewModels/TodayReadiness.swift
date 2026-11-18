@@ -8,7 +8,7 @@ struct TodayReadiness {
     let updatedAt: Date?
 
     init(days: [DayAggregate], lastComputation: Date?, now: Date = Date(), calendar: Calendar = .current) {
-        day = days.first { calendar.isDate($0.date, inSameDayAs: now) && $0.date <= now }
+        day = DayAggregate.byLocalDay(days, calendar: calendar)[calendar.startOfDay(for: now)]
         score = day.flatMap(Self.validScore)
         updatedAt = lastComputation.flatMap {
             $0 <= now && calendar.isDate($0, inSameDayAs: now) ? $0 : nil

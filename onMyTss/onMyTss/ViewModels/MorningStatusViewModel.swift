@@ -12,6 +12,9 @@ final class MorningStatusViewModel {
     private var codeExpiresAt: Date?
     private var resendAvailableAt: Date?
     private(set) var verification: MorningPhoneChallenge?
+    private(set) var smsAvailability: MorningSMSAvailability?
+    private(set) var isCheckingAvailability = false
+    private var availabilityRevision = 0
     var status: MorningStatus?
     var isBusy = false
     var errorMessage: String?
@@ -28,8 +31,25 @@ final class MorningStatusViewModel {
         self.now = now
     }
 
+    func refreshSMSAvailability() async {
+        guard !isCheckingAvailability else { return }
+        isCheckingAvailability = true
+        defer { isCheckingAvailability = false }
+        let revision = availabilityRevision
+        do {
+            let availability = try await api.fetchSMSAvailability()
+            try Task.checkCancellation()
+            if revision == availabilityRevision { smsAvailability = availability }
+        } catch is CancellationError {
+        } catch MorningStatusError.retired {
+            smsAvailability = .retired
+        } catch {
+            if !Task.isCancelled && smsAvailability != .retired { smsAvailability = nil }
+        }
+    }
+
     func load() async {
-        guard !isBusy else { return }
+        guard smsAvailability == .available, !isBusy else { return }
         do { token = try tokenStore.load() }
         catch { errorMessage = error.localizedDescription; return }
         if token != nil { await refresh() }
@@ -41,7 +61,7 @@ final class MorningStatusViewModel {
     }
 
     func requestCode(phone: String) async {
-        guard !isBusy, !isSignedIn, resendSeconds(at: now()) == 0 else { return }
+        guard smsAvailability == .available, !isBusy, !isSignedIn, resendSeconds(at: now()) == 0 else { return }
         guard let phone = MorningPhoneInput.normalized(phone) else {
             errorMessage = "Enter a US phone number, including area code."
             return
@@ -60,7 +80,7 @@ final class MorningStatusViewModel {
             if case MorningStatusError.rateLimited = error {
                 resendAvailableAt = now().addingTimeInterval(60)
             }
-            errorMessage = message(for: error)
+            recordError(error)
         }
     }
 
@@ -78,7 +98,7 @@ final class MorningStatusViewModel {
     }
 
     func verifyCode(_ code: String) async {
-        guard !isBusy, !isSignedIn, let verification else { return }
+        guard smsAvailability == .available, !isBusy, !isSignedIn, let verification else { return }
         guard MorningPhoneInput.validCode(code) else {
             errorMessage = "Enter the six-digit code from your text."
             return
@@ -107,7 +127,7 @@ final class MorningStatusViewModel {
             errorMessage = MorningStatusError.noSubscription.localizedDescription
             return
         } catch {
-            errorMessage = message(for: error)
+            recordError(error)
             return
         }
         guard let token else { return }
@@ -155,12 +175,12 @@ final class MorningStatusViewModel {
             verification = nil
             submittedPhone = nil
             codeExpiresAt = nil
-        } catch { errorMessage = message(for: error) }
+        } catch { recordError(error) }
     }
 
     private func perform(notice successNotice: String? = nil,
                          operation: (String) async throws -> MorningStatus) async {
-        guard !isBusy, let token else { return }
+        guard smsAvailability == .available, !isBusy, let token else { return }
         isBusy = true
         errorMessage = nil
         notice = nil
@@ -177,12 +197,19 @@ final class MorningStatusViewModel {
             status = nil
             try? tokenStore.delete()
         }
-        errorMessage = message(for: error)
+        recordError(error)
     }
 
-    private func message(for error: Error) -> String {
-        if error is MorningStatusError { return error.localizedDescription }
-        return "Unable to reach morning status. Check your connection and try again."
+    private func recordError(_ error: Error) {
+        if case MorningStatusError.retired = error {
+            availabilityRevision += 1
+            smsAvailability = .retired
+            verification = nil
+            codeExpiresAt = nil
+            submittedPhone = nil
+        }
+        errorMessage = error is MorningStatusError
+            ? error.localizedDescription : "Unable to reach morning status. Check your connection and try again."
     }
 
     nonisolated deinit {}

@@ -34,16 +34,17 @@ private struct TodayDashboard: View {
         self.engine = engine
         self.dataStore = dataStore
         self.now = now
-        let cutoff = MuscleRPESummary.cutoff(for: now)
+        let calendar = Calendar.current
+        let cutoff = MuscleRPESummary.cutoff(for: now, calendar: calendar)
         // Duplicate source timestamps can differ by up to a minute.
-        let sourceCutoff = MuscleRPESummary.sourceCutoff(for: now)
-        let start = Calendar.current.startOfDay(for: now)
-        let end = Calendar.current.date(byAdding: .day, value: 1, to: start) ?? now
+        let sourceCutoff = MuscleRPESummary.sourceCutoff(for: now, calendar: calendar)
+        let start = calendar.startOfDay(for: now)
+        let end = calendar.dateInterval(of: .day, for: now)?.end ?? now
         _workouts = Query(filter: #Predicate<Workout> {
             $0.startTime >= cutoff && $0.startTime < end && !$0.isTombstoned && !$0.isSuppressed
         }, sort: \.startTime, order: .reverse)
         _intensitySources = Query(filter: #Predicate<Workout> {
-            $0.startTime >= sourceCutoff && $0.startTime < end && !$0.isTombstoned
+            $0.startTime >= sourceCutoff && $0.startTime < end && (!$0.isTombstoned || $0.deletionOrigin == "source")
         })
         // Source-deleted aliases may still own user-entered sets and tags.
         _muscleSources = Query(filter: #Predicate<Workout> {
@@ -248,6 +249,7 @@ nonisolated struct IntensityInputSnapshot: Equatable, Sendable {
     let start: Date
     let duration: TimeInterval
     let featuresData: Data?
+    var isSourceDeleted = false
 }
 
 nonisolated struct IntensityCalculationResult: Equatable, Sendable {
@@ -283,7 +285,8 @@ nonisolated struct IntensityCalculationRequest: Equatable, Sendable {
                 IntensityInputSnapshot(id: workout.id, linkedID: workout.linkedSessionID,
                     isGarmin: WorkoutAggregator.isGarminSource(workout), isSuppressed: workout.isSuppressed,
                     isDeleted: workout.isTombstoned, start: workout.startTime,
-                    duration: workout.duration, featuresData: readFeatures(workout))
+                    duration: workout.duration, featuresData: workout.isTombstoned ? nil : readFeatures(workout),
+                    isSourceDeleted: workout.isTombstoned && workout.deletionOrigin == "source")
             }
         return Self(sources: inputs, lt1: lt1, lt2: lt2, window: window)
     }
@@ -299,8 +302,9 @@ nonisolated struct IntensityCalculationRequest: Equatable, Sendable {
             inputs.append(IntensitySource(id: source.id, linkedID: source.linkedID,
                 isGarmin: source.isGarmin, isSuppressed: source.isSuppressed, isDeleted: source.isDeleted,
                 workout: IntensityWorkout(start: source.start,
-                    end: features.end ?? source.start.addingTimeInterval(source.duration),
-                    heartRate: features.heartRate, pauses: features.pauses)))
+                    end: source.start.addingTimeInterval(source.duration),
+                    heartRate: features.heartRate, pauses: features.pauses, recordedEnd: features.end),
+                isSourceDeleted: source.isSourceDeleted))
         }
         try Task.checkCancellation()
         let result = IntensityDistribution.calculate(sources: inputs, lt1: lt1, lt2: lt2, window: window)

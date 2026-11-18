@@ -145,6 +145,7 @@ final class MorningAppSummaryTests: XCTestCase {
     func testPhoneVerificationAndStatusRefreshNeverOptInOrUpload() async {
         let api = MorningServiceStub()
         let model = MorningStatusViewModel(api: api, tokenStore: MorningSessionStub())
+        await model.refreshSMSAvailability()
         await model.requestCode(phone: "2025550100")
         await model.verifyCode("123456")
         await model.refresh()
@@ -173,6 +174,7 @@ final class MorningAppSummaryTests: XCTestCase {
     func testFailedEnableRetainsServerStatusAndDoesNotClaimConsent() async throws {
         let api = MorningServiceStub()
         let model = MorningStatusViewModel(api: api, tokenStore: MorningSessionStub(token: "fixture"))
+        await model.refreshSMSAvailability()
         await model.load()
         let before = model.status
         api.error = MorningStatusError.consentRequired
