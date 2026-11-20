@@ -115,6 +115,10 @@ final class AppSyncRuntime: BodyBatteryEngineProtocol {
         catch PendingSyncRunner.RunnerError.incomplete { /* Show source warnings from the engine. */ }
     }
     func incrementalUpdate() async throws {
+        try await refresh(protectedDataAvailable: UIApplication.shared.isProtectedDataAvailable)
+    }
+
+    func refresh(protectedDataAvailable: Bool) async throws {
         let requested: PendingSyncStore.Revision
         do { requested = try pending.markPending(reusingPending: !volatilePending) }
         catch {
@@ -122,6 +126,7 @@ final class AppSyncRuntime: BodyBatteryEngineProtocol {
             throw error
         }
         volatilePending = false
+        guard protectedDataAvailable else { throw BackgroundSyncError.protectedDataUnavailable }
         try await runner.run(through: requested)
     }
 
@@ -255,7 +260,7 @@ final class AppSyncRuntime: BodyBatteryEngineProtocol {
         }
     }
 
-    private enum BackgroundSyncError: Error { case incomplete }
+    private enum BackgroundSyncError: Error { case incomplete, protectedDataUnavailable }
 }
 
 /// The HealthKit callback can return after recording its revision. This lease

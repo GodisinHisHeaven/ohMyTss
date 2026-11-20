@@ -28,8 +28,12 @@ final class BackgroundRefreshScheduler {
                 task.setTaskCompleted(success: false)
                 return
             }
-            self.schedule(afterDelivery: true)
-            let execution = BackgroundRefreshExecution(sync: self.sync) { task.setTaskCompleted(success: $0) }
+            let successor = self.schedule(afterDelivery: true)
+            let execution = BackgroundRefreshExecution(sync: {
+                await successor.value
+                try Task.checkCancellation()
+                try await self.sync()
+            }, completion: { task.setTaskCompleted(success: $0) })
             task.expirationHandler = { @Sendable in
                 Task { @MainActor in execution.expire() }
             }
