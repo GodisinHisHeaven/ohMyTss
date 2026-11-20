@@ -4,6 +4,66 @@ import XCTest
 
 @MainActor
 final class PendingSyncRunnerTests: XCTestCase {
+    func testExpiringWaiterDoesNotReleaseTheActivePass() async throws {
+        try await withStore { store in
+            let gate = SyncTestGate()
+            var passes = 0
+            let runner = PendingSyncRunner(store: store) {
+                passes += 1
+                if passes == 1 { await gate.wait() }
+                return true
+            }
+            let active = Task { try await runner.run() }
+            defer { gate.release(); active.cancel() }
+            try await waitForSyncTestCondition("active pass") { gate.isWaiting }
+            var waiting = false
+            let expiring = Task {
+                waiting = true
+                try await runner.run()
+            }
+            try await waitForSyncTestCondition("queued pass") { waiting }
+            expiring.cancel()
+            do { try await expiring.value; XCTFail("Expected cancellation") } catch is CancellationError {}
+            let next = Task { try await runner.run() }
+            defer { next.cancel() }
+            await Task.yield()
+            XCTAssertEqual(passes, 1)
+            gate.release()
+            try await active.value
+            try await next.value
+            XCTAssertEqual(passes, 2)
+        }
+    }
+
+    func testForegroundAndScheduledRefreshSharePassUntilANewSourceChangeArrives() async throws {
+        try await withStore { store in
+            var passes = 0
+            let gate = SyncTestGate()
+            let runner = PendingSyncRunner(store: store) {
+                passes += 1
+                if passes == 1 { await gate.wait() }
+                return true
+            }
+            let first = try store.markPending(reusingPending: true)
+            let foreground = Task { try await runner.run(through: first) }
+            defer { gate.release(); foreground.cancel() }
+            try await waitForSyncTestCondition("foreground source read") { gate.isWaiting }
+            let scheduled = try store.markPending(reusingPending: true)
+            XCTAssertEqual(scheduled, first)
+            let background = Task { try await runner.run(through: scheduled) }
+            defer { background.cancel() }
+            gate.release()
+            try await foreground.value
+            try await background.value
+            XCTAssertEqual(passes, 1)
+            XCTAssertNil(try store.pendingRevision())
+            let event = try store.markPending()
+            XCTAssertGreaterThan(event.value, first.value)
+            try await runner.run(through: event)
+            XCTAssertEqual(passes, 2)
+        }
+    }
+
     func testTwoObserverDeliveriesBeforeRunnerStartsNeedOnePass() async throws {
         try await withStore { store in
             var passes = 0

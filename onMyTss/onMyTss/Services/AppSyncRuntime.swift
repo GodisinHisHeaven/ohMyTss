@@ -13,6 +13,7 @@ final class AppSyncRuntime: BodyBatteryEngineProtocol {
     var isProcessing: Bool { engine?.isProcessing == true }
     private let pending: PendingSyncStore
     private var volatilePending = false
+    private var observerLease: BackgroundSyncLease?
     private let logger = Logger(subsystem: "mj6.onMyTss", category: "BackgroundSync")
     private lazy var runner = PendingSyncRunner(store: pending, onDrained: { [unowned self] in
         let fixture = !WeeklyWorkoutSync.allowsPublishing(arguments: ProcessInfo.processInfo.arguments)
@@ -114,13 +115,14 @@ final class AppSyncRuntime: BodyBatteryEngineProtocol {
         catch PendingSyncRunner.RunnerError.incomplete { /* Show source warnings from the engine. */ }
     }
     func incrementalUpdate() async throws {
-        do { try pending.markPending() }
+        let requested: PendingSyncStore.Revision
+        do { requested = try pending.markPending(reusingPending: !volatilePending) }
         catch {
             markUntrackedChange()
             throw error
         }
         volatilePending = false
-        try await runner.run()
+        try await runner.run(through: requested)
     }
 
     func resetActivitySync() async throws {
@@ -145,18 +147,9 @@ final class AppSyncRuntime: BodyBatteryEngineProtocol {
         let invalidated = fixture || WeeklyWorkoutSync.invalidateSource()
         if !invalidated { markUntrackedChange() }
         do {
-            let change = try runner.recordChange()
+            let revision = try pending.markPending()
             if invalidated { volatilePending = false }
-            guard change.shouldRun else { return }
-            let lease = BackgroundSyncLease()
-            guard lease.start(work: { [weak self] in
-                guard let self else { return }
-                do { try await self.runner.run(through: change.revision) } catch { }
-            }) else {
-                logger.error("No background time available; sync remains pending")
-                AppBackgroundDelegate.current?.scheduleRefresh()
-                return
-            }
+            startObserverSync(through: revision)
         } catch {
             // No durable guarantee until a marker can be written. The source
             // anchor is unchanged, so a later incremental sync can recover it.
@@ -165,14 +158,40 @@ final class AppSyncRuntime: BodyBatteryEngineProtocol {
         }
     }
 
-    func backgroundRefresh() async throws {
-        do { try pending.markPending() }
-        catch {
+    func retryAfterUnlock() {
+        do {
+            let revision = try volatilePending ? pending.markPending() : pending.pendingRevision()
+            guard let revision else { return }
+            volatilePending = false
+            startObserverSync(through: revision)
+        } catch {
             markUntrackedChange()
-            throw error
         }
-        volatilePending = false
-        try await runner.run()
+    }
+
+    private func startObserverSync(through revision: PendingSyncStore.Revision) {
+        guard UIApplication.shared.isProtectedDataAvailable else {
+            AppBackgroundDelegate.current?.scheduleRefresh()
+            return
+        }
+        guard observerLease == nil else { return }
+        let lease = BackgroundSyncLease()
+        observerLease = lease
+        guard lease.start(work: {
+            do {
+                try await self.runner.run(through: revision)
+                self.observerLease = nil
+                // A delivery can arrive after the drain returned but before this task resumed.
+                if let next = try self.pending.pendingRevision() { self.startObserverSync(through: next) }
+            } catch {
+                self.observerLease = nil
+                AppBackgroundDelegate.current?.scheduleRefresh()
+            }
+        }) else {
+            observerLease = nil
+            AppBackgroundDelegate.current?.scheduleRefresh()
+            return
+        }
     }
 
     private func markUntrackedChange() {
@@ -215,7 +234,7 @@ final class AppSyncRuntime: BodyBatteryEngineProtocol {
         let tracking = fixture || WeeklyWorkoutSync.beginSourceSync()
         if !tracking { _ = WeeklyWorkoutSync.finishSourceSync(success: false) }
         do {
-            try await engine.incrementalUpdate()
+            try await engine.syncForPublication()
             try Task.checkCancellation()
             // Failed sources invalidate freshness, while successfully saved
             // activities remain visible and can still be published.
@@ -290,7 +309,7 @@ final class AppBackgroundDelegate: NSObject, UIApplicationDelegate {
         let observer = HealthKitBackgroundObserver { AppSyncRuntime.shared.healthKitChanged() }
         self.observer = observer
         observer.start()
-        let scheduler = BackgroundRefreshScheduler { try await AppSyncRuntime.shared.backgroundRefresh() }
+        let scheduler = BackgroundRefreshScheduler { try await AppSyncRuntime.shared.incrementalUpdate() }
         self.scheduler = scheduler
         if scheduler.register() { scheduler.schedule() }
         else { logger.error("Background refresh registration failed") }
@@ -300,6 +319,10 @@ final class AppBackgroundDelegate: NSObject, UIApplicationDelegate {
 
     func applicationDidBecomeActive(_ application: UIApplication) {
         enableHealthDelivery()
+    }
+
+    func applicationProtectedDataDidBecomeAvailable(_ application: UIApplication) {
+        if scheduler != nil { AppSyncRuntime.shared.retryAfterUnlock() }
     }
 
     func scheduleRefresh() { scheduler?.schedule() }

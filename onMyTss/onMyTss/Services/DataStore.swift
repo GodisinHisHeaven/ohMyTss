@@ -187,6 +187,10 @@ class DataStore {
         try modelContext.save()
     }
 
+    func saveChangesIfNeeded() throws {
+        if modelContext.hasChanges { try modelContext.save() }
+    }
+
     func updateHealthKitSyncDate(_ date: Date, anchor: Data?) throws {
         let appState = try fetchAppState()
         appState.lastHealthKitSyncDate = date
@@ -455,6 +459,7 @@ class DataStore {
             var descriptor = FetchDescriptor<Workout>()
             descriptor.fetchOffset = offset
             descriptor.fetchLimit = 50
+            descriptor.propertiesToFetch = [\.id, \.startTime, \.duration, \.workoutType, \.source]
             return try modelContext.fetch(descriptor).map(candidate)
         }
         for offset in stride(from: 0, to: total, by: 50) {
@@ -508,11 +513,7 @@ class DataStore {
         // fetch for every historical source. Apply the byte limit while reading
         // each row, and release the managed models before suspending.
         func enqueueBatch(_ batchIDs: [String]) throws {
-            let descriptor = FetchDescriptor<Workout>(predicate: #Predicate { batchIDs.contains($0.id) })
-            var persisted: [String: Workout] = [:]
-            for row in try modelContext.fetch(descriptor) where persisted[row.id] == nil {
-                persisted[row.id] = row
-            }
+            let persisted = try workoutsByID(batchIDs)
             for id in batchIDs {
                 try Task.checkCancellation()
                 if let stored = persisted[id] { enqueue(id, stored.featuresData) }
@@ -861,6 +862,17 @@ class DataStore {
         // Preserve chronological order without sorting full sensor BLOBs in
         // SQLite's temporary storage on every reconciliation/backfill pass.
         try modelContext.fetch(FetchDescriptor<Workout>()).sorted { $0.startTime < $1.startTime }
+    }
+
+    func workoutIDs(matching predicate: Predicate<Workout>) throws -> [String] {
+        var descriptor = FetchDescriptor<Workout>(predicate: predicate)
+        descriptor.propertiesToFetch = [\.id]
+        return try modelContext.fetch(descriptor).map(\.id)
+    }
+
+    func workoutsByID(_ ids: [String]) throws -> [String: Workout] {
+        let descriptor = FetchDescriptor<Workout>(predicate: #Predicate { ids.contains($0.id) })
+        return try Dictionary(modelContext.fetch(descriptor).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
     }
 
     func fetchWorkout(byId id: String) throws -> Workout? {

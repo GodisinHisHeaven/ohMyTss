@@ -138,6 +138,14 @@ nonisolated struct V2EstimateBatch: Sendable {
         func decodedFeatures(for session: Session) -> WorkoutFeatures {
             session.featuresData.flatMap { try? decoder.decode(WorkoutFeatures.self, from: $0) } ?? WorkoutFeatures()
         }
+        let targets = try sessions.filter { session in
+            try Task.checkCancellation()
+            guard !session.deleted, !session.suppressed, sessionID == nil || session.id == sessionID else { return false }
+            guard onlyMissing, let old = previous[session.id], old.version == LoadModel.version,
+                  let saved = try? decoder.decode(SavedThresholds.self, from: old.inputData) else { return true }
+            return saved.maxHeartRate != maxHeartRate || saved.thresholdsModifiedAt != thresholdsModifiedAt
+        }
+        guard !targets.isEmpty else { return [] }
         // A single-session recalculation only needs runs that could fall within
         // that session's prior 28-day window. Filter before decoding payloads;
         // the full-history path keeps its original ordering and scope.
@@ -160,13 +168,8 @@ nonisolated struct V2EstimateBatch: Sendable {
         let links = WorkoutLinkGraph(sessions.filter { !$0.deleted || $0.deletionOrigin == "source" }
             .map { .init(id: $0.id, parentID: $0.linkedID) })
         var result: [Pending] = []
-        for session in sessions where !session.deleted && !session.suppressed && (sessionID == nil || session.id == sessionID) {
+        for session in targets {
             try Task.checkCancellation()
-            if onlyMissing, let old = previous[session.id], old.version == LoadModel.version,
-               let saved = try? decoder.decode(SavedThresholds.self, from: old.inputData),
-               saved.maxHeartRate == maxHeartRate && saved.thresholdsModifiedAt == thresholdsModifiedAt {
-                continue
-            }
             let ids = links.relatedIDs(to: session.id)
             let members = ids.compactMap { byID[$0] }
             let sources = members.filter { !$0.deleted }.sorted { $0.id < $1.id }
