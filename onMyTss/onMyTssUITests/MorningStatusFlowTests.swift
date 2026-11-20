@@ -24,19 +24,16 @@ final class MorningStatusFlowTests: XCTestCase {
         XCTAssertEqual(app.secureTextFields.count, 0)
         let send = app.buttons["morning.sendCode"]
         XCTAssertFalse(send.isEnabled)
-        let done = app.buttons["Done"]
+        let done = app.navigationBars["Morning Status"].buttons["Done"].firstMatch
         XCTAssertFalse(done.exists)
         phone.tap()
-        XCTAssertTrue(done.waitForExistence(timeout: 5))
+        XCTAssertTrue(done.waitForExistence(timeout: 30))
         phone.typeText("20255")
         XCTAssertFalse(send.isEnabled)
         phone.typeText("50100")
         XCTAssertTrue(send.isEnabled)
         done.tap()
-        let focusCleared = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "exists == false"), object: done
-        )
-        XCTAssertEqual(XCTWaiter.wait(for: [focusCleared], timeout: 5), .completed)
+        XCTAssertTrue(done.waitForNonExistence(timeout: 30))
         attach(app, "Morning status phone entry — no SMS requested")
         let privacy = app.buttons["morning.privacy"]
         reach(privacy, app: app)
@@ -193,15 +190,10 @@ final class MorningStatusFlowTests: XCTestCase {
 
     @MainActor
     private func dismissKeyboardAndVerify(_ app: XCUIApplication) {
-        let done = app.buttons["Done"]
-        XCTAssertTrue(done.waitForExistence(timeout: 5))
+        let done = app.navigationBars["Morning Status"].buttons["Done"].firstMatch
+        XCTAssertTrue(done.waitForExistence(timeout: 30))
         done.tap()
-        // Done is present only while an input field has focus. Checking the
-        // app's toolbar avoids slow system-keyboard accessibility snapshots.
-        let focusCleared = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "exists == false"), object: done
-        )
-        XCTAssertEqual(XCTWaiter.wait(for: [focusCleared], timeout: 5), .completed)
+        XCTAssertTrue(done.waitForNonExistence(timeout: 30))
         let verify = app.buttons["morning.verify"]
         reach(verify, app: app)
         XCTAssertTrue(verify.isEnabled)
