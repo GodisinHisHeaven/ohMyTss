@@ -1180,24 +1180,25 @@ final class ActivitySyncTests: XCTestCase {
     func testCancelledImportRetainsCursorAndCanResumeWithoutLosingRows() async throws {
         let fixture = try SyncFixture()
         for index in 0..<80 { _ = fixture.health.addWorkout(at: fixture.clock.now.addingTimeInterval(-Double(index + 1) * 7200)) }
-        var finished = false
-        let task = Task { defer { finished = true }; try Task.checkCancellation(); try await fixture.engine.incrementalUpdate() }
-        defer { task.cancel() }
-        try await waitForSyncTestCondition("first imported workout to be persisted", pollInterval: .milliseconds(1)) {
-            try !fixture.store.allWorkouts().isEmpty || finished
+        let task = Task { try await fixture.engine.incrementalUpdate() }
+        do {
+            // The main-actor import starts after this synchronous observer is installed.
+            let observer = NotificationCenter.default.addObserver(forName: ModelContext.didSave, object: fixture.context, queue: nil) { note in
+                let key = ModelContext.NotificationKey.insertedIdentifiers.rawValue
+                guard let inserted = note.userInfo?[key] as? [PersistentIdentifier],
+                      inserted.contains(where: { $0.entityName == String(describing: Workout.self) }) else { return }
+                task.cancel()
+            }
+            defer { NotificationCenter.default.removeObserver(observer) }
+            do { try await task.value; XCTFail("Cancellation must propagate") }
+            catch is CancellationError {}
         }
-        if finished {
-            try await task.value
-            XCTFail("Import completed before a persisted batch could be cancelled")
-            return
-        }
-        task.cancel()
-        try await waitForSyncTestCondition("cancelled import to finish") { finished }
-        do { try await task.value; XCTFail("Cancellation must propagate") } catch is CancellationError {} catch { throw error }
         let state = try fixture.store.fetchAppState()
         XCTAssertNil(state.healthKitAnchor)
         XCTAssertTrue(state.isComputationInProgress)
         let retained = Set(try fixture.store.allWorkouts().map(\.id))
+        XCTAssertGreaterThan(retained.count, 0)
+        XCTAssertLessThan(retained.count, 80)
         try await fixture.engine.incrementalUpdate()
         XCTAssertEqual(try fixture.store.allWorkouts().count, 80)
         XCTAssertTrue(retained.isSubset(of: Set(try fixture.store.allWorkouts().map(\.id))))
