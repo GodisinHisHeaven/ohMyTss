@@ -6,6 +6,19 @@ import HealthKit
 
 @MainActor
 final class SettingsResetConcurrencyTests: XCTestCase {
+    func testLockedRefreshKeepsOneDurableRetryWithoutOpeningHealthKit() async throws {
+        let fixture = try ResetFixture(count: 1, pauseQuery: false)
+        defer { try? FileManager.default.removeItem(at: fixture.pendingURL) }
+        for _ in 0..<2 {
+            do { try await fixture.runtime.refresh(protectedDataAvailable: false); XCTFail("Expected deferred refresh") }
+            catch { XCTAssertTrue(fixture.runtime.hasPendingChange) }
+        }
+        let revision = try PendingSyncStore(url: fixture.pendingURL).pendingRevision()
+        XCTAssertEqual(revision?.value, 1)
+        XCTAssertEqual(fixture.health.featuresRead, 0)
+        XCTAssertNil(try fixture.store.fetchAppState().lastComputationDate)
+    }
+
     func testLocalHistoryRepairWaitsForInFlightSourceSync() async throws {
         let fixture = try ResetFixture(count: 1, pauseQuery: true)
         try fixture.store.saveWorkout(fixture.manualWorkout())
@@ -213,6 +226,7 @@ private final class ResetFixture {
     let engine: BodyBatteryEngine
     let runtime: AppSyncRuntime
     let viewModel: SettingsViewModel
+    let pendingURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
 
     init(count: Int, pauseQuery: Bool) throws {
         let schema = Schema(AppSchema.models)
@@ -221,7 +235,6 @@ private final class ResetFixture {
         store = onMyTss.DataStore(modelContext: context)
         health = ResetHealthSource(count: count, pauseQuery: pauseQuery)
         engine = BodyBatteryEngine(healthKitManager: health, dataStore: store, stravaAuthManager: ResetToken())
-        let pendingURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         runtime = AppSyncRuntime(testEngine: engine, pendingURL: pendingURL)
         viewModel = SettingsViewModel(dataStore: store, engine: runtime)
         let thresholds = try store.fetchUserThresholds()

@@ -114,9 +114,11 @@ final class WorkoutAggregator {
     /// Fetch all workouts from both sources (Strava + HealthKit)
     /// Returns deduplicated workouts with Garmin priority
     func fetchWorkouts(from startDate: Date, to endDate: Date) async throws -> [Workout] {
-        try await fetchSources(from: startDate, to: endDate) {
+        let sources = try await fetchSources(from: startDate, to: endDate) {
             try await self.fetchHealthKitWorkouts(from: startDate, to: endDate)
         }
+        return deduplicateWorkouts(healthKit: sources.healthKit, strava: sources.strava)
+            .sorted { $0.startTime < $1.startTime }
     }
 
     func fetchChanges(plan: ActivitySyncPlan, anchor: HKQueryAnchor?, now: Date) async throws {
@@ -166,7 +168,7 @@ final class WorkoutAggregator {
     }
 
     private func fetchSources(from startDate: Date, to endDate: Date,
-                              healthKit: () async throws -> [Workout]) async throws -> [Workout] {
+                              healthKit: () async throws -> [Workout]) async throws -> (healthKit: [Workout], strava: [Workout]) {
         latestImportedWorkouts = []
         latestDeletedStravaIDs = []
         latestDeletedHealthKitIDs = []
@@ -201,9 +203,9 @@ final class WorkoutAggregator {
             }
         }
         if successfulSources.isEmpty, let error = sourceErrors.first { throw error }
-        let active = deduplicateWorkouts(healthKit: hkWorkouts, strava: stravaWorkouts)
+        // Incremental import reconciles these rows with saved aliases inside the write batch.
         latestImportedWorkouts = hkWorkouts + stravaWorkouts
-        return active.sorted { $0.startTime < $1.startTime }
+        return (hkWorkouts, stravaWorkouts)
     }
 
     private func fetchHealthKitWorkouts(from startDate: Date, to endDate: Date) async throws -> [Workout] {

@@ -5,6 +5,59 @@ import HealthKit
 
 @MainActor
 final class ActivitySyncTests: XCTestCase {
+    func testHeadlessSyncFinishesUpgradeRepairBeforeWidgetPublication() async throws {
+        let fixture = try SyncFixture()
+        let state = try fixture.store.fetchAppState()
+        let workout = fixture.health.addWorkout(at: fixture.clock.now.addingTimeInterval(-600))
+        XCTAssertFalse(WeeklyWorkoutSync.canPublishCommittedHistory(state))
+        try await fixture.engine.syncForPublication()
+        XCTAssertTrue(WeeklyWorkoutSync.canPublishCommittedHistory(state))
+        XCTAssertEqual(try fixture.store.fetchWorkout(byId: workout.uuid.uuidString)?.id, workout.uuid.uuidString)
+        XCTAssertNotNil(state.lastHealthKitSyncDate)
+    }
+
+    func testHeadlessSyncDefersUpgradeWhenSourceFinalizationIsPending() async throws {
+        let fixture = try SyncFixture()
+        let state = try fixture.store.fetchAppState()
+        try fixture.store.saveStravaAuth(StravaAuth(isConnected: true))
+        fixture.strava.failList = true
+        try await fixture.engine.syncForPublication()
+        XCTAssertTrue(state.pendingWorkoutSourceFinalization)
+        XCTAssertTrue(LocalWorkoutHistoryRepair.isRequired(state))
+        fixture.strava.failList = false
+        try await fixture.engine.syncForPublication()
+        XCTAssertFalse(state.pendingWorkoutSourceFinalization)
+        XCTAssertTrue(WeeklyWorkoutSync.canPublishCommittedHistory(state))
+    }
+
+    func testHistoricalSourceQueueMakesBoundedProgressAcrossSyncs() async throws {
+        let fixture = try SyncFixture()
+        let state = try fixture.store.fetchAppState()
+        state.healthKitAnchor = fixture.health.encodeAnchor(HKQueryAnchor(fromValue: 1))
+        state.lastHealthKitSampleRefreshDate = fixture.clock.now
+        let start = fixture.clock.now.addingDays(-60)
+        for index in 0..<55 {
+            let date = start.addingTimeInterval(Double(index) * 900)
+            let source = HKWorkout(activityType: .running, start: date, end: date.addingTimeInterval(600))
+            fixture.health.all.append(source)
+            let id = source.uuid.uuidString
+            fixture.context.insert(Workout(id: id, date: date.startOfDay, startTime: date, duration: 600,
+                workoutType: "Running", tss: 25, calculationMethod: "duration", source: .healthKit, healthKitUUID: id))
+        }
+        try fixture.context.save()
+        fixture.health.identityUnavailable = true
+        try await fixture.engine.incrementalUpdate()
+        let attempted = Set(fixture.health.identityRequests.flatMap { $0 })
+        XCTAssertEqual(attempted.count, 40)
+        XCTAssertEqual(state.pendingHealthKitSourceBackfillIDs.count, 55)
+        XCTAssertTrue(attempted.isDisjoint(with: state.pendingHealthKitSourceBackfillIDs.prefix(15)))
+        fixture.health.identityUnavailable = false
+        try await fixture.engine.incrementalUpdate()
+        XCTAssertEqual(state.pendingHealthKitSourceBackfillIDs.count, 15)
+        try await fixture.engine.incrementalUpdate()
+        XCTAssertTrue(state.pendingHealthKitSourceBackfillIDs.isEmpty)
+    }
+
     func testHistoricalEndpointReconciliationAndSourceCorrectionRebuildTotals() async throws {
         let fixture = try SyncFixture()
         let start = fixture.clock.now.addingDays(-100).startOfDay.addingTimeInterval(3600)

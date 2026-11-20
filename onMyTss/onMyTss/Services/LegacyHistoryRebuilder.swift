@@ -20,6 +20,25 @@ final class LegacyHistoryRebuilder {
         self.calendar = calendar
         store = DataStore(modelContext: context)
         end = calendar.startOfDay(for: now)
+        if let start {
+            let requested = calendar.startOfDay(for: start)
+            var prior = FetchDescriptor<DayAggregate>(predicate: #Predicate { $0.date < requested },
+                                                      sortBy: [SortDescriptor(\.date, order: .reverse)])
+            prior.fetchLimit = 1
+            prior.propertiesToFetch = [\.date]
+            if requested <= end, let date = try context.fetch(prior).first?.date,
+               let interval = calendar.dateInterval(of: .day, for: date),
+               let rampStart = calendar.date(byAdding: .day, value: -7, to: interval.end) {
+                // Include gaps after the saved seed and the prior week used for ramp rate.
+                // Old stores can have two rows on one local day after a time zone change.
+                let rows = try store.fetchDayAggregates(from: rampStart, to: end, calendar: calendar)
+                aggregates = DayAggregate.byLocalDay(rows, calendar: calendar)
+                day = interval.end
+                ctl = aggregates[interval.start]?.ctl ?? 0
+                atl = aggregates[interval.start]?.atl ?? 0
+                return
+            }
+        }
         let saved = try DayAggregate.byLocalDay(store.fetchAllDayAggregates(), calendar: calendar)
         aggregates = saved
         var firstQuery = FetchDescriptor<Workout>(sortBy: [SortDescriptor(\.startTime)])

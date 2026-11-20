@@ -17,6 +17,7 @@ final class PendingSyncRunner {
     private let sync: () async throws -> Bool
     private let onDrained: () -> Bool
     private var running = false
+    private var waiters: [(id: UUID, continuation: CheckedContinuation<Void, Error>)] = []
     private var lastSuccessfulDrain: PendingSyncStore.Revision?
     private let maximumPasses = 3
 
@@ -49,7 +50,7 @@ final class PendingSyncRunner {
     /// A reset must wait for the pass and its revision acknowledgement.
     func withExclusiveAccess(_ operation: () async throws -> Void) async throws {
         try await acquire()
-        defer { running = false }
+        defer { release() }
         try await operation()
     }
 
@@ -57,7 +58,7 @@ final class PendingSyncRunner {
     /// Failures and later pending work still require another pass.
     func run(through requested: PendingSyncStore.Revision) async throws {
         try await acquire()
-        defer { running = false }
+        defer { release() }
         if let drained = lastSuccessfulDrain,
            drained.epoch == requested.epoch, drained.value >= requested.value,
            try store.isAcknowledged(requested), try store.pendingRevision() == nil {
@@ -93,18 +94,41 @@ final class PendingSyncRunner {
     /// This does not read, replace or acknowledge any pending marker.
     func runWithoutStore() async throws {
         try await acquire()
-        defer { running = false }
+        defer { release() }
         let complete = try await sync()
         try Task.checkCancellation()
         guard complete else { throw RunnerError.incomplete }
     }
 
     private func acquire() async throws {
-        while running {
-            try Task.checkCancellation()
-            try await Task.sleep(for: .milliseconds(200))
-        }
         try Task.checkCancellation()
-        running = true
+        guard running else { running = true; return }
+        let id = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                if Task.isCancelled { continuation.resume(throwing: CancellationError()) }
+                else if running { waiters.append((id, continuation)) }
+                else {
+                    running = true
+                    continuation.resume()
+                }
+            }
+        } onCancel: {
+            Task { @MainActor in
+                if let index = self.waiters.firstIndex(where: { $0.id == id }) {
+                    self.waiters.remove(at: index).continuation.resume(throwing: CancellationError())
+                }
+            }
+        }
+        // Cancellation may race with release handing this task ownership.
+        if Task.isCancelled {
+            release()
+            throw CancellationError()
+        }
+    }
+
+    private func release() {
+        if waiters.isEmpty { running = false }
+        else { waiters.removeFirst().continuation.resume() }
     }
 }

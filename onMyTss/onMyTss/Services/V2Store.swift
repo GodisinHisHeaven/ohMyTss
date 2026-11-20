@@ -181,9 +181,11 @@ final class V2Store {
                 try await calculation.value
             } onCancel: { calculation.cancel() }
             try Task.checkCancellation()
-            let afterCalculation = try V2EstimateBatch(context: context, includePrevious: false)
-            guard snapshot.hasSameInputs(as: afterCalculation) else { continue processing }
-            guard !pending.isEmpty else { return }
+            if pending.isEmpty {
+                let current = try V2EstimateBatch(context: context, includePrevious: false)
+                if snapshot.hasSameInputs(as: current) { return }
+                continue processing
+            }
             for offset in stride(from: 0, to: pending.count, by: 50) {
                 try Task.checkCancellation()
                 let current = try V2EstimateBatch(context: context, includePrevious: false)

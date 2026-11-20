@@ -2,51 +2,102 @@ import BackgroundTasks
 import Foundation
 import os
 
-/// Requests short, system-scheduled refresh opportunities. iOS decides when
-/// these run, and may defer them indefinitely.
 @MainActor
 final class BackgroundRefreshScheduler {
-    static let identifier = "mj6.onMyTss.refresh"
+    nonisolated static let identifier = "mj6.onMyTss.refresh"
     private let sync: @MainActor () async throws -> Void
+    private let hasPendingRequest: () async -> Bool
+    private let submitRequest: (Date) async throws -> Void
+    private var scheduling: Task<Void, Never>?
+    private var needsSuccessor = false
     private let logger = Logger(subsystem: "mj6.onMyTss", category: "BackgroundRefresh")
 
-    init(sync: @escaping @MainActor () async throws -> Void) {
+    init(hasPendingRequest: @escaping () async -> Bool = {
+        await BGTaskScheduler.shared.pendingTaskRequests().contains { $0.identifier == BackgroundRefreshScheduler.identifier }
+    }, submitRequest: @escaping (Date) async throws -> Void = BackgroundRefreshScheduler.submit,
+         sync: @escaping @MainActor () async throws -> Void) {
+        self.hasPendingRequest = hasPendingRequest
+        self.submitRequest = submitRequest
         self.sync = sync
     }
 
-    /// Call once during application launch, before launch has finished.
     @discardableResult
     func register() -> Bool {
-        BGTaskScheduler.shared.register(forTaskWithIdentifier: Self.identifier, using: nil) { [weak self] task in
-            let work = Task { @MainActor [weak self] in
-                guard let self else {
-                    task.setTaskCompleted(success: false)
-                    return
-                }
-                self.schedule()
-                let success: Bool
-                do {
-                    try Task.checkCancellation()
-                    try await self.sync()
-                    try Task.checkCancellation()
-                    success = true
-                } catch {
-                    success = false
-                }
-                task.setTaskCompleted(success: success)
+        BGTaskScheduler.shared.register(forTaskWithIdentifier: Self.identifier, using: .main) { [weak self] task in
+            guard let self else {
+                task.setTaskCompleted(success: false)
+                return
             }
-            task.expirationHandler = { work.cancel() }
+            let successor = self.schedule(afterDelivery: true)
+            let execution = BackgroundRefreshExecution(sync: {
+                await successor.value
+                try Task.checkCancellation()
+                try await self.sync()
+            }, completion: { task.setTaskCompleted(success: $0) })
+            task.expirationHandler = { @Sendable in
+                Task { @MainActor in execution.expire() }
+            }
         }
     }
 
-    /// Resubmitting a pending identifier replaces its existing request.
-    func schedule() {
-        let request = BGAppRefreshTaskRequest(identifier: Self.identifier)
-        request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
-        do {
-            try BGTaskScheduler.shared.submit(request)
-        } catch {
-            logger.error("Could not schedule background refresh")
+    /// An existing request keeps its original eligibility date across errors and relaunches.
+    @discardableResult
+    func schedule(afterDelivery: Bool = false) -> Task<Void, Never> {
+        if afterDelivery { needsSuccessor = true }
+        if let scheduling { return scheduling }
+        let task = Task {
+            defer { scheduling = nil }
+            if !needsSuccessor, await hasPendingRequest(), !needsSuccessor { return }
+            repeat {
+                needsSuccessor = false
+                do { try await submitRequest(Date(timeIntervalSinceNow: 15 * 60)) }
+                catch { logger.error("Could not schedule background refresh") }
+            } while needsSuccessor
         }
+        scheduling = task
+        return task
+    }
+
+    @concurrent private static func submit(_ earliest: Date) async throws {
+        let request = BGAppRefreshTaskRequest(identifier: identifier)
+        request.earliestBeginDate = earliest
+        if #available(iOS 27.0, *) {
+            try await BGTaskScheduler.shared.submitTaskRequest(request)
+        } else {
+            try BGTaskScheduler.shared.submit(request)
+        }
+    }
+}
+
+/// Expiration reports failure immediately, including while a HealthKit query is unwinding.
+@MainActor
+final class BackgroundRefreshExecution {
+    private var completion: ((Bool) -> Void)?
+    private var work: Task<Void, Never>?
+
+    init(sync: @escaping @MainActor () async throws -> Void, completion: @escaping (Bool) -> Void) {
+        self.completion = completion
+        work = Task {
+            do {
+                try Task.checkCancellation()
+                try await sync()
+                try Task.checkCancellation()
+                finish(true)
+            } catch {
+                finish(false)
+            }
+        }
+    }
+
+    func expire() {
+        work?.cancel()
+        finish(false)
+    }
+
+    private func finish(_ success: Bool) {
+        let callback = completion
+        completion = nil
+        work = nil
+        callback?(success)
     }
 }

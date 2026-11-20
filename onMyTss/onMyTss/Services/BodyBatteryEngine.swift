@@ -56,6 +56,15 @@ class BodyBatteryEngine {
         try await synchronize()
     }
 
+    /// A HealthKit launch may never create the view that normally starts local repair.
+    func syncForPublication() async throws {
+        try await incrementalUpdate()
+        let state = try dataStore.fetchAppState()
+        if !state.pendingWorkoutSourceFinalization && LocalWorkoutHistoryRepair.isRequired(state) {
+            try await repairLocalWorkoutHistoryIfNeeded()
+        }
+    }
+
     /// Offline history repair shares the same gate as every source sync.
     /// No HealthKit or network access is needed for a completed local store.
     func repairLocalWorkoutHistoryIfNeeded(reconcile: (@MainActor () async throws -> Void)? = nil) async throws {
@@ -244,9 +253,10 @@ class BodyBatteryEngine {
             let pendingAffectsWeek: Bool
             if pendingMetadata.isEmpty { pendingAffectsWeek = false }
             else if let currentWeek {
-                pendingAffectsWeek = try dataStore.allWorkouts().contains {
-                    pendingMetadata.contains($0.id) && $0.startTime >= currentWeek.start && $0.startTime < currentWeek.end
-                }
+                let start = currentWeek.start, end = currentWeek.end
+                pendingAffectsWeek = try !pendingMetadata.isDisjoint(with: dataStore.workoutIDs(
+                    matching: #Predicate { $0.startTime >= start && $0.startTime < end }
+                ))
             } else { pendingAffectsWeek = true }
             lastSyncRequiresRetry = workoutAggregator.hasRetryableFailures || recoveryNeedsRetry
                 || !completeSources || pendingAffectsWeek
@@ -287,10 +297,11 @@ class BodyBatteryEngine {
         -> (changes: WorkoutChanges, warnings: [String]) {
         var changes = WorkoutChanges()
         if state.healthKitSourceBackfillVersion < 1 {
-            state.pendingHealthKitSourceBackfillIDs = try dataStore.allWorkouts().filter {
-                $0.source == WorkoutSource.healthKit.rawValue && $0.deletionOrigin != "source"
+            let healthKit = WorkoutSource.healthKit.rawValue
+            state.pendingHealthKitSourceBackfillIDs = try dataStore.workoutIDs(matching: #Predicate {
+                $0.source == healthKit && ($0.deletionOrigin == nil || $0.deletionOrigin != "source")
                     && $0.sourceBundleIdentifier == nil
-            }.map(\.id).sorted()
+            }).sorted()
             state.healthKitSourceBackfillVersion = 1
             try dataStore.saveAppState(state)
         }
@@ -298,7 +309,9 @@ class BodyBatteryEngine {
 
         // Each pending ID is attempted at most once per sync. Unreadable entries
         // rotate behind remaining work and stay pending for a later sync.
-        var leftToAttempt = state.pendingHealthKitSourceBackfillIDs.count
+        // Leave time in a background refresh for current activities and recovery data.
+        // The saved queue rotates unreadable IDs behind unattempted ones.
+        var leftToAttempt = min(40, state.pendingHealthKitSourceBackfillIDs.count)
         var canQuery = sourceAvailable
         while leftToAttempt > 0 {
             try Task.checkCancellation()
@@ -308,8 +321,9 @@ class BodyBatteryEngine {
             var resolved: Set<String> = []
             var requested: [String: String] = [:]
             var provenanceInputs: [HealthKitSourceProvenanceInput] = []
+            let rows = try dataStore.workoutsByID(batch)
             for id in batch {
-                guard let row = try dataStore.fetchWorkout(byId: id), row.source == WorkoutSource.healthKit.rawValue,
+                guard let row = rows[id], row.source == WorkoutSource.healthKit.rawValue,
                       row.deletionOrigin != "source" else {
                     resolved.insert(id)
                     continue
@@ -391,7 +405,7 @@ class BodyBatteryEngine {
             try dataStore.saveAppState(state)
         }
         let warnings = state.pendingHealthKitSourceBackfillIDs.isEmpty ? []
-            : ["Some older HealthKit workout sources are unreadable. Saved history is retained; retry sync."]
+            : ["Some older HealthKit workout sources still need verification. Sync will continue from the saved queue."]
         return (changes, warnings)
     }
 
@@ -416,9 +430,10 @@ class BodyBatteryEngine {
         -> (pending: [String], changes: WorkoutChanges, warnings: [String]) {
         let pending: [String]
         if state.healthKitTypeBackfillVersion < 1 {
-            pending = try dataStore.allWorkouts().filter {
-                $0.source == WorkoutSource.healthKit.rawValue && !$0.isTombstoned && $0.workoutType == "Other"
-            }.map(\.id).sorted()
+            let healthKit = WorkoutSource.healthKit.rawValue
+            pending = try dataStore.workoutIDs(matching: #Predicate {
+                $0.source == healthKit && !$0.isTombstoned && $0.workoutType == "Other"
+            }).sorted()
         } else {
             pending = state.pendingHealthKitTypeBackfillIDs
         }
@@ -578,55 +593,55 @@ class BodyBatteryEngine {
         var retainedSleep = false
         var day = calendar.startOfDay(for: start)
         let lastDay = calendar.startOfDay(for: end)
-        var count = 0
         while day <= lastDay {
-            if let row = try dataStore.fetchDayAggregate(for: day, calendar: calendar) {
+            try Task.checkCancellation()
+            let batchEnd = min(lastDay, calendar.date(byAdding: .day, value: 13, to: day) ?? day)
+            for row in try dataStore.fetchDayAggregates(from: day, to: batchEnd, calendar: calendar) {
+                let day = calendar.startOfDay(for: row.date)
                 if let physiology {
                     let value = physiology.days[day]
                     // Absence on one day is not evidence that saved data was deleted.
                     let hasValidHRV = (value?.hrv).map { $0.isFinite && $0 > 0 } ?? false
                     let hasValidRHR = (value?.rhr).map { $0.isFinite && $0 > 0 } ?? false
                     if let hrv = value?.hrv, hasValidHRV {
-                        row.avgHRV = hrv
-                        if let modifier = value?.hrvMod, modifier.isFinite { row.hrvModifier = modifier }
+                        if row.avgHRV != hrv { row.avgHRV = hrv }
+                        if let modifier = value?.hrvMod, modifier.isFinite, row.hrvModifier != modifier { row.hrvModifier = modifier }
                     } else if physiology.hrvAvailable && (row.avgHRV != nil || row.hrvModifier != nil) {
                         retainedHRV = true
                     }
                     if let rhr = value?.rhr, hasValidRHR {
-                        row.avgRHR = rhr
-                        if let modifier = value?.rhrMod, modifier.isFinite { row.rhrModifier = modifier }
+                        if row.avgRHR != rhr { row.avgRHR = rhr }
+                        if let modifier = value?.rhrMod, modifier.isFinite, row.rhrModifier != modifier { row.rhrModifier = modifier }
                     } else if physiology.rhrAvailable && (row.avgRHR != nil || row.rhrModifier != nil) {
                         retainedRHR = true
                     }
                     if hasValidHRV || hasValidRHR {
-                        row.illnessLikelihood = PhysiologyModifier.detectIllness(hrvModifier: row.hrvModifier, rhrModifier: row.rhrModifier)
+                        let likelihood = PhysiologyModifier.detectIllness(hrvModifier: row.hrvModifier, rhrModifier: row.rhrModifier)
+                        if row.illnessLikelihood != likelihood { row.illnessLikelihood = likelihood }
                     }
                 }
                 if let sleep {
                     if let quality = sleep[day], quality.durationHours.isFinite, quality.durationHours > 0 {
-                        row.sleepDuration = quality.durationHours
-                        row.sleepQualityScore = quality.qualityScore
-                        row.deepSleepDuration = quality.deepSleepHours
+                        if row.sleepDuration != quality.durationHours { row.sleepDuration = quality.durationHours }
+                        if row.sleepQualityScore != quality.qualityScore { row.sleepQualityScore = quality.qualityScore }
+                        if row.deepSleepDuration != quality.deepSleepHours { row.deepSleepDuration = quality.deepSleepHours }
                     } else if row.sleepDuration != nil || row.sleepQualityScore != nil || row.deepSleepDuration != nil {
                         retainedSleep = true
                     }
                 }
-                row.bodyBatteryScore = BodyBatteryCalculator.calculateScoreWithModifiers(
+                let score = BodyBatteryCalculator.calculateScoreWithModifiers(
                     tsb: row.tsb, hrvModifier: row.hrvModifier, rhrModifier: row.rhrModifier
                 )
+                if row.bodyBatteryScore != score { row.bodyBatteryScore = score }
             }
-            count += 1
-            if count % 14 == 0 {
-                try dataStore.saveAppState(dataStore.fetchAppState())
-                try await Task.sleep(for: .milliseconds(1))
-            }
-            guard let next = calendar.dateInterval(of: .day, for: day)?.end else { break }
+            try dataStore.saveChangesIfNeeded()
+            guard batchEnd < lastDay, let next = calendar.dateInterval(of: .day, for: batchEnd)?.end else { break }
             day = next
+            try await Task.sleep(for: .milliseconds(1))
         }
         if retainedHRV { warnings.append("Some days had no new HealthKit HRV samples. Saved HRV retained.") }
         if retainedRHR { warnings.append("Some days had no new HealthKit resting heart rate samples. Saved resting heart rate retained.") }
         if retainedSleep { warnings.append("Some days had no new HealthKit sleep samples. Saved sleep retained.") }
-        try dataStore.saveAppState(dataStore.fetchAppState())
         let needsRetry = physiology == nil || physiology?.hrvAvailable == false
             || physiology?.rhrAvailable == false || sleep == nil
         return (warnings, needsRetry)

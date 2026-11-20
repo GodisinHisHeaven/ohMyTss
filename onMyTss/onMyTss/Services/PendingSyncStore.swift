@@ -35,8 +35,13 @@ final class PendingSyncStore {
     }
 
     @discardableResult
-    func markPending() throws -> Revision {
+    func markPending(reusingPending: Bool = false) throws -> Revision {
         var state = try read()
+        // A timer or foreground check asks to catch up. A delivered source change
+        // always gets its own revision, even if an earlier pass is in flight.
+        if reusingPending && state.revision > state.acknowledged {
+            return Revision(epoch: state.epoch!, value: state.revision)
+        }
         guard state.revision < UInt64.max else { throw StoreError.revisionExhausted }
         state.revision += 1
         try write(state)

@@ -67,6 +67,7 @@ struct MainTabView: View {
             guard !isUITest || isAutoSyncFixture else { return }
             #endif
             AppBackgroundDelegate.current?.enableHealthDelivery()
+            AppBackgroundDelegate.current?.scheduleRefresh()
             while !Task.isCancelled {
                 // Let a started import finish when the scene becomes inactive.
                 Task { @MainActor in
