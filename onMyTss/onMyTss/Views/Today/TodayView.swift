@@ -53,29 +53,33 @@ struct TodayView: View {
                 illnessAlertBanner(alert: alert)
             }
 
-            // Gauge
-            BodyBatteryGauge(
-                score: viewModel.todayScore,
-                readinessLevel: viewModel.readinessLevel
-            )
-            .frame(width: 220, height: 220)
-            .padding(.top, viewModel.illnessAlert == nil ? 20 : 0)
+            if let score = viewModel.todayScore {
+                // Gauge
+                BodyBatteryGauge(
+                    score: score,
+                    readinessLevel: viewModel.readinessLevel
+                )
+                .frame(width: 220, height: 220)
+                .padding(.top, viewModel.illnessAlert == nil ? 20 : 0)
 
-            // Readiness Info
-            VStack(spacing: 8) {
-                HStack(spacing: 8) {
-                    Text(viewModel.readinessLevel.emoji)
-                        .font(.title)
+                // Readiness Info
+                VStack(spacing: 8) {
+                    HStack(spacing: 8) {
+                        Text(viewModel.readinessLevel.emoji)
+                            .font(.title)
 
-                    Text(viewModel.readinessLevel.rawValue)
-                        .font(.title2.weight(.semibold))
-                        .foregroundStyle(.primary)
+                        Text(viewModel.readinessLevel.rawValue)
+                            .font(.title2.weight(.semibold))
+                            .foregroundStyle(.primary)
+                    }
+
+                    Text(viewModel.readinessDescription)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
                 }
-
-                Text(viewModel.readinessDescription)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
+            } else {
+                Text("More recovery data is needed.").foregroundStyle(.secondary)
             }
 
             // Metrics Cards

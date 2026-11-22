@@ -41,7 +41,7 @@ final class MorningAppSummaryTests: XCTestCase {
         }
         XCTAssertTrue(try XCTUnwrap(store.fetchWorkout(byId: "suppressed")).isSuppressed)
         let summary = try XCTUnwrap(MorningAppSummary.make(store: store, timezone: TimeZone.current.identifier, now: now))
-        XCTAssertEqual(summary.readinessScore, 72)
+        XCTAssertEqual(summary.readinessScore, 69)
         XCTAssertEqual(summary.sleepHours, 7.5)
         XCTAssertEqual(summary.trainingMinutes7d, 30)
         XCTAssertEqual(Set(summary.payload.keys), ["summary_date", "timezone", "generated_at", "readiness_score", "sleep_hours", "training_minutes_7d"])
@@ -61,7 +61,7 @@ final class MorningAppSummaryTests: XCTestCase {
     func testSummaryWaitsForLocalHistoryRepair() throws {
         let store = try store()
         let now = Date()
-        try store.saveDayAggregate(DayAggregate(date: now.startOfDay, totalTSS: 30, bodyBatteryScore: 72))
+        try store.saveDayAggregate(DayAggregate(date: now.startOfDay, totalTSS: 30, bodyBatteryScore: 72, sleepDuration: 8))
         let state = try store.fetchAppState()
         state.lastComputationDate = now
         XCTAssertNil(try MorningAppSummary.make(store: store, timezone: TimeZone.current.identifier, now: now))
@@ -72,7 +72,7 @@ final class MorningAppSummaryTests: XCTestCase {
         state.pendingWorkoutSourceFinalization = true
         XCTAssertNil(try MorningAppSummary.make(store: store, timezone: TimeZone.current.identifier, now: now))
         state.pendingWorkoutSourceFinalization = false
-        XCTAssertEqual(try MorningAppSummary.make(store: store, timezone: TimeZone.current.identifier, now: now)?.readinessScore, 72)
+        XCTAssertEqual(try MorningAppSummary.make(store: store, timezone: TimeZone.current.identifier, now: now)?.readinessScore, 69)
     }
 
     @MainActor
@@ -92,7 +92,7 @@ final class MorningAppSummaryTests: XCTestCase {
     func testConsentedSummaryIsNotUploadedUntilRepairCompletes() async throws {
         let store = try store()
         let now = Date()
-        try store.saveDayAggregate(DayAggregate(date: now.startOfDay, totalTSS: 30, bodyBatteryScore: 72))
+        try store.saveDayAggregate(DayAggregate(date: now.startOfDay, totalTSS: 30, bodyBatteryScore: 72, sleepDuration: 8))
         let state = try store.fetchAppState()
         state.lastComputationDate = now
         let api = MorningServiceStub()

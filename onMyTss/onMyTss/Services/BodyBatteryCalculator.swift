@@ -7,63 +7,8 @@
 
 import Foundation
 
-/// Calculator for Body Battery score (0-100 scale)
-/// Converts Training Stress Balance (TSB) to an intuitive readiness score
+/// Presentation of saved readiness levels and trends.
 struct BodyBatteryCalculator {
-
-    // MARK: - Score Calculation
-
-    /// Convert TSB to Body Battery score (0-100)
-    /// TSB typically ranges from -50 (very fatigued) to +30 (very fresh)
-    /// We map this to 0-100 scale with 50 as neutral (TSB = 0)
-    ///
-    /// Mapping:
-    /// TSB = -35 or lower → Score = 0 (completely depleted)
-    /// TSB = 0 → Score = 50 (neutral)
-    /// TSB = +25 or higher → Score = 100 (fully charged)
-    static func calculateScore(from tsb: Double) -> Int {
-        // Linear interpolation between TSB ranges
-        let score: Double
-
-        if tsb <= Constants.tsbForMinScore {
-            // Very fatigued - score is 0
-            score = 0
-        } else if tsb >= Constants.tsbForMaxScore {
-            // Very fresh - score is 100
-            score = 100
-        } else {
-            // Linear mapping from TSB to 0-100 scale
-            // Formula: score = ((TSB - minTSB) / (maxTSB - minTSB)) × 100
-            let tsbRange = Constants.tsbForMaxScore - Constants.tsbForMinScore
-            let normalizedTSB = tsb - Constants.tsbForMinScore
-            score = (normalizedTSB / tsbRange) * 100
-        }
-
-        // Clamp to 0-100 and round to integer
-        return Int(score.clamped(to: 0...100))
-    }
-
-    /// Calculate score with HRV/RHR modifiers applied
-    /// Combines base TSB score with physiological recovery signals
-    static func calculateScoreWithModifiers(
-        tsb: Double,
-        hrvModifier: Double? = nil,
-        rhrModifier: Double? = nil
-    ) -> Int {
-        let baseScore = Double(calculateScore(from: tsb))
-
-        // Calculate combined modifier from HRV and RHR
-        let combinedModifier = PhysiologyModifier.calculateCombinedModifier(
-            hrvModifier: hrvModifier,
-            rhrModifier: rhrModifier
-        )
-
-        // Apply modifier to base score and clamp to 0-100
-        let modifiedScore = (baseScore + combinedModifier).clamped(to: 0...100)
-
-        return Int(modifiedScore)
-    }
-
     // MARK: - Score Interpretation
 
     /// Get readiness level based on score

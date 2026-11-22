@@ -54,9 +54,7 @@ final class BodyBatteryEngineNoWorkoutTests: XCTestCase {
             XCTAssertEqual(saved.hrvModifier, -8)
             XCTAssertEqual(saved.rhrModifier, 2)
             XCTAssertEqual(saved.illnessLikelihood, 0.25)
-            XCTAssertEqual(saved.bodyBatteryScore, BodyBatteryCalculator.calculateScoreWithModifiers(
-                tsb: saved.tsb, hrvModifier: -8, rhrModifier: 2
-            ))
+            XCTAssertEqual(saved.bodyBatteryScore, 59, "An aggregate-only 100 TSS session still affects recovery.")
             XCTAssertEqual(saved.sleepDuration, 7.5)
             XCTAssertEqual(saved.sleepQualityScore, 80)
             XCTAssertEqual(saved.deepSleepDuration, 1.5)
@@ -140,7 +138,7 @@ final class BodyBatteryEngineNoWorkoutTests: XCTestCase {
         XCTAssertTrue(engine.lastSyncRequiresRetry)
     }
 
-    func testBodyBatteryCalculatesWithoutTodayWorkoutsWhenPhysiologyExists() async throws {
+    func testFirstDayHeartMeasurementsDoNotInventAPersonalBaseline() async throws {
         // In-memory store
         let schema = Schema([DayAggregate.self, UserThresholds.self, AppState.self, Workout.self, StravaAuth.self])
         let container = try ModelContainer(for: schema, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
@@ -163,9 +161,9 @@ final class BodyBatteryEngineNoWorkoutTests: XCTestCase {
         let today = Date().startOfDay
         let aggregate = try XCTUnwrap(dataStore.fetchDayAggregate(for: today))
 
-        // Body Battery should be set (not nil) even with zero TSS today
-        XCTAssertGreaterThanOrEqual(aggregate.bodyBatteryScore, 0)
-        XCTAssertLessThanOrEqual(aggregate.bodyBatteryScore, 100)
+        XCTAssertEqual(aggregate.avgHRV, 50)
+        XCTAssertEqual(aggregate.bodyBatteryScore, -1)
+        XCTAssertNil(TodayReadiness(days: [aggregate], lastComputation: nil, now: Date()).score)
     }
 }
 
@@ -199,7 +197,7 @@ private final class FakeHealthKitManager: HealthKitManager {
     }
 
     override func fetchHRVSamples(from startDate: Date, to endDate: Date) async throws -> [HKQuantitySample] {
-        let now = Date()
+        let now = endDate
         let sample = HKQuantitySample(
             type: HKObjectType.quantityType(forIdentifier: .heartRateVariabilitySDNN)!,
             quantity: HKQuantity(unit: HKUnit.secondUnit(with: .milli), doubleValue: 50),
@@ -210,7 +208,7 @@ private final class FakeHealthKitManager: HealthKitManager {
     }
 
     override func fetchRestingHeartRateSamples(from startDate: Date, to endDate: Date) async throws -> [HKQuantitySample] {
-        let now = Date()
+        let now = endDate
         let sample = HKQuantitySample(
             type: HKObjectType.quantityType(forIdentifier: .restingHeartRate)!,
             quantity: HKQuantity(unit: HKUnit.count().unitDivided(by: .minute()), doubleValue: 52),

@@ -8,7 +8,7 @@ final class AutoSyncFlowTests: XCTestCase {
     }
 
     @MainActor
-    func testForegroundLaunchAutomaticallyUpdatesReadiness() {
+    func testForegroundLaunchImportsTrainingAndExplainsMissingRecovery() {
         let app = XCUIApplication()
         app.launchArguments = ["--v2-ui-tests", "--v2-sync-fixture", "--v2-auto-sync-fixture"]
         app.launch()
@@ -16,11 +16,10 @@ final class AutoSyncFlowTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Today"].waitForExistence(timeout: 10))
         // The isolated store starts empty; the synthetic workout is imported by
         // the real engine without tapping Sync or pulling to refresh.
-        let score = app.staticTexts["readiness.score"]
-        XCTAssertTrue(score.waitForExistence(timeout: 30))
-        let value = Int(score.label)
-        XCTAssertNotNil(value)
-        XCTAssertTrue(value.map { (0...100).contains($0) } ?? false)
+        XCTAssertTrue(app.staticTexts["Training load is available. Sleep or a personal heart baseline is needed for readiness."]
+            .waitForExistence(timeout: 30))
+        XCTAssertTrue(app.staticTexts["readiness.empty"].exists)
+        XCTAssertFalse(app.staticTexts["readiness.score"].exists)
 
         app.buttons["History"].firstMatch.tap()
         XCTAssertTrue(app.navigationBars["History"].waitForExistence(timeout: 5))

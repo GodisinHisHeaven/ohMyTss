@@ -28,6 +28,7 @@ final class AppState {
     var localWorkoutRepairVersion: Int = 0
     var localWorkoutRepairInProgress: Bool = false
     var lastRecoverySyncDate: Date?
+    var recoveryInputVersion: Int = 0
 
     var lastSyncMessage: String?
 

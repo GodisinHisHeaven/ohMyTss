@@ -1,36 +1,21 @@
 import Foundation
 
-/// Missing or yesterday's saved data must never become today's default score.
 @MainActor
 struct TodayReadiness {
     let day: DayAggregate?
-    let score: Int?
+    let assessment: TrainingReadiness.Assessment?
     let updatedAt: Date?
 
-    init(days: [DayAggregate], lastComputation: Date?, now: Date = Date(), calendar: Calendar = .current) {
-        day = DayAggregate.byLocalDay(days, calendar: calendar)[calendar.startOfDay(for: now)]
-        score = day.flatMap(Self.validScore)
+    init(days: [DayAggregate], workouts: [Workout]? = nil, lastComputation: Date?, now: Date = Date(), calendar: Calendar = .current) {
+        let history = DayAggregate.byLocalDay(days, calendar: calendar)
+        day = history[calendar.startOfDay(for: now)]
+        let sessions = workouts.map { Dictionary(grouping: $0) { calendar.startOfDay(for: $0.startTime) } }
+        assessment = day.map { TrainingReadiness.assess($0, history: history, workoutsByDay: sessions, asOf: now, calendar: calendar) }
         updatedAt = lastComputation.flatMap {
             $0 <= now && calendar.isDate($0, inSameDayAs: now) ? $0 : nil
         }
     }
 
-    static func validScore(_ day: DayAggregate) -> Int? {
-        let training = [day.ctl, day.atl, day.totalTSS].contains { $0.isFinite && $0 > 0 }
-        let hrv = day.avgHRV.map { $0.isFinite && $0 > 0 } == true
-            && day.hrvModifier.map(\.isFinite) == true
-        let rhr = day.avgRHR.map { $0.isFinite && $0 > 0 } == true
-            && day.rhrModifier.map(\.isFinite) == true
-        guard (0...100).contains(day.bodyBatteryScore), training || hrv || rhr else { return nil }
-        return day.bodyBatteryScore
-    }
-
-    var basis: String {
-        guard let day else { return "Sync to see today's estimate." }
-        var parts: [String] = []
-        if [day.ctl, day.atl, day.totalTSS].contains(where: { $0.isFinite && $0 > 0 }) { parts.append("training load") }
-        if day.avgHRV.map({ $0.isFinite && $0 > 0 }) == true, day.hrvModifier?.isFinite == true { parts.append("HRV") }
-        if day.avgRHR.map({ $0.isFinite && $0 > 0 }) == true, day.rhrModifier?.isFinite == true { parts.append("resting HR") }
-        return parts.isEmpty ? "More recovery data is needed." : "Based on " + parts.joined(separator: " · ")
-    }
+    var score: Int? { assessment?.score }
+    var basis: String { assessment?.basis ?? "Sync today's health data to see your readiness." }
 }

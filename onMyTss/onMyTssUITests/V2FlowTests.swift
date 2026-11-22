@@ -559,7 +559,7 @@ final class V2FlowTests: XCTestCase {
         app.launchArguments = ["--v2-ui-tests", "--v2-rpe-demo", "-AppleInterfaceStyle", "Light"]
         app.launch()
         XCTAssertTrue(app.staticTexts["readiness.score"].waitForExistence(timeout: 10))
-        XCTAssertEqual(app.staticTexts["readiness.score"].label, "72")
+        XCTAssertEqual(app.staticTexts["readiness.score"].label, "85")
         XCTAssertFalse(app.staticTexts["Regional context"].exists)
         attachBodyMapScreenshot(app, name: "Today — readiness and seven-day muscle RPE")
         app.buttons["History"].firstMatch.tap()

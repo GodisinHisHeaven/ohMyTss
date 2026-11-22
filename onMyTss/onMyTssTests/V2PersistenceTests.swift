@@ -196,15 +196,17 @@ final class V2PersistenceTests: XCTestCase {
         let row = Workout(id: "time-zone-ride", date: oldMidnight, startTime: start, duration: 600,
                           workoutType: "Cycling", tss: 25, calculationMethod: "power", source: .strava)
         try store.saveWorkout(row)
-        let old = DayAggregate(date: oldMidnight, totalTSS: 25, bodyBatteryScore: 72, workoutCount: 1)
+        let old = DayAggregate(date: oldMidnight, totalTSS: 25, bodyBatteryScore: 72, workoutCount: 1, sleepDuration: 8)
         try store.saveDayAggregate(old)
         XCTAssertEqual(try store.fetchDayAggregate(for: now, calendar: newYork)?.bodyBatteryScore, 72)
         XCTAssertEqual(try store.fetchWorkoutsForDay(now, calendar: newYork).map(\.id), [row.id])
         XCTAssertEqual(try store.fetchWorkouts(startingAt: day.start, before: day.end).map(\.id), [row.id])
 
-        let exact = DayAggregate(date: day.start, totalTSS: 36, bodyBatteryScore: 60)
+        let exact = DayAggregate(date: day.start, totalTSS: 36, bodyBatteryScore: 60, sleepDuration: 4)
         try store.saveDayAggregate(exact)
-        XCTAssertEqual(TodayReadiness(days: [old, exact], lastComputation: nil, now: now, calendar: newYork).score, 60)
+        let readiness = TodayReadiness(days: [old, exact], lastComputation: nil, now: now, calendar: newYork)
+        XCTAssertEqual(readiness.day?.date, exact.date)
+        XCTAssertEqual(readiness.score, 37)
         XCTAssertEqual(try store.fetchDayAggregate(for: now, calendar: newYork)?.bodyBatteryScore, 60)
         try store.rebuildLegacyLoadHistory(now: now, calendar: newYork)
         XCTAssertEqual(try store.fetchDayAggregates(from: now, to: now, calendar: newYork).map(\.totalTSS), [25])
@@ -707,7 +709,7 @@ final class V2PersistenceTests: XCTestCase {
         for offset in 0...10 {
             try dataStore.saveDayAggregate(DayAggregate(
                 date: start.startOfDay.addingDays(offset), avgHRV: 45, avgRHR: 55,
-                hrvModifier: -8, rhrModifier: 2, sleepDuration: 7.5
+                hrvModifier: -8, rhrModifier: 2, sleepDuration: 7.5, recordedAwakeMinutes: 0
             ))
         }
         try dataStore.rebuildLegacyLoadHistory(now: end)
@@ -717,13 +719,12 @@ final class V2PersistenceTests: XCTestCase {
 
         try await store.deleteSession(session)
 
-        let expectedScore = BodyBatteryCalculator.calculateScoreWithModifiers(tsb: 0, hrvModifier: -8, rhrModifier: 2)
-        XCTAssertNotEqual(oldScore, expectedScore)
+        XCTAssertLessThan(oldScore, 85)
         XCTAssertNotEqual(oldRampRate, 0)
         for (index, day) in try dataStore.fetchAllDayAggregates().enumerated() {
             XCTAssertEqual(day.totalTSS, 0)
             XCTAssertEqual(day.tsb, 0)
-            XCTAssertEqual(day.bodyBatteryScore, expectedScore)
+            XCTAssertEqual(day.bodyBatteryScore, index >= TrainingReadiness.minimumBaselineDays ? 85 : 69)
             XCTAssertEqual(day.rampRate, index >= 7 ? 0 : nil)
             XCTAssertEqual(day.avgHRV, 45)
             XCTAssertEqual(day.avgRHR, 55)

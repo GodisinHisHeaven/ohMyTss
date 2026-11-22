@@ -6,7 +6,6 @@
 //
 
 import Foundation
-import HealthKit
 
 /// Calculates Body Battery modifiers based on physiological markers (HRV and RHR)
 /// These modifiers adjust the base Body Battery score to account for recovery state
@@ -17,7 +16,7 @@ struct PhysiologyModifier {
     /// Calculate Body Battery modifier from HRV deviation from baseline
     /// - Parameters:
     ///   - currentHRV: Today's average HRV (ms)
-    ///   - baselineHRV: 7-day rolling average HRV (ms)
+    ///   - baselineHRV: median of prior daily HRV values (ms)
     /// - Returns: Modifier value (-20 to +20)
     static func calculateHRVModifier(currentHRV: Double, baselineHRV: Double) -> Double {
         // HRV deviation as percentage
@@ -51,7 +50,7 @@ struct PhysiologyModifier {
     /// Calculate Body Battery modifier from RHR deviation from baseline
     /// - Parameters:
     ///   - currentRHR: Today's resting heart rate (bpm)
-    ///   - baselineRHR: 7-day rolling average RHR (bpm)
+    ///   - baselineRHR: median of prior daily resting heart rates (bpm)
     /// - Returns: Modifier value (-20 to +20)
     static func calculateRHRModifier(currentRHR: Double, baselineRHR: Double) -> Double {
         // RHR deviation (note: LOWER is better for recovery)
@@ -109,82 +108,6 @@ struct PhysiologyModifier {
             // No physiological data available
             return 0.0
         }
-    }
-
-    // MARK: - Baseline Calculation
-
-    /// Calculate baseline HRV from recent samples
-    /// - Parameter samples: Array of HRV quantity samples from last 7-30 days
-    /// - Returns: Average HRV value in ms, or nil if insufficient data
-    static func calculateBaselineHRV(from samples: [HKQuantitySample]) -> Double? {
-        guard samples.count >= 3 else { return nil } // Need at least 3 days of data
-
-        let hrvValues = samples.compactMap { sample -> Double? in
-            sample.quantity.doubleValue(for: HKUnit.secondUnit(with: .milli))
-        }
-
-        guard !hrvValues.isEmpty else { return nil }
-
-        // Calculate median (more robust than mean for physiological data)
-        let sorted = hrvValues.sorted()
-        let middle = sorted.count / 2
-
-        if sorted.count % 2 == 0 {
-            return (sorted[middle - 1] + sorted[middle]) / 2.0
-        } else {
-            return sorted[middle]
-        }
-    }
-
-    /// Calculate baseline RHR from recent samples
-    /// - Parameter samples: Array of RHR quantity samples from last 7-30 days
-    /// - Returns: Average RHR value in bpm, or nil if insufficient data
-    static func calculateBaselineRHR(from samples: [HKQuantitySample]) -> Double? {
-        guard samples.count >= 3 else { return nil } // Need at least 3 days of data
-
-        let rhrValues = samples.compactMap { sample -> Double? in
-            sample.quantity.doubleValue(for: HKUnit.count().unitDivided(by: .minute()))
-        }
-
-        guard !rhrValues.isEmpty else { return nil }
-
-        // Calculate median (more robust than mean)
-        let sorted = rhrValues.sorted()
-        let middle = sorted.count / 2
-
-        if sorted.count % 2 == 0 {
-            return (sorted[middle - 1] + sorted[middle]) / 2.0
-        } else {
-            return sorted[middle]
-        }
-    }
-
-    // MARK: - Daily Average Calculation
-
-    /// Calculate average HRV for a specific day
-    /// - Parameter samples: HRV samples for the day
-    /// - Returns: Average HRV in ms, or nil if no data
-    static func calculateDailyAverageHRV(from samples: [HKQuantitySample]) -> Double? {
-        guard !samples.isEmpty else { return nil }
-
-        let hrvValues = samples.map { sample in
-            sample.quantity.doubleValue(for: HKUnit.secondUnit(with: .milli))
-        }
-
-        return hrvValues.reduce(0, +) / Double(hrvValues.count)
-    }
-
-    /// Calculate average RHR for a specific day
-    /// - Parameter samples: RHR samples for the day
-    /// - Returns: Average RHR in bpm, or nil if no data
-    static func calculateDailyAverageRHR(from samples: [HKQuantitySample]) -> Double? {
-        guard !samples.isEmpty else { return nil }
-
-        let rhrValues = samples.map { sample in
-            sample.quantity.doubleValue(for: HKUnit.count().unitDivided(by: .minute()))
-        }
-
-        return rhrValues.reduce(0, +) / Double(rhrValues.count)
     }
 
     // MARK: - Illness Detection

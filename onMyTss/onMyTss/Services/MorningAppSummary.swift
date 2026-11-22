@@ -28,16 +28,17 @@ struct MorningAppSummary: Equatable {
         // Do not upload provisional history while its local repair is pending.
         guard !state.isComputationInProgress, !state.pendingWorkoutSourceFinalization,
               !LocalWorkoutHistoryRepair.isRequired(state) else { return nil }
-        let days = try store.fetchDayAggregate(for: now, calendar: calendar).map { [$0] } ?? []
+        let start = TrainingReadiness.historyStart(for: now, calendar: calendar)
+        let days = try store.fetchDayAggregates(from: start, to: now, calendar: calendar)
+        let cutoff = calendar.date(byAdding: .day, value: -7, to: now)!
+        let end = calendar.dateInterval(of: .day, for: now)?.end ?? now
+        let workouts = try store.fetchWorkouts(startingAt: cutoff, before: end)
         let lastComputation = state.lastComputationDate
-        let readiness = TodayReadiness(days: days, lastComputation: lastComputation, now: now, calendar: calendar)
+        let readiness = TodayReadiness(days: days, workouts: workouts, lastComputation: lastComputation, now: now, calendar: calendar)
         let score = readiness.updatedAt == nil ? nil : readiness.score
         let sleep = readiness.updatedAt == nil ? nil : readiness.day?.sleepDuration.flatMap {
             $0.isFinite && (0...24).contains($0) ? $0 : nil
         }
-        let cutoff = calendar.date(byAdding: .day, value: -7, to: now)!
-        let end = calendar.dateInterval(of: .day, for: now)?.end ?? now
-        let workouts = try store.fetchWorkouts(startingAt: cutoff, before: end)
         let seconds = workouts.filter { $0.startTime <= now }
             .reduce(0.0) { sum, workout in
                 sum + (workout.duration.isFinite && workout.duration > 0 ? min(workout.duration, 86400) : 0)

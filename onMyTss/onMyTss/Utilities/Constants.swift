@@ -44,12 +44,6 @@ enum Constants {
     /// Default Body Battery score (neutral)
     static let defaultBodyBatteryScore: Int = 50
 
-    /// TSB value corresponding to maximum Body Battery score
-    static let tsbForMaxScore: Double = 25.0
-
-    /// TSB value corresponding to minimum Body Battery score
-    static let tsbForMinScore: Double = -35.0
-
     // MARK: - Readiness Zones
 
     enum ReadinessZone: String {

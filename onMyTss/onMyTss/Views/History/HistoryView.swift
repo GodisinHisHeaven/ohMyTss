@@ -31,14 +31,21 @@ struct HistoryView: View {
 private struct HistoryContent: View {
     @Query private var aggregates: [DayAggregate]
     @Query private var workouts: [Workout]
+    @Query private var recoveryWorkouts: [Workout]
+    private let cutoff: Date
+    private let now: Date
     @State private var trend = TrendKind.readiness
     private enum TrendKind: String, CaseIterable { case readiness = "Readiness", load = "Training load" }
 
     init(days: Int, now: Date) {
         let cutoff = Calendar.current.date(byAdding: .day, value: -(days - 1),
                                           to: Calendar.current.startOfDay(for: now)) ?? now
+        self.cutoff = cutoff
+        self.now = now
+        let historyStart = TrainingReadiness.historyStart(for: cutoff, calendar: .current)
         let end = Calendar.current.dateInterval(of: .day, for: now)?.end ?? now
-        _aggregates = Query(filter: #Predicate<DayAggregate> { $0.date >= cutoff && $0.date < end }, sort: \.date)
+        _aggregates = Query(filter: #Predicate<DayAggregate> { $0.date >= historyStart && $0.date < end }, sort: \.date)
+        _recoveryWorkouts = Query(TrainingReadiness.workoutQuery(from: cutoff, before: end, calendar: .current))
         var recent = FetchDescriptor<Workout>(predicate: #Predicate {
             $0.startTime >= cutoff && $0.startTime <= now && !$0.isTombstoned && !$0.isSuppressed
         }, sortBy: [SortDescriptor(\.startTime, order: .reverse)])
@@ -82,18 +89,18 @@ private struct HistoryContent: View {
     }
 
     private var days: [DayAggregate] {
-        DayAggregate.byLocalDay(aggregates, calendar: .current).values.sorted { $0.date < $1.date }
+        DayAggregate.byLocalDay(aggregates, calendar: .current).values.filter { $0.date >= cutoff }.sorted { $0.date < $1.date }
     }
 
     @ViewBuilder private var readinessChart: some View {
-        let readings = days.filter { TodayReadiness.validScore($0) != nil }
+        let readings = TrainingReadiness.dailyScores(aggregates, workouts: recoveryWorkouts, from: cutoff, asOf: now, calendar: .current)
         if readings.isEmpty {
             trendEmpty("Readiness appears when recovery data is available.")
         } else {
             Chart(readings, id: \.date) { day in
-                LineMark(x: .value("Date", day.date), y: .value("Readiness", day.bodyBatteryScore))
+                LineMark(x: .value("Date", day.date), y: .value("Readiness", day.score))
                     .foregroundStyle(SwissStyle.accent).lineStyle(StrokeStyle(lineWidth: 2.5))
-                PointMark(x: .value("Date", day.date), y: .value("Readiness", day.bodyBatteryScore))
+                PointMark(x: .value("Date", day.date), y: .value("Readiness", day.score))
                     .foregroundStyle(SwissStyle.accent).symbolSize(20)
             }
             .chartYScale(domain: 0...100)
