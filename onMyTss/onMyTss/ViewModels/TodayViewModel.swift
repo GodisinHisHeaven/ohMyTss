@@ -23,7 +23,7 @@ class TodayViewModel {
     var errorMessage: String?
 
     // Data
-    var todayScore: Int = Constants.defaultBodyBatteryScore
+    var todayScore: Int?
     var readinessLevel: ReadinessLevel = .medium
     var tssRecommendation: TSSRecommendation?
     var weekScores: [DayScore] = []
@@ -82,11 +82,12 @@ class TodayViewModel {
     /// Fetch today's metrics
     @discardableResult
     private func fetchTodayData() async throws -> Bool {
-        let today = Date().startOfDay
-
-        guard let aggregate = try dataStore.fetchDayAggregate(for: today) else {
+        let now = Date()
+        let rows = try dataStore.fetchDayAggregates(from: TrainingReadiness.historyStart(for: now, calendar: .current), to: now)
+        let readiness = TodayReadiness(days: rows, lastComputation: nil, now: now)
+        guard let aggregate = readiness.day else {
             // No data for today yet - use default values but keep showing empty state
-            todayScore = Constants.defaultBodyBatteryScore
+            todayScore = nil
             readinessLevel = .medium
             tssRecommendation = nil
             todayMetrics = nil
@@ -94,15 +95,11 @@ class TodayViewModel {
         }
 
         // Update score and readiness
-        todayScore = aggregate.bodyBatteryScore
-        readinessLevel = BodyBatteryCalculator.getReadinessLevel(score: todayScore)
-
-        // Get TSS recommendation
-        tssRecommendation = GuidanceEngine.getRecommendedTSSRange(
-            bodyBatteryScore: todayScore,
-            tsb: aggregate.tsb,
-            ctl: aggregate.ctl
-        )
+        todayScore = readiness.score
+        readinessLevel = todayScore.map(BodyBatteryCalculator.getReadinessLevel) ?? .medium
+        tssRecommendation = todayScore.map {
+            GuidanceEngine.getRecommendedTSSRange(bodyBatteryScore: $0, tsb: aggregate.tsb, ctl: aggregate.ctl)
+        }
 
         // Store metrics for display
         todayMetrics = DayMetrics(
@@ -127,14 +124,10 @@ class TodayViewModel {
 
     /// Fetch last 7 days of scores for trend view
     private func fetchWeekTrend() async throws {
-        let aggregates = try dataStore.fetchRecentDayAggregates(days: 7)
-
-        weekScores = aggregates.map { aggregate in
-            DayScore(
-                date: aggregate.date,
-                score: aggregate.bodyBatteryScore
-            )
-        }
+        let now = Date()
+        let start = Calendar.current.date(byAdding: .day, value: -6, to: now.startOfDay)!
+        let rows = try dataStore.fetchDayAggregates(from: TrainingReadiness.historyStart(for: start, calendar: .current), to: now)
+        weekScores = TrainingReadiness.dailyScores(rows, from: start, asOf: now, calendar: .current)
     }
 
     // MARK: - Computed Properties

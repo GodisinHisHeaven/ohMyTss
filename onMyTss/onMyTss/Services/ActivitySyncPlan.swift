@@ -1,10 +1,12 @@
 import Foundation
 
 struct ActivitySyncPlan {
+    static let recoveryInputVersion = 1
     let stravaStart: Date
     let reconcileStrava: Bool
     let refreshHealthKitSamples: Bool
     let recoveryStart: Date
+    let loadHistoryStart: Date
     let healthKitRetryIDs: [String]
 
     init(now: Date, state: AppState, strava: StravaAuth?, calendar: Calendar = .current) {
@@ -23,7 +25,9 @@ struct ActivitySyncPlan {
         let recovery = state.lastRecoverySyncDate.flatMap {
             calendar.date(byAdding: .day, value: -3, to: min($0, now))
         } ?? initial
-        recoveryStart = calendar.startOfDay(for: recovery)
+        loadHistoryStart = calendar.startOfDay(for: recovery)
+        let needsSleepBackfill = state.recoveryInputVersion < Self.recoveryInputVersion
+        recoveryStart = calendar.startOfDay(for: needsSleepBackfill ? min(recovery, initial) : recovery)
     }
 }
 

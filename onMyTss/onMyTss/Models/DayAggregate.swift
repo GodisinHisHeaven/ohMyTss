@@ -15,7 +15,7 @@ final class DayAggregate {
     var ctl: Double // Chronic Training Load (42-day EMA)
     var atl: Double // Acute Training Load (7-day EMA)
     var tsb: Double // Training Stress Balance (CTL - ATL)
-    var bodyBatteryScore: Int // 0-100 scale
+    var bodyBatteryScore: Int // Cached readiness, or -1 when recovery evidence is insufficient.
     var rampRate: Double? // CTL week-over-week change
     var hasWorkoutDetails: Bool = false
     var workoutCount: Int
@@ -23,6 +23,7 @@ final class DayAggregate {
 
     // Phase 1: HRV and RHR physiological data
     var avgHRV: Double? // Average HRV for the day (ms)
+    var overnightHRV: Double? // SDNN samples during measured sleep, assigned to the wake date.
     var avgRHR: Double? // Average resting heart rate for the day (bpm)
     var hrvModifier: Double? // BB modifier from HRV (-20 to +20)
     var rhrModifier: Double? // BB modifier from RHR (-20 to +20)
@@ -30,6 +31,7 @@ final class DayAggregate {
 
     // Sleep quality data
     var sleepDuration: Double? // Total sleep duration in hours
+    var recordedAwakeMinutes: Double? // Confirmed wake during the measured main sleep; nil for legacy totals.
     var sleepQualityScore: Int? // Sleep quality score (0-100)
     var deepSleepDuration: Double? // Deep sleep duration in hours
 
@@ -67,7 +69,8 @@ final class DayAggregate {
         illnessLikelihood: Double? = nil,
         sleepDuration: Double? = nil,
         sleepQualityScore: Int? = nil,
-        deepSleepDuration: Double? = nil
+        deepSleepDuration: Double? = nil,
+        recordedAwakeMinutes: Double? = nil
     ) {
         self.date = date
         self.totalTSS = totalTSS
@@ -86,5 +89,12 @@ final class DayAggregate {
         self.sleepDuration = sleepDuration
         self.sleepQualityScore = sleepQualityScore
         self.deepSleepDuration = deepSleepDuration
+        self.recordedAwakeMinutes = recordedAwakeMinutes
     }
+}
+
+struct DayScore: Identifiable {
+    var id: Date { date }
+    let date: Date
+    let score: Int
 }

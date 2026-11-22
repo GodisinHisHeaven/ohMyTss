@@ -75,7 +75,7 @@ enum LaunchHistoryFixture {
             let date = Calendar.current.date(byAdding: .day, value: -index, to: now.startOfDay)!
             context.insert(DayAggregate(date: date, totalTSS: index % 3 == 0 ? 48 : 0,
                 ctl: 42 + Double(index % 5), atl: 38 + Double(index % 9), bodyBatteryScore: 72 + index % 12,
-                avgHRV: 52, avgRHR: 54, hrvModifier: 4, rhrModifier: 2, sleepDuration: 7.6))
+                avgHRV: 52, avgRHR: 54, hrvModifier: 4, rhrModifier: 2, sleepDuration: 7.6, recordedAwakeMinutes: 0))
         }
         for (index, type) in ["Ride", "Run", "Strength", "Swim", "Walk", "Run", "Ride", "Run"].enumerated() {
             let start = now.addingTimeInterval(-Double(index) * 86400 - 3600)

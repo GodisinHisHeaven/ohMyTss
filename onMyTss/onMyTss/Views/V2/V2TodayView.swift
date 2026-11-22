@@ -38,7 +38,7 @@ private struct TodayDashboard: View {
         let cutoff = MuscleRPESummary.cutoff(for: now, calendar: calendar)
         // Duplicate source timestamps can differ by up to a minute.
         let sourceCutoff = MuscleRPESummary.sourceCutoff(for: now, calendar: calendar)
-        let start = calendar.startOfDay(for: now)
+        let start = TrainingReadiness.historyStart(for: now, calendar: calendar)
         let end = calendar.dateInterval(of: .day, for: now)?.end ?? now
         _workouts = Query(filter: #Predicate<Workout> {
             $0.startTime >= cutoff && $0.startTime < end && !$0.isTombstoned && !$0.isSuppressed
@@ -59,7 +59,7 @@ private struct TodayDashboard: View {
         NavigationStack {
             SwissList {
                 Section {
-                    ReadinessCard(readiness: TodayReadiness(days: days,
+                    ReadinessCard(readiness: TodayReadiness(days: days, workouts: workouts,
                         lastComputation: appStates.first?.lastComputationDate, now: currentNow))
                     .padding(.vertical, 4)
                 }

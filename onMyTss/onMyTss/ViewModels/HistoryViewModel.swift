@@ -36,18 +36,23 @@ class HistoryViewModel {
         errorMessage = nil
 
         do {
-            let aggregates = try dataStore.fetchRecentDayAggregates(days: selectedDays)
+            let now = Date()
+            let cutoff = now.startOfDay.addingDays(1 - selectedDays)
+            let rows = try dataStore.fetchDayAggregates(from: TrainingReadiness.historyStart(for: cutoff, calendar: .current), to: now)
+            let history = DayAggregate.byLocalDay(rows, calendar: .current)
+            let aggregates = rows.filter { $0.date >= cutoff }
 
             historyItems = aggregates.map { aggregate in
-                HistoryItem(
+                let score = TrainingReadiness.assess(aggregate, history: history, asOf: now, calendar: .current).score
+                return HistoryItem(
                     date: aggregate.date,
-                    score: aggregate.bodyBatteryScore,
+                    score: score,
                     tss: aggregate.totalTSS,
                     ctl: aggregate.ctl,
                     atl: aggregate.atl,
                     tsb: aggregate.tsb,
                     workoutCount: aggregate.workoutCount,
-                    readinessLevel: BodyBatteryCalculator.getReadinessLevel(score: aggregate.bodyBatteryScore)
+                    readinessLevel: score.map(BodyBatteryCalculator.getReadinessLevel)
                 )
             }.reversed() // Most recent first
 
@@ -79,9 +84,8 @@ class HistoryViewModel {
 
     /// Average score over the period
     var averageScore: Int {
-        guard !historyItems.isEmpty else { return 0 }
-        let total = historyItems.map { $0.score }.reduce(0, +)
-        return total / historyItems.count
+        let scores = historyItems.compactMap(\.score)
+        return scores.isEmpty ? 0 : scores.reduce(0, +) / scores.count
     }
 
     /// Average CTL over the period
@@ -112,13 +116,13 @@ class HistoryViewModel {
 struct HistoryItem: Identifiable, Equatable {
     let id = UUID()
     let date: Date
-    let score: Int
+    let score: Int?
     let tss: Double
     let ctl: Double
     let atl: Double
     let tsb: Double
     let workoutCount: Int
-    let readinessLevel: ReadinessLevel
+    let readinessLevel: ReadinessLevel?
 
     // Equatable conformance for efficient SwiftUI diffing
     static func == (lhs: HistoryItem, rhs: HistoryItem) -> Bool {

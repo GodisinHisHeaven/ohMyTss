@@ -9,6 +9,7 @@ final class LegacyHistoryRebuilder {
     private let store: DataStore
     private let calendar: Calendar
     private let end: Date
+    private let now: Date
     private var day: Date
     private var aggregates: [Date: DayAggregate]
     private var ctl: Double
@@ -18,6 +19,7 @@ final class LegacyHistoryRebuilder {
     init(context: ModelContext, from start: Date?, now: Date, calendar: Calendar = .current) throws {
         self.context = context
         self.calendar = calendar
+        self.now = now
         store = DataStore(modelContext: context)
         end = calendar.startOfDay(for: now)
         if let start {
@@ -27,11 +29,11 @@ final class LegacyHistoryRebuilder {
             prior.fetchLimit = 1
             prior.propertiesToFetch = [\.date]
             if requested <= end, let date = try context.fetch(prior).first?.date,
-               let interval = calendar.dateInterval(of: .day, for: date),
-               let rampStart = calendar.date(byAdding: .day, value: -7, to: interval.end) {
-                // Include gaps after the saved seed and the prior week used for ramp rate.
+               let interval = calendar.dateInterval(of: .day, for: date) {
+                // Include gaps after the seed and the preceding personal baseline.
                 // Old stores can have two rows on one local day after a time zone change.
-                let rows = try store.fetchDayAggregates(from: rampStart, to: end, calendar: calendar)
+                let start = TrainingReadiness.historyStart(for: interval.end, calendar: calendar)
+                let rows = try store.fetchDayAggregates(from: start, to: end, calendar: calendar)
                 aggregates = DayAggregate.byLocalDay(rows, calendar: calendar)
                 day = interval.end
                 ctl = aggregates[interval.start]?.ctl ?? 0
@@ -85,9 +87,6 @@ final class LegacyHistoryRebuilder {
             ctl = LoadCalculator.calculateCTL(tssHistory: [aggregate.totalTSS], previousCTL: ctl)
             atl = LoadCalculator.calculateATL(tssHistory: [aggregate.totalTSS], previousATL: atl)
             let tsb = LoadCalculator.calculateTSB(ctl: ctl, atl: atl)
-            let score = BodyBatteryCalculator.calculateScoreWithModifiers(
-                tsb: tsb, hrvModifier: aggregate.hrvModifier, rhrModifier: aggregate.rhrModifier
-            )
             let ramp = calendar.date(byAdding: .day, value: -7, to: day)
                 .flatMap { aggregates[calendar.startOfDay(for: $0)] }.map {
                 LoadCalculator.calculateCTLRampRate(currentCTL: ctl, ctlOneWeekAgo: $0.ctl)
@@ -95,6 +94,7 @@ final class LegacyHistoryRebuilder {
             if aggregate.ctl != ctl { aggregate.ctl = ctl }
             if aggregate.atl != atl { aggregate.atl = atl }
             if aggregate.tsb != tsb { aggregate.tsb = tsb }
+            let score = TrainingReadiness.assess(aggregate, history: aggregates, asOf: now, calendar: calendar).score ?? -1
             if aggregate.bodyBatteryScore != score { aggregate.bodyBatteryScore = score }
             if aggregate.rampRate != ramp { aggregate.rampRate = ramp }
             day = calendar.dateInterval(of: .day, for: day)?.end ?? end.addingTimeInterval(1)

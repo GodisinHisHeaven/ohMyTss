@@ -189,7 +189,7 @@ class BodyBatteryEngine {
                 }
                 // A cancelled prior write may already have changed persisted rows.
                 // Rebuild fully once on recovery before advancing either cursor.
-                let start = interrupted || timeZoneChanged ? nil : changes.dates.min() ?? plan.recoveryStart
+                let start = interrupted || timeZoneChanged ? nil : min(changes.dates.min() ?? plan.loadHistoryStart, plan.loadHistoryStart)
                 try await dataStore.refreshLegacyLoadHistory(from: start, now: now, calendar: calendar)
                 let recovery = try await updateRecoveryMetrics(from: plan.recoveryStart, to: now, calendar: calendar)
                 recoveryWarnings = recovery.warnings
@@ -238,7 +238,10 @@ class BodyBatteryEngine {
             state.lastComputationDate = now
             state.lastComputedCyclingFTP = appliedFTP
             state.lastComputedTimeZone = calendar.timeZone.identifier
-            if !recoveryNeedsRetry { state.lastRecoverySyncDate = now }
+            if !recoveryNeedsRetry {
+                state.lastRecoverySyncDate = now
+                state.recoveryInputVersion = ActivitySyncPlan.recoveryInputVersion
+            }
             state.healthKitTypeBackfillVersion = 1
             state.pendingHealthKitTypeBackfillIDs = typeBackfill.pending
             state.pendingWorkoutSourceFinalization = !completeSources
@@ -479,172 +482,77 @@ class BodyBatteryEngine {
         return (remainder, changes, warnings)
     }
 
-    /// Fetch and process HRV/RHR data for a date range
-    private func processPhysiologyData(from startDate: Date, to endDate: Date, calendar: Calendar) async throws -> (days: [Date: (hrv: Double?, rhr: Double?, hrvMod: Double?, rhrMod: Double?)], hrvAvailable: Bool, rhrAvailable: Bool) {
-        var physiologyMap: [Date: (hrv: Double?, rhr: Double?, hrvMod: Double?, rhrMod: Double?)] = [:]
-
-        // Fetch all HRV and RHR samples in parallel
-        let baselineStart = calendar.date(byAdding: .day, value: -14, to: startDate) ?? startDate
-        async let hrvSamples = captureHealthRead { try await self.healthKitManager.fetchHRVSamples(from: baselineStart, to: endDate) }
-        async let rhrSamples = captureHealthRead { try await self.healthKitManager.fetchRestingHeartRateSamples(from: baselineStart, to: endDate) }
-
-        let (hrvResult, rhrResult) = await (hrvSamples, rhrSamples)
-        try Task.checkCancellation()
-        let hrvValue = try healthValue(hrvResult)
-        let rhrValue = try healthValue(rhrResult)
-        let hrv = hrvValue ?? []
-        let rhr = rhrValue ?? []
-
-        // Group samples by day
-        var dailyHRVSamples: [Date: [HKQuantitySample]] = [:]
-        var dailyRHRSamples: [Date: [HKQuantitySample]] = [:]
-
-        for sample in hrv {
-            let day = calendar.startOfDay(for: sample.startDate)
-            dailyHRVSamples[day, default: []].append(sample)
-        }
-
-        for sample in rhr {
-            let day = calendar.startOfDay(for: sample.startDate)
-            dailyRHRSamples[day, default: []].append(sample)
-        }
-
-        // Calculate baseline from last 14 days of data (median of available values)
-        let baselineHRV = PhysiologyModifier.calculateBaselineHRV(from: hrv)
-        let baselineRHR = PhysiologyModifier.calculateBaselineRHR(from: rhr)
-
-        // Process each day
-        var currentDate = calendar.startOfDay(for: startDate)
-        let end = calendar.startOfDay(for: endDate)
-
-        while currentDate <= end {
-            // Calculate daily averages
-            let dailyHRV = dailyHRVSamples[currentDate].flatMap {
-                PhysiologyModifier.calculateDailyAverageHRV(from: $0)
-            }
-            let dailyRHR = dailyRHRSamples[currentDate].flatMap {
-                PhysiologyModifier.calculateDailyAverageRHR(from: $0)
-            }
-
-            // Calculate modifiers if we have baselines
-            var hrvModifier: Double?
-            var rhrModifier: Double?
-
-            if let hrv = dailyHRV, let baseline = baselineHRV {
-                hrvModifier = PhysiologyModifier.calculateHRVModifier(currentHRV: hrv, baselineHRV: baseline)
-            }
-
-            if let rhr = dailyRHR, let baseline = baselineRHR {
-                rhrModifier = PhysiologyModifier.calculateRHRModifier(currentRHR: rhr, baselineRHR: baseline)
-            }
-
-            physiologyMap[currentDate] = (dailyHRV, dailyRHR, hrvModifier, rhrModifier)
-            guard let next = calendar.dateInterval(of: .day, for: currentDate)?.end else { break }
-            currentDate = next
-        }
-
-        return (physiologyMap, hrvValue != nil, rhrValue != nil)
-    }
-
-    /// Fetch and process sleep data for a date range
-    private func processSleepData(from startDate: Date, to endDate: Date, calendar: Calendar) async throws -> [Date: SleepQuality] {
-        var sleepMap: [Date: SleepQuality] = [:]
-
-        // Fetch all sleep samples for the range
-        let sleepSamples = try await healthKitManager.fetchSleepSamples(from: startDate, to: endDate)
-        try Task.checkCancellation()
-
-        // Group samples by day (sleep belongs to the day it ends, not starts)
-        var dailySleepSamples: [Date: [HKCategorySample]] = [:]
-
-        for sample in sleepSamples {
-            // Assign sleep to the day it ends (morning day)
-            let day = calendar.startOfDay(for: sample.endDate)
-            dailySleepSamples[day, default: []].append(sample)
-        }
-
-        // Process each day
-        for (date, samples) in dailySleepSamples {
-            if let quality = SleepAnalyzer.calculateSleepQuality(from: samples) {
-                sleepMap[date] = quality
-            }
-        }
-
-        return sleepMap
-    }
-
     private func updateRecoveryMetrics(from start: Date, to end: Date, calendar: Calendar) async throws -> (warnings: [String], needsRetry: Bool) {
-        async let physiologyMap = captureHealthRead { try await self.processPhysiologyData(from: start, to: end, calendar: calendar) }
-        async let sleepMap = captureHealthRead { try await self.processSleepData(from: start, to: end, calendar: calendar) }
-        let (physiologyResult, sleepResult) = await (physiologyMap, sleepMap)
+        // Include the evening before the first wake date, even with strict-start HealthKit predicates.
+        let evening = calendar.date(byAdding: .day, value: -1, to: start)!
+        async let hrvQuery = captureHealthRead { try await self.healthKitManager.fetchHRVSamples(from: evening, to: end) }
+        async let rhrQuery = captureHealthRead { try await self.healthKitManager.fetchRestingHeartRateSamples(from: start, to: end) }
+        async let sleepQuery = captureHealthRead { try await self.healthKitManager.fetchSleepSamples(from: evening, to: end) }
+        let results = await (hrvQuery, rhrQuery, sleepQuery)
         try Task.checkCancellation()
-        let physiology = try healthValue(physiologyResult)
-        let sleep = try healthValue(sleepResult)
+        let hrv = try healthValue(results.0), rhr = try healthValue(results.1), sleep = try healthValue(results.2)
+        let measurements = try await RecoveryMeasurements.collect(hrv: hrv ?? [], rhr: rhr ?? [], sleep: sleep ?? [],
+                                                                  through: end, calendar: calendar)
         var warnings: [String] = []
-        if physiology == nil || physiology?.hrvAvailable == false {
-            warnings.append("HealthKit HRV unavailable. Saved HRV retained; retry Sync.")
-        }
-        if physiology == nil || physiology?.rhrAvailable == false {
-            warnings.append("HealthKit resting heart rate unavailable. Saved resting heart rate retained; retry Sync.")
-        }
+        if hrv == nil { warnings.append("HealthKit HRV unavailable. Saved HRV retained; retry Sync.") }
+        if rhr == nil { warnings.append("HealthKit resting heart rate unavailable. Saved resting heart rate retained; retry Sync.") }
         if sleep == nil { warnings.append("HealthKit sleep unavailable. Saved sleep measurements retained; retry Sync.") }
-        var retainedHRV = false
-        var retainedRHR = false
-        var retainedSleep = false
+
+        let historyStart = TrainingReadiness.historyStart(for: start, calendar: calendar)
+        let rows = try dataStore.fetchDayAggregates(from: historyStart, to: end, calendar: calendar)
+        var history = DayAggregate.byLocalDay(rows, calendar: calendar)
+        var retainedHRV = false, retainedRHR = false, retainedSleep = false
         var day = calendar.startOfDay(for: start)
-        let lastDay = calendar.startOfDay(for: end)
-        while day <= lastDay {
+        let last = calendar.startOfDay(for: end)
+        var processed = 0
+        while day <= last {
             try Task.checkCancellation()
-            let batchEnd = min(lastDay, calendar.date(byAdding: .day, value: 13, to: day) ?? day)
-            for row in try dataStore.fetchDayAggregates(from: day, to: batchEnd, calendar: calendar) {
-                let day = calendar.startOfDay(for: row.date)
-                if let physiology {
-                    let value = physiology.days[day]
-                    // Absence on one day is not evidence that saved data was deleted.
-                    let hasValidHRV = (value?.hrv).map { $0.isFinite && $0 > 0 } ?? false
-                    let hasValidRHR = (value?.rhr).map { $0.isFinite && $0 > 0 } ?? false
-                    if let hrv = value?.hrv, hasValidHRV {
-                        if row.avgHRV != hrv { row.avgHRV = hrv }
-                        if let modifier = value?.hrvMod, modifier.isFinite, row.hrvModifier != modifier { row.hrvModifier = modifier }
-                    } else if physiology.hrvAvailable && (row.avgHRV != nil || row.hrvModifier != nil) {
-                        retainedHRV = true
-                    }
-                    if let rhr = value?.rhr, hasValidRHR {
-                        if row.avgRHR != rhr { row.avgRHR = rhr }
-                        if let modifier = value?.rhrMod, modifier.isFinite, row.rhrModifier != modifier { row.rhrModifier = modifier }
-                    } else if physiology.rhrAvailable && (row.avgRHR != nil || row.rhrModifier != nil) {
-                        retainedRHR = true
-                    }
-                    if hasValidHRV || hasValidRHR {
-                        let likelihood = PhysiologyModifier.detectIllness(hrvModifier: row.hrvModifier, rhrModifier: row.rhrModifier)
-                        if row.illnessLikelihood != likelihood { row.illnessLikelihood = likelihood }
-                    }
+            let dailyHRV = measurements.hrv[day], dailyRHR = measurements.rhr[day]
+            let overnight = measurements.overnightHRV[day], night = measurements.sleep[day]
+            if history[day] == nil, dailyHRV != nil || dailyRHR != nil || night != nil || overnight != nil {
+                history[day] = dataStore.insertRecoveryDay(on: day)
+            }
+            if let row = history[day] {
+                if let value = dailyHRV {
+                    if row.avgHRV != value { row.avgHRV = value }
+                } else if hrv != nil, row.avgHRV != nil { retainedHRV = true }
+                if let value = dailyRHR {
+                    if row.avgRHR != value { row.avgRHR = value }
+                } else if rhr != nil, row.avgRHR != nil { retainedRHR = true }
+                if let overnight {
+                    if row.overnightHRV != overnight { row.overnightHRV = overnight }
+                } else if night != nil, dailyHRV != nil, row.overnightHRV != nil {
+                    // Fresh HRV and sleep were both read, but the samples fall outside this sleep.
+                    row.overnightHRV = nil
                 }
-                if let sleep {
-                    if let quality = sleep[day], quality.durationHours.isFinite, quality.durationHours > 0 {
-                        if row.sleepDuration != quality.durationHours { row.sleepDuration = quality.durationHours }
-                        if row.sleepQualityScore != quality.qualityScore { row.sleepQualityScore = quality.qualityScore }
-                        if row.deepSleepDuration != quality.deepSleepHours { row.deepSleepDuration = quality.deepSleepHours }
-                    } else if row.sleepDuration != nil || row.sleepQualityScore != nil || row.deepSleepDuration != nil {
-                        retainedSleep = true
-                    }
+                if let night {
+                    if row.recordedAwakeMinutes != night.awakeMinutes { row.recordedAwakeMinutes = night.awakeMinutes }
+                    if row.sleepDuration != night.durationHours { row.sleepDuration = night.durationHours }
+                    if row.sleepQualityScore != night.qualityScore { row.sleepQualityScore = night.qualityScore }
+                    if row.deepSleepDuration != night.deepSleepHours { row.deepSleepDuration = night.deepSleepHours }
+                } else if sleep != nil, row.sleepDuration != nil { retainedSleep = true }
+                let result = TrainingReadiness.assess(row, history: history, asOf: end, calendar: calendar)
+                if dailyHRV != nil || overnight != nil, row.hrvModifier != result.hrvModifier { row.hrvModifier = result.hrvModifier }
+                if dailyRHR != nil, row.rhrModifier != result.rhrModifier { row.rhrModifier = result.rhrModifier }
+                if dailyHRV != nil || dailyRHR != nil || overnight != nil {
+                    let likelihood = PhysiologyModifier.detectIllness(hrvModifier: result.hrvModifier, rhrModifier: result.rhrModifier)
+                    if row.illnessLikelihood != likelihood { row.illnessLikelihood = likelihood }
                 }
-                let score = BodyBatteryCalculator.calculateScoreWithModifiers(
-                    tsb: row.tsb, hrvModifier: row.hrvModifier, rhrModifier: row.rhrModifier
-                )
+                let score = result.score ?? -1
                 if row.bodyBatteryScore != score { row.bodyBatteryScore = score }
             }
-            try dataStore.saveChangesIfNeeded()
-            guard batchEnd < lastDay, let next = calendar.dateInterval(of: .day, for: batchEnd)?.end else { break }
-            day = next
-            try await Task.sleep(for: .milliseconds(1))
+            processed += 1
+            if processed.isMultiple(of: 14) {
+                try dataStore.saveChangesIfNeeded()
+                try await Task.sleep(for: .milliseconds(1))
+            }
+            day = calendar.dateInterval(of: .day, for: day)!.end
         }
+        try dataStore.saveChangesIfNeeded()
         if retainedHRV { warnings.append("Some days had no new HealthKit HRV samples. Saved HRV retained.") }
         if retainedRHR { warnings.append("Some days had no new HealthKit resting heart rate samples. Saved resting heart rate retained.") }
         if retainedSleep { warnings.append("Some days had no new HealthKit sleep samples. Saved sleep retained.") }
-        let needsRetry = physiology == nil || physiology?.hrvAvailable == false
-            || physiology?.rhrAvailable == false || sleep == nil
-        return (warnings, needsRetry)
+        return (warnings, hrv == nil || rhr == nil || sleep == nil)
     }
 
 }

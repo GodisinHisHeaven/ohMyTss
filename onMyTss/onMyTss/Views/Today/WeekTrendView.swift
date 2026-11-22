@@ -190,14 +190,6 @@ struct BarView: View {
     }
 }
 
-// MARK: - Day Score Model
-
-struct DayScore: Identifiable {
-    let id = UUID()
-    let date: Date
-    let score: Int
-}
-
 // MARK: - Previews
 
 #Preview("With Data") {

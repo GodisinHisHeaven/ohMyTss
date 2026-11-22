@@ -30,6 +30,9 @@ struct ReadinessCard: View {
                     }
                 }
                 ProgressView(value: Double(score), total: 100).tint(color(score)).accessibilityHidden(true)
+                if let factor = readiness.assessment?.limitingFactor {
+                    Text(factor).font(.subheadline)
+                }
                 Text(readiness.basis).font(.caption).foregroundStyle(.secondary)
                 if let updatedAt = readiness.updatedAt {
                     Text("Updated \(updatedAt, format: .dateTime.hour().minute())")
@@ -38,7 +41,7 @@ struct ReadinessCard: View {
             } else {
                 Text("Not enough data yet").font(.title3.weight(.semibold))
                     .accessibilityIdentifier("readiness.empty")
-                Text("Sync today's health data to see your readiness.")
+                Text(readiness.basis)
                     .font(.subheadline).foregroundStyle(.secondary)
             }
         }
@@ -46,14 +49,13 @@ struct ReadinessCard: View {
             NavigationStack {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
-                        Text("Your saved readiness estimate").font(.title2.bold())
-                        Text("The score combines training load with HRV and resting heart rate when their baselines are available. It is separate from your muscle RPE ratings.")
-                        if let hours = readiness.day?.sleepDuration, hours.isFinite, hours >= 0, hours <= 24 {
+                        Text("How readiness is estimated").font(.title2.bold())
+                        Text("The score uses sleep duration over three nights and recorded interruptions last night. Recent hard workouts and elevated training load can lower it. The effect of a timed workout fades as hours pass.")
+                        Text("HRV and resting heart rate are compared with at least seven earlier days in a 30-day window. Overnight HRV is preferred when it has its own baseline.")
+                        Text("A high score requires measured sleep and a heart measurement with a personal baseline. Older sleep totals are used for a partial estimate until verified. A partial estimate is capped at 69.")
+                        if let hours = TrainingReadiness.sleepHours(readiness.day?.sleepDuration) {
                             Text("Last night's sleep: \(hours, specifier: "%.1f") hours.")
-                            Text("Sleep is shown for context and is not currently included in this score.").foregroundStyle(.secondary)
                         }
-                        Text("An estimate can help you review how you feel; it does not establish readiness for a particular workout.")
-                            .foregroundStyle(.secondary)
                     }
                     .padding(24)
                 }
@@ -74,10 +76,12 @@ struct ReadinessCard: View {
     }
 
     private func level(_ score: Int) -> String {
+        if readiness.assessment?.isPartial == true { return "Limited data" }
         switch score { case ..<40: return "Low"; case ..<60: return "Moderate"; case ..<80: return "Good"; default: return "High" }
     }
 
     private func color(_ score: Int) -> Color {
+        if readiness.assessment?.isPartial == true, score >= 40 { return .secondary }
         switch score { case ..<40: return SwissStyle.caution; case ..<60: return SwissStyle.accent; default: return SwissStyle.positive }
     }
 }

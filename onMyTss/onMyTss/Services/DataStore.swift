@@ -49,6 +49,13 @@ class DataStore {
         return !((try modelContext.fetch(day)).isEmpty)
     }
 
+    /// Caller already looked up this local date and owns the sync batch's save.
+    func insertRecoveryDay(on date: Date) -> DayAggregate {
+        let day = DayAggregate(date: date)
+        modelContext.insert(day)
+        return day
+    }
+
     func saveDayAggregate(_ dayAggregate: DayAggregate) throws {
         try ensureLocalRepairAllowsMutation()
         modelContext.insert(dayAggregate)
