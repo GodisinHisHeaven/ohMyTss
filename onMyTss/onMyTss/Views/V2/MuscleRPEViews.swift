@@ -129,25 +129,22 @@ struct MuscleRPEEditor: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let selection: MuscleSelection
-    let reading: MuscleRPESummary.Reading?
-    @State private var side: BodySide
-    @State private var rpe: Int?
-    @State private var observedAt: Date
+    @State private var draft: MuscleRPEEditDraft
     @State private var error: String?
 
     init(selection: MuscleSelection, reading: MuscleRPESummary.Reading?) {
         self.selection = selection
-        self.reading = reading
-        _side = State(initialValue: selection.side)
-        _rpe = State(initialValue: reading?.rpe)
-        _observedAt = State(initialValue: reading?.observedAt ?? Date())
+        _draft = State(initialValue: MuscleRPEEditDraft(side: selection.side, rpe: reading?.rpe,
+                                                       observedAt: reading?.observedAt ?? Date()))
     }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    Picker("Side", selection: $side) {
+                    Picker("Side", selection: Binding(get: { draft.side }, set: {
+                        draft.selectSide($0, now: Date())
+                    })) {
                         Text("Left").tag(BodySide.left)
                         Text("Both").tag(BodySide.both)
                         Text("Right").tag(BodySide.right)
@@ -157,9 +154,9 @@ struct MuscleRPEEditor: View {
                         LazyVGrid(columns: dynamicTypeSize.isAccessibilitySize
                                   ? [GridItem(.flexible())] : [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
                             ForEach(MuscleEffortGrade.allCases) { grade in
-                                let selected = rpe.flatMap(MuscleEffortGrade.init(rpe:)) == grade
+                                let selected = draft.rpe.flatMap(MuscleEffortGrade.init(rpe:)) == grade
                                 Button {
-                                    if !selected { rpe = grade.defaultRPE }
+                                    if !selected { draft.rpe = grade.defaultRPE }
                                 } label: {
                                     VStack(alignment: .leading, spacing: 5) {
                                         HStack {
@@ -181,8 +178,8 @@ struct MuscleRPEEditor: View {
                             }
                         }
                     }
-                    if let value = rpe {
-                        Stepper(value: Binding(get: { rpe ?? value }, set: { rpe = $0 }), in: 1...10) {
+                    if let value = draft.rpe {
+                        Stepper(value: Binding(get: { draft.rpe ?? value }, set: { draft.rpe = $0 }), in: 1...10) {
                             Text("RPE \(value)").font(.headline).monospacedDigit()
                         }
                         .accessibilityIdentifier("rpe.fineTune")
@@ -190,18 +187,25 @@ struct MuscleRPEEditor: View {
                     if dynamicTypeSize.isAccessibilitySize {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Date").font(.subheadline)
-                            DatePicker("Date", selection: $observedAt, in: dateRange, displayedComponents: .date)
+                            DatePicker("Date", selection: dateBinding, in: dateRange, displayedComponents: .date)
                                 .labelsHidden().frame(maxWidth: .infinity, alignment: .leading)
+                                .accessibilityIdentifier("rpe.date")
                         }
                     } else {
-                        DatePicker("Date", selection: $observedAt, in: dateRange, displayedComponents: .date)
+                        DatePicker("Date", selection: dateBinding, in: dateRange, displayedComponents: .date)
                             .font(.subheadline)
+                            .accessibilityIdentifier("rpe.date")
                     }
+                    Text(draft.hasSelectedDate
+                         ? "Your chosen date is kept when changing sides. Newer ratings remain visible after a historical edit."
+                         : "Changing sides dates this adjustment to today. Choose a date for a historical edit.")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("rpe.datePolicy")
                     if let error { V2ErrorMessage(message: error) }
                     Button("Save RPE") { save() }
                         .swissAction(prominent: true).controlSize(.large)
                         .frame(maxWidth: .infinity)
-                        .disabled(rpe == nil)
+                        .disabled(draft.rpe == nil)
                         .accessibilityIdentifier("rpe.save")
                 }
                 .padding(24)
@@ -218,6 +222,10 @@ struct MuscleRPEEditor: View {
         .presentationDragIndicator(.visible)
     }
 
+    private var dateBinding: Binding<Date> {
+        Binding(get: { draft.observedAt }, set: { draft.selectDate($0) })
+    }
+
     private var dateRange: ClosedRange<Date> {
         let now = Date()
         let lower = MuscleRPESummary.cutoff(for: now)
@@ -225,10 +233,10 @@ struct MuscleRPEEditor: View {
     }
 
     private func save() {
-        guard let rpe else { return }
+        guard let rpe = draft.rpe else { return }
         do {
-            try MuscleRPEStore(context: context).save(region: selection.region, side: side,
-                                                     rpe: rpe, observedAt: min(observedAt, Date()))
+            try MuscleRPEStore(context: context).save(region: selection.region, side: draft.side,
+                                                     rpe: rpe, observedAt: min(draft.observedAt, Date()))
             dismiss()
         } catch {
             context.rollback()
